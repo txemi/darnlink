@@ -5,12 +5,18 @@ on:
   pull_request:
 
 jobs:
+  # Tests across every supported Python (pyproject requires-python = ">=3.10").
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.11', '3.12', '3.13']
     steps:
       - uses: actions/checkout@v4
       - name: Install uv
         uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
       - name: Create venv and install
         run: |
           uv venv
@@ -19,10 +25,16 @@ jobs:
         run: uv run pytest -q
       - name: darnlink self-check (links must be clean)
         run: uv run darnlink .
-      - name: smoke-test the published command (packaged build via uvx, no dev deps)
-        # Builds the package from pyproject like a real user's `uvx --from git+… darnlink`
-        # would: exercises the entry point and runtime deps (not the editable/dev install).
+
+  # Exercises the commands users actually run (packaging + entry point + the literal README
+  # one-liner), which the editable/dev install above skips. Runs once (not per Python).
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Packaged build via uvx (no dev deps)
         run: uvx --from . darnlink .
-      - name: smoke-test the exact README one-liner (public, end-to-end over git)
-        # The literal command users copy-paste — pinned to this commit so it tests this code.
+      - name: The exact README one-liner, end-to-end over git (pinned to this commit)
         run: uvx --from git+https://github.com/txemi/darnlink.git@${{ github.sha }} darnlink .

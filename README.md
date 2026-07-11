@@ -3,6 +3,10 @@
 > **Never break a Markdown link again.**
 > Deterministic, automatic, self-healing links.
 
+[![CI](https://github.com/txemi/darnlink/actions/workflows/ci.yml/badge.svg)](https://github.com/txemi/darnlink/actions/workflows/ci.yml)
+[![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+
 Markdown is excellent for documentation: it gives you fine-grained version history of how a
 document evolves, and it is easy for both humans and language models to read and process. It has
 one flaw — **links break the moment you refactor.** Move a folder, rename a file, and every link
