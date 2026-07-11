@@ -1,0 +1,172 @@
+"""Robustify: upgrade a plain relative link to a robust one.
+
+For each plain link that resolves to a local `.md` file, ensure that target has a `uuid` in its
+frontmatter (reuse it, or create one because a link now references it), then append the
+`<!-- uuid: … -->` annotation to the link. A UUID is created only where a link needs it.
+
+Targets without any frontmatter are skipped unless `create_frontmatter=True` (Constitution II:
+creating frontmatter is opt-in).
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from fnmatch import fnmatch
+from pathlib import Path
+from typing import Dict, List, Set, Tuple
+
+from .frontmatter_edit import (
+    add_uuid_to_content,
+    new_uuid,
+    read_text_keep_newlines,
+    write_text_keep_newlines,
+)
+from .frontmatter_index import DEFAULT_EXCLUDES, iter_markdown_files, read_frontmatter_uuid
+from .links import code_spans, emit_robust_link, file_is_ignored, find_plain_links, ignored_spans
+from .paths import is_local_md, resolve_href
+from .report import Finding, Kind
+
+
+@dataclass
+class RobustifyResult:
+    findings: List[Finding] = field(default_factory=list)
+    new_content: Dict[Path, str] = field(default_factory=dict)
+    ignored: List[Path] = field(default_factory=list)  # files skipped via the ignore-file marker
+    invalid: List[Path] = field(default_factory=list)  # files with non-YAML frontmatter (reported)
+
+
+def _md_target(href: str, linking_file: Path) -> Path | None:
+    if not is_local_md(href):
+        return None
+    t = resolve_href(href, linking_file)
+    if t.exists() and t.suffix.lower() == ".md":
+        return t
+    return None
+
+
+def _basename_denied(target: Path, no_create_globs: Tuple[str, ...]) -> bool:
+    """True if the target's basename matches any deny-list glob (FR-029/FR-032)."""
+    return any(fnmatch(target.name, g) for g in no_create_globs)
+
+
+def plan_robustify(
+    root: Path,
+    create_frontmatter: bool = False,
+    excludes: set = DEFAULT_EXCLUDES,
+    block_markers: tuple = (),
+    no_create_globs: Tuple[str, ...] = (),
+) -> RobustifyResult:
+    result = RobustifyResult()
+    contents: Dict[Path, str] = {}
+    spans: Dict[Path, list] = {}
+    files: List[Path] = []
+    for f in iter_markdown_files(root, excludes):
+        try:
+            c = read_text_keep_newlines(f)
+        except Exception:
+            continue
+        if file_is_ignored(c):
+            result.ignored.append(f)  # not a source and (being absent from contents) not a target
+            continue
+        files.append(f)
+        contents[f] = c
+        spans[f] = ignored_spans(c, block_markers) + code_spans(c)
+
+    ignored_targets = {p.resolve() for p in result.ignored}  # opted-out files: never become targets
+
+    # --- Phase A: decide the uuid for every target of a plain link ---
+    target_uuid: Dict[Path, str] = {}   # target -> uuid to annotate with
+    needs_uuid_write: Set[Path] = set() # targets we will add a uuid to
+    skip_no_fm: Set[Path] = set()       # targets with no frontmatter and create disabled
+    skip_denied: Set[Path] = set()      # targets matched by --no-create-frontmatter-for (never a uuid)
+    invalid_fm: Set[Path] = set()       # targets whose frontmatter is not valid YAML (reported)
+
+    def decide(target: Path) -> None:
+        target = target.resolve()
+        if target in target_uuid or target in skip_no_fm or target in skip_denied or target in invalid_fm:
+            return
+        c = contents.get(target)
+        if c is None:
+            skip_no_fm.add(target)  # outside scanned scope; don't touch
+            return
+        status, existing = read_frontmatter_uuid(c)  # canonical YAML reader (FR-023)
+        if status == "invalid":
+            invalid_fm.add(target)  # not valid YAML: never read, never written (FR-024)
+            return
+        if existing:
+            target_uuid[target] = existing  # reuse is not creation: never gated by the deny-list
+            return
+        if _basename_denied(target, no_create_globs):
+            # regenerated companion (a pipeline rewrites it): never give it a uuid — neither create
+            # a block nor insert into an existing one (FR-029/FR-030). Tracked separately from
+            # skip_no_fm so the report is accurate (it is not a "needs --create-frontmatter" case).
+            skip_denied.add(target)
+            return
+        u = new_uuid()
+        if add_uuid_to_content(c, u, create_frontmatter) is None:
+            skip_no_fm.add(target)  # no frontmatter, creation not allowed
+            return
+        target_uuid[target] = u
+        needs_uuid_write.add(target)
+
+    for f in files:
+        for link in find_plain_links(contents.get(f, ""), spans.get(f, [])):
+            t = _md_target(link.href, f)
+            # Skip self-links (a file linking to itself, e.g. autogrid `path` rows): robustifying
+            # them is meaningless and would touch machine-generated blocks.
+            if t is not None and t.resolve() != f.resolve():
+                decide(t)
+
+    # --- Phase B: per file, annotate plain links, then add its own uuid if it is a target ---
+    for f in files:
+        original = contents.get(f, "")
+        pieces: List[str] = []
+        cursor = 0
+        changed = False
+        for link in find_plain_links(original, spans.get(f, [])):
+            t = _md_target(link.href, f)
+            if t is None or t.resolve() == f.resolve():
+                continue  # skip non-md/external and self-links
+            tr = t.resolve()
+            if tr in ignored_targets or tr in invalid_fm:
+                continue  # opted-out or invalid-YAML target: leave the link plain (invalid reported below)
+            if tr in skip_denied:
+                result.findings.append(
+                    Finding(Kind.DENY_LISTED, f, f"{link.href}: target deny-listed (--no-create-frontmatter-for); link left plain")
+                )
+                continue
+            if tr in skip_no_fm:
+                result.findings.append(
+                    Finding(Kind.NO_FRONTMATTER, f, f"{link.href}: target has no frontmatter; skipped")
+                )
+                continue
+            u = target_uuid.get(tr)
+            if u is None:
+                continue
+            pieces.append(original[cursor:link.start])
+            pieces.append(emit_robust_link(link.text, link.href, u))
+            cursor = link.end
+            changed = True
+            result.findings.append(Finding(Kind.ROBUSTIFY, f, f"{link.href} +uuid {u}"))
+        content = ("".join(pieces) + original[cursor:]) if changed else original
+
+        if f.resolve() in needs_uuid_write:
+            added = add_uuid_to_content(content, target_uuid[f.resolve()], create_frontmatter)
+            if added is not None:
+                content = added
+
+        if content != original:
+            result.new_content[f] = content
+
+    # report invalid-frontmatter targets once each (never read, never written) — FR-024/FR-026
+    for p in sorted(invalid_fm):
+        result.invalid.append(p)
+        result.findings.append(Finding(Kind.INVALID_FRONTMATTER, p, "frontmatter is not valid YAML; left untouched"))
+    return result
+
+
+def apply_robustify(result: RobustifyResult) -> List[Path]:
+    written: List[Path] = []
+    for path, content in result.new_content.items():
+        write_text_keep_newlines(path, content)
+        written.append(path)
+    return written

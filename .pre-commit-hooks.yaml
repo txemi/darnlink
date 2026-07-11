@@ -1,0 +1,20 @@
+# Lets other repos use darnlink as a pre-commit hook:
+#   - repo: https://github.com/<owner>/darnlink
+#     rev: v0.1.0
+#     hooks:
+#       - id: darnlink            # report broken robust links (fails if any need repair)
+#       - id: darnlink-repair     # auto-repair broken robust links (--write)
+- id: darnlink
+  name: darnlink (check robust Markdown links)
+  description: Report robust Markdown links whose target moved (UUID-anchored); fails if any need repair.
+  entry: darnlink
+  language: python
+  pass_filenames: false
+  types: [markdown]
+- id: darnlink-repair
+  name: darnlink repair (fix robust Markdown links)
+  description: Repair robust Markdown links in place.
+  entry: darnlink --write
+  language: python
+  pass_filenames: false
+  types: [markdown]

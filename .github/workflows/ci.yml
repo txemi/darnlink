@@ -1,0 +1,28 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Create venv and install
+        run: |
+          uv venv
+          uv pip install -e ".[dev]"
+      - name: Run tests
+        run: uv run pytest -q
+      - name: darnlink self-check (links must be clean)
+        run: uv run darnlink .
+      - name: smoke-test the published command (packaged build via uvx, no dev deps)
+        # Builds the package from pyproject like a real user's `uvx --from git+… darnlink`
+        # would: exercises the entry point and runtime deps (not the editable/dev install).
+        run: uvx --from . darnlink .
+      - name: smoke-test the exact README one-liner (public, end-to-end over git)
+        # The literal command users copy-paste — pinned to this commit so it tests this code.
+        run: uvx --from git+https://github.com/txemi/darnlink.git@${{ github.sha }} darnlink .

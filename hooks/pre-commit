@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Versioned git pre-commit hook (lives in the repo, unlike .git/hooks/).
+# Activate ONCE per clone (git won't auto-run versioned hooks, by design — security):
+#   git config core.hooksPath hooks
+#
+# Runs the local quality gate (tests + darnlink self-check); a failure blocks the commit.
+# Conscious bypass: git commit --no-verify
+exec bash "$(git rev-parse --show-toplevel)/tools/check.sh"
