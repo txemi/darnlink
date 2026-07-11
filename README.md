@@ -18,20 +18,10 @@ that get relocated and refactored over time.
 
 ## See it heal a link
 
-A robust link carries its target's uuid inline (darnlink adds it once, and it stays a normal,
-clickable Markdown link):
+![darnlink repairs a link whose target was moved — same uuid, new path](demo/demo.gif)
 
-```markdown
-See the [design doc](docs/design.md) <!-- uuid: 7f3a1e2c -->
-```
-
-You reorganise — `docs/design.md` → `architecture/design.md` — so the path is now stale. Run:
-
-```bash
-darnlink . --write
-```
-
-darnlink finds the target by its uuid and rewrites **only** the path — nothing else in the tree changes:
+A robust link carries its target's uuid inline and stays a normal, clickable Markdown link. Move the
+target and the path goes stale; `darnlink . --write` finds it by uuid and rewrites **only** the path:
 
 ```diff
 -See the [design doc](docs/design.md) <!-- uuid: 7f3a1e2c -->
