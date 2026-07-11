@@ -17,10 +17,9 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Create venv and install
-        run: |
-          uv venv
-          uv pip install -e ".[dev]"
+      # setup-uv (with python-version) already created & activated the venv — just install.
+      - name: Install the project (dev extras)
+        run: uv pip install -e ".[dev]"
       - name: Run tests
         run: uv run pytest -q
       - name: darnlink self-check (links must be clean)
