@@ -4,6 +4,18 @@ All notable changes to darnlink are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.1.1] — 2026-07-11
+
+### Fixed
+- A UTF-8 BOM before the frontmatter no longer hides a file's `uuid` from the index. Previously the
+  index reader used plain `utf-8`, so the BOM sat before `---` and the target's `uuid` was never
+  indexed — inbound robust links to a BOM-carrying target were left unresolved instead of repaired.
+  Common on Windows-authored files; found by validating on real Windows.
+
+### Changed
+- CI now runs the full test suite **and** the one-liner smoke test on Windows as well as Linux
+  (`windows-latest` in the matrix), so Windows-specific regressions are caught automatically.
+
 ## [0.1.0] — 2026-07-11
 
 First public release.
@@ -21,4 +33,5 @@ First public release.
 - Ships a [pre-commit](https://pre-commit.com/) hook (`darnlink`, `darnlink-repair`).
 - Format specification: [FORMAT.md](FORMAT.md).
 
+[0.1.1]: https://github.com/txemi/darnlink/releases/tag/v0.1.1
 [0.1.0]: https://github.com/txemi/darnlink/releases/tag/v0.1.0
