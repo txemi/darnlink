@@ -107,7 +107,7 @@ breakage before it lands. Pick the one that fits your workflow — near copy-pas
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/txemi/darnlink
-    rev: v0.1.0
+    rev: v0.1.1
     hooks:
       - id: darnlink            # fail the commit if any robust link is broken
       # - id: darnlink-repair   # …or auto-repair in place instead of failing
