@@ -76,7 +76,9 @@ def build_index(root: Path, excludes: set[str] = DEFAULT_EXCLUDES) -> Frontmatte
     index = FrontmatterIndex()
     for path in iter_markdown_files(root, excludes):
         try:
-            content = path.read_text(encoding="utf-8")  # read once: marker + uuid both come from it
+            # utf-8-sig strips a leading UTF-8 BOM (common on Windows-authored files) so it doesn't
+            # sit before the `---` and hide the frontmatter from the index. Same as the write path.
+            content = path.read_text(encoding="utf-8-sig")  # read once: marker + uuid both come from it
         except Exception:
             continue
         if file_is_ignored(content):

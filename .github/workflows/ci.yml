@@ -5,11 +5,15 @@ on:
   pull_request:
 
 jobs:
-  # Tests across every supported Python (pyproject requires-python = ">=3.10").
+  # Tests across every supported Python (pyproject requires-python = ">=3.10"),
+  # on Linux AND Windows — Windows-authored files (BOM, CRLF, path separators) are
+  # exactly where this kind of tool breaks, so we run the suite there too.
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest]
         python-version: ['3.10', '3.11', '3.12', '3.13']
     steps:
       - uses: actions/checkout@v4
@@ -17,7 +21,6 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           python-version: ${{ matrix.python-version }}
-      # setup-uv (with python-version) already created & activated the venv — just install.
       - name: Install the project (dev extras)
         run: uv pip install -e ".[dev]"
       - name: Run tests
@@ -26,9 +29,13 @@ jobs:
         run: uv run darnlink .
 
   # Exercises the commands users actually run (packaging + entry point + the literal README
-  # one-liner), which the editable/dev install above skips. Runs once (not per Python).
+  # one-liner) on Linux AND Windows — so the copy-paste one-liner is proven on both.
   smoke:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - name: Install uv
