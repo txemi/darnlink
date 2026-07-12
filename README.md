@@ -144,7 +144,7 @@ uvx --from git+https://github.com/txemi/darnlink darnlink . || {
 
 ## Used by
 
-- [immich-autotag](https://github.com/txemi/immich-autotag) — a rule engine for organizing Immich photo libraries — runs darnlink as a **read-only docs-link quality gate** across pre-commit, Jenkins and GitHub Actions, keeping its documentation's Markdown links from breaking when files move.
+- [immich-autotag](https://github.com/txemi/immich-autotag) — a rule engine for organizing Immich photo libraries — runs darnlink as a **read-only docs-link quality gate** in pre-commit, Jenkins, and GitHub Actions, so its Markdown docs links don't break when files move.
 
 ## Prior art & how darnlink differs
 
