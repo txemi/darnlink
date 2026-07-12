@@ -142,6 +142,10 @@ uvx --from git+https://github.com/txemi/darnlink darnlink . || {
 > To have the gate **fix** links instead of just failing, use `--write` (Actions/hook) or the
 > `darnlink-repair` hook id (pre-commit).
 
+## Used by
+
+- [immich-autotag](https://github.com/txemi/immich-autotag) — a rule engine for organizing Immich photo libraries — runs darnlink as a **read-only docs-link quality gate** in pre-commit, Jenkins, and GitHub Actions, so its Markdown docs links don't break when files move.
+
 ## Prior art & how darnlink differs
 
 The idea of surviving refactors by anchoring to an identity isn't new, but the specific combination is a gap:
