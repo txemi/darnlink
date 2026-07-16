@@ -4,6 +4,7 @@
 #     hooks:
 #       - id: darnlink            # report broken robust links (fails if any need repair)
 #       - id: darnlink-repair     # auto-repair broken robust links (--write)
+#       - id: darnlink-strict     # fail-closed: also require every anchorable plain link to be robust
 - id: darnlink
   name: darnlink (check robust Markdown links)
   description: Report robust Markdown links whose target moved (UUID-anchored); fails if any need repair.
@@ -15,6 +16,18 @@
   name: darnlink repair (fix robust Markdown links)
   description: Repair robust Markdown links in place.
   entry: darnlink --write
+  language: python
+  pass_filenames: false
+  types: [markdown]
+- id: darnlink-strict
+  name: darnlink strict (fail-closed — require every anchorable link to be robust)
+  description: >-
+    Fail (dry-run, no writes) if any plain Markdown link to an anchorable target (a local file with
+    frontmatter) is left un-anchored. Stricter than `darnlink`: it does not just keep existing robust
+    links working, it requires links to be robust in the first place. Targets that can't take a uuid
+    (non-local, deny-listed, or without frontmatter) are left alone. Exempt generated files with a
+    `<!-- darnlink-ignore-file -->` marker or `--exclude <dir>`.
+  entry: darnlink --robustify
   language: python
   pass_filenames: false
   types: [markdown]

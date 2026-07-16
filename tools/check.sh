@@ -10,4 +10,5 @@ cd "$(git rev-parse --show-toplevel)"
 
 uv sync --extra dev   # set up the environment (project + dev deps), like CI's install step
 uv run pytest -q
-uv run darnlink .
+uv run darnlink .              # repair check: robust links must not be broken
+uv run darnlink . --robustify  # strict check (fail-closed): every anchorable link must be robust
