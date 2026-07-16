@@ -142,6 +142,37 @@ uvx --from git+https://github.com/txemi/darnlink darnlink . || {
 > To have the gate **fix** links instead of just failing, use `--write` (Actions/hook) or the
 > `darnlink-repair` hook id (pre-commit).
 
+### Stricter: require every link to be *robust* (fail-closed)
+
+The gate above keeps the robust links you already have from breaking. It says nothing about **plain**
+relative links that were never anchored — so a fresh, un-anchored link sails through, and the next
+refactor silently breaks it. To close that gap, run the **robustify check** (dry-run — it reports,
+it does **not** write):
+
+```bash
+darnlink . --robustify        # exits non-zero if any plain link whose target has a uuid is un-anchored
+```
+
+This is **fail-closed**: it fails until every link that *can* be robust *is* robust. Links whose
+target has no `uuid` (external files, generated exports, mirrors) are left alone — it only demands
+robustness where robustness is possible. Wire it as a pre-commit hook with the `darnlink-strict` id:
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/txemi/darnlink
+    rev: v0.1.1   # darnlink-strict ships in the next release; until it's tagged, pin rev: to a main commit that has it
+    hooks:
+      - id: darnlink            # links that *are* robust must not break
+      - id: darnlink-strict     # …and every anchorable link *must* be robust (fail-closed)
+```
+
+To adopt it on an existing repo: anchor what's already anchorable once with
+`darnlink . --robustify --write` (review the diff, commit), then the gate stays green. **Generated
+files** with plain links you don't want to anchor: put `<!-- darnlink-ignore-file -->` at the top of
+each (or have the generator emit it), or `--exclude <dir>` a whole tree. darnlink itself is gated
+this way (see `tools/check.sh` / CI).
+
 ## Used by
 
 - [immich-autotag](https://github.com/txemi/immich-autotag) — a rule engine for organizing Immich photo libraries — runs darnlink as a **read-only docs-link quality gate** in pre-commit, Jenkins, and GitHub Actions, so its Markdown docs links don't break when files move.
