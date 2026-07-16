@@ -9,10 +9,11 @@ All notable changes to darnlink are documented here. The format is based on
 ### Added
 - **Strict, fail-closed gate** — a first-class way to require that every *anchorable* link is robust,
   not just that existing robust links keep working. Run `darnlink . --robustify` (dry-run: it reports
-  and exits non-zero, it does not write) or wire the new `darnlink-strict` pre-commit hook id. Links
-  whose target has no `uuid` are left alone; exempt generated files with `<!-- darnlink-ignore-file -->`
-  or `--exclude`. Documented in the README ("Stricter: require every link to be robust"); darnlink now
-  dogfoods it in its own CI and `tools/check.sh`.
+  and exits non-zero, it does not write) or wire the new `darnlink-strict` pre-commit hook id. A target
+  is anchorable when it's a local file with frontmatter; targets that can't take a `uuid` (non-local,
+  deny-listed, or without frontmatter unless `--create-frontmatter`) are left alone. Exempt generated
+  files with `<!-- darnlink-ignore-file -->` or `--exclude`. Documented in the README ("Stricter:
+  require every link to be robust"); darnlink now dogfoods it in its own CI and `tools/check.sh`.
 
 ## [0.1.1] — 2026-07-11
 
@@ -43,5 +44,6 @@ First public release.
 - Ships a [pre-commit](https://pre-commit.com/) hook (`darnlink`, `darnlink-repair`).
 - Format specification: [FORMAT.md](FORMAT.md) <!-- uuid: 9052d864-2a45-4ed4-8725-d8a394e7a7ef -->.
 
+[Unreleased]: https://github.com/txemi/darnlink/compare/v0.1.1...HEAD
 [0.1.1]: https://github.com/txemi/darnlink/releases/tag/v0.1.1
 [0.1.0]: https://github.com/txemi/darnlink/releases/tag/v0.1.0

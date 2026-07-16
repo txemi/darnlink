@@ -150,18 +150,21 @@ refactor silently breaks it. To close that gap, run the **robustify check** (dry
 it does **not** write):
 
 ```bash
-darnlink . --robustify        # exits non-zero if any plain link whose target has a uuid is un-anchored
+darnlink . --robustify        # exits non-zero if any plain link to an anchorable target is un-anchored
 ```
 
-This is **fail-closed**: it fails until every link that *can* be robust *is* robust. Links whose
-target has no `uuid` (external files, generated exports, mirrors) are left alone — it only demands
-robustness where robustness is possible. Wire it as a pre-commit hook with the `darnlink-strict` id:
+This is **fail-closed**: it fails until every link that *can* be robust *is* robust. A target is
+*anchorable* when it's a local Markdown file with frontmatter (darnlink reuses its `uuid`, or adds
+one). Links whose target **can't** take a `uuid` are left alone — external/non-local targets,
+deny-listed targets, and targets **without frontmatter** (unless you opt in with
+`--create-frontmatter`). So it only demands robustness where robustness is possible. Wire it as a
+pre-commit hook with the `darnlink-strict` id:
 
 ```yaml
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/txemi/darnlink
-    rev: v0.1.1   # darnlink-strict ships in the next release; until it's tagged, pin rev: to a main commit that has it
+    rev: v0.2.0   # first release that ships darnlink-strict (until it's tagged, pin rev: to a main SHA that has it)
     hooks:
       - id: darnlink            # links that *are* robust must not break
       - id: darnlink-strict     # …and every anchorable link *must* be robust (fail-closed)
