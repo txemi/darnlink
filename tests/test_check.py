@@ -113,3 +113,15 @@ def test_json_includes_invalid_frontmatter_details(tmp_path, capsys):
     assert any("bad.md" in p for p in out["integrity"]["invalid_frontmatter_files"])
     assert any(f["kind"] == "invalid_frontmatter" and "bad.md" in f["file"]
                for f in out["integrity"]["findings"])
+
+
+def test_json_strict_axis_lists_invalid_frontmatter(tmp_path, capsys):
+    # a plain link whose TARGET has invalid frontmatter surfaces on the strict axis too; the --json
+    # must carry the file list there as well (not just a count).
+    _w(tmp_path / "bad.md", "---\nuuid: [unterminated\n---\n# bad\n")
+    _w(tmp_path / "A.md", "see [bad](bad.md)\n")  # plain link to the invalid target
+    main(["check", str(tmp_path), "--json"])
+    out = json.loads(capsys.readouterr().out)
+    assert any("bad.md" in p for p in out["strict"]["invalid_frontmatter_files"])
+    assert any(f["kind"] == "invalid_frontmatter" and "bad.md" in f["file"]
+               for f in out["strict"]["findings"])
