@@ -39,8 +39,10 @@ a **distinguishable exit code**, so a CI/pre-commit gate is one command that can
 darnlink check [PATH] [--exclude … --ignore-block … --json]
 ```
 
-It is **report-only** (never writes — see Constitution Check), builds the UUID index **once** (both
-checks share it), and exits with a code that says *which* axis failed.
+It is **report-only** (never writes — see Constitution Check) and exits with a code that says *which*
+axis failed. (Implementation note: each axis scans as the existing `darnlink .` / `--robustify`
+commands do; sharing a single index build across both is a possible later optimization, not required
+for the value here, which is "one command can't forget a half" + a distinguishable exit code.)
 
 ### Exit codes (the point of the subcommand)
 
@@ -87,7 +89,7 @@ Reviewed against the constitution (verdict on 2026-07-17: green on substance, `c
 ### Functional Requirements
 
 - **FR-001** `darnlink check PATH` MUST run the repair check and the robustify check over PATH in a
-  single process, building the UUID index once.
+  single invocation (so a consumer cannot run one and forget the other).
 - **FR-002** It MUST be report-only: no flag on `check` writes to disk; `--write` is not accepted.
 - **FR-003** Exit code MUST be 0 (clean), 2 (integrity failure), 3 (strict-only failure), 1 (usage).
   Integrity precedence over strict when both fail.
@@ -110,7 +112,7 @@ Reviewed against the constitution (verdict on 2026-07-17: green on substance, `c
 - A tree with both → exit **2** (integrity precedence), report shows both.
 - A clean tree → exit **0**.
 - `darnlink check` and running `darnlink .` then `darnlink . --robustify` MUST agree on pass/fail per
-  axis (same checks, one index build).
+  axis (same underlying checks).
 - No file on disk changes across any `check` invocation (assert mtimes unchanged).
 
 ## Out of scope (explicitly, per the unification agreement)
