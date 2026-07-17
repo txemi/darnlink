@@ -97,7 +97,7 @@ The sections above introduce these in context; this is the full list (same as `d
 | `--robustify` | Upgrade plain links to robust. Without it the operation is *repair* (fix robust links whose target moved). |
 | `--create-frontmatter` | *(robustify)* Allow creating frontmatter on a target that has none, so it can take a `uuid`. Opt-in on purpose. |
 | `--no-create-frontmatter-for GLOB` | *(robustify)* Basename glob whose targets **never** get a `uuid` — no block created, no line inserted — regardless of `--create-frontmatter`. Reusing a `uuid` the target already has is unaffected. Repeatable. |
-| `--exclude NAME` | Skip any directory named `NAME`. Repeatable. |
+| `--exclude PATTERN` | Skip any directory whose name matches `PATTERN` (glob / `fnmatch`, case-sensitive; a plain name matches exactly). Repeatable — e.g. `--exclude old --exclude 'old_*' --exclude '*_old'` skips the whole `old` family. |
 | `--ignore-block NAME` | Leave links inside `<!-- NAME-start --> … <!-- NAME-end -->` blocks alone. Repeatable. |
 | `--json` | Machine-readable output (see below). |
 
