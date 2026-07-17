@@ -63,6 +63,8 @@ def _run_repair(root: Path, write: bool, excludes: set, as_json: bool, block_mar
             print(f"  [conflict] {f.file}: {f.detail}")
         for f in unresolved:
             print(f"  [{f.kind.value}] {f.file}: {f.detail}")
+        for f in [x for x in result.findings if x.kind is Kind.IGNORED_LINKS]:
+            print(f"  [link-ignored] {f.file}: {f.detail}")
         for p in index.invalid:
             print(f"  [invalid-frontmatter] {p}: not valid YAML; not indexed (fix the file)")
         if write:

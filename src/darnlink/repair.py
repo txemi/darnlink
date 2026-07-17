@@ -28,8 +28,8 @@ from .report import Finding, Kind
 class RepairResult:
     findings: List[Finding] = field(default_factory=list)
     new_content: Dict[Path, str] = field(default_factory=dict)  # files that would change
-    ignored: List[Path] = field(default_factory=list)
-    link_ignored: List[Path] = field(default_factory=list)  # sources via the ignore-links marker (006)  # files skipped via the ignore-file marker
+    ignored: List[Path] = field(default_factory=list)  # files skipped via the ignore-file marker
+    link_ignored: List[Path] = field(default_factory=list)  # sources via the ignore-links marker (006)
 
 
 def plan_repairs(
