@@ -6,6 +6,8 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-07-17
+
 ### Added
 - **`darnlink check` — a report-only gate subcommand.** Runs **both** axes in one invocation — repair
   (integrity: broken/unresolvable robust links + invalid frontmatter) and robustify (strict:
@@ -68,7 +70,8 @@ First public release.
 - Ships a [pre-commit](https://pre-commit.com/) hook (`darnlink`, `darnlink-repair`).
 - Format specification: [FORMAT.md](FORMAT.md) <!-- uuid: 9052d864-2a45-4ed4-8725-d8a394e7a7ef -->.
 
-[Unreleased]: https://github.com/txemi/darnlink/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/txemi/darnlink/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/txemi/darnlink/releases/tag/v0.3.0
 [0.2.0]: https://github.com/txemi/darnlink/releases/tag/v0.2.0
 [0.1.1]: https://github.com/txemi/darnlink/releases/tag/v0.1.1
 [0.1.0]: https://github.com/txemi/darnlink/releases/tag/v0.1.0
