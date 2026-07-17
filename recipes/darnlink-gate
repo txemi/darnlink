@@ -19,7 +19,7 @@
 #   • fails OPEN on a network/uvx error (offline commit isn't bricked; CI is the backstop).
 #
 # CONFIG. Reads `darnlink-gate.json` at the repo root (all keys optional):
-#   { "ref": "git+https://github.com/txemi/darnlink@v0.4.0",
+#   { "ref": "git+https://github.com/txemi/darnlink@v0.5.0",
 #     "excludes": ["secrets","external_repos"], "ignore_blocks": ["txmd-autogrid"],
 #     "mode": "check", "scope": "repo" }
 # Env overrides (so one config serves both surfaces): DARNLINK_REF, DARNLINK_GATE_MODE,
@@ -45,7 +45,7 @@ print("\n".join(v) if isinstance(v, list) else (v if v is not None else default)
 PY
 }
 
-REF="${DARNLINK_REF:-$(read_cfg ref 'git+https://github.com/txemi/darnlink@v0.4.0')}"
+REF="${DARNLINK_REF:-$(read_cfg ref 'git+https://github.com/txemi/darnlink@v0.5.0')}"
 MODE="${DARNLINK_GATE_MODE:-$(read_cfg mode check)}"
 SCOPE="${DARNLINK_GATE_SCOPE:-$(read_cfg scope repo)}"
 mapfile -t EXCLUDES < <(read_cfg excludes "")
