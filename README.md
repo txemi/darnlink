@@ -206,7 +206,7 @@ pre-commit hook with the `darnlink-strict` id:
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/txemi/darnlink
-    rev: v0.2.0   # first release that ships darnlink-strict (until it's tagged, pin rev: to a main SHA that has it)
+    rev: v0.2.0   # darnlink-strict ships here
     hooks:
       - id: darnlink            # links that *are* robust must not break
       - id: darnlink-strict     # …and every anchorable link *must* be robust (fail-closed)
