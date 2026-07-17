@@ -150,8 +150,12 @@ def _run_check(root: Path, excludes: set, as_json: bool, block_markers: tuple) -
             "strict": {
                 "failed": strict_fail,
                 "robustify": len(upgrades), "invalid_frontmatter": len(rob.invalid),
+                "invalid_frontmatter_files": [str(p) for p in rob.invalid],
                 "findings": [{"kind": f.kind.value, "file": str(f.file), "detail": f.detail}
-                             for f in upgrades],
+                             for f in upgrades]
+                + [{"kind": Kind.INVALID_FRONTMATTER.value, "file": str(p),
+                    "detail": "frontmatter present but not valid YAML; left untouched (fix the file)"}
+                   for p in rob.invalid],
             },
         }, indent=2))
     else:
@@ -164,8 +168,12 @@ def _run_check(root: Path, excludes: set, as_json: bool, block_markers: tuple) -
               f"→ {'FAIL' if strict_fail else 'ok'}")
         for f in repairs + conflicts + unresolved:
             print(f"  [integrity/{f.kind.value}] {f.file}: {f.detail}")
+        for p in index.invalid:
+            print(f"  [integrity/invalid-frontmatter] {p}: not valid YAML; not indexed (fix the file)")
         for f in upgrades:
             print(f"  [strict/robustify] {f.file}: {f.detail}")
+        for p in rob.invalid:
+            print(f"  [strict/invalid-frontmatter] {p}: not valid YAML; left untouched (fix the file)")
         print(f"  → exit {code} ({outcome})")
 
     return code
