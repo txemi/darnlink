@@ -73,10 +73,11 @@ def plan_robustify(
         # Feature 006: source-only opt-out. It stays in `files`/`contents` on purpose — it must still
         # be able to RECEIVE its own uuid as a target (FR-035), and that write lives in the Phase B
         # loop. Only the link-rewriting halves (Phase A's decide, Phase B's annotate) skip it.
-        if file_ignores_links(c):
-            link_ignored.add(f.resolve())
         files.append(f)
         contents[f] = c
+        if file_ignores_links(c):
+            link_ignored.add(f.resolve())
+            continue  # no spans: nothing reads them for this file, and computing them re-parses it
         spans[f] = ignored_spans(c, block_markers) + code_spans(c)
 
     ignored_targets = {p.resolve() for p in result.ignored}  # opted-out files: never become targets
