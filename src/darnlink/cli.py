@@ -5,7 +5,7 @@
     darnlink [PATH] --robustify [--write] [--create-frontmatter]
     darnlink [PATH] --robustify --create-frontmatter --no-create-frontmatter-for content.md
     darnlink [PATH] --exclude external_repos --json
-    darnlink check [PATH]                        # report-only gate: BOTH checks, exit 0/2/3
+    darnlink check [PATH]                        # report-only gate: BOTH checks, exit 0/2/3 (1 on usage)
 """
 from __future__ import annotations
 
@@ -140,8 +140,12 @@ def _run_check(root: Path, excludes: set, as_json: bool, block_markers: tuple) -
                 "failed": integrity_fail,
                 "repairs": len(repairs), "conflicts": len(conflicts),
                 "unresolved": len(unresolved), "invalid_frontmatter": len(index.invalid),
+                "invalid_frontmatter_files": [str(p) for p in index.invalid],
                 "findings": [{"kind": f.kind.value, "file": str(f.file), "detail": f.detail}
-                             for f in (repairs + conflicts + unresolved)],
+                             for f in (repairs + conflicts + unresolved)]
+                + [{"kind": Kind.INVALID_FRONTMATTER.value, "file": str(p),
+                    "detail": "frontmatter present but not valid YAML; not indexed"}
+                   for p in index.invalid],
             },
             "strict": {
                 "failed": strict_fail,
@@ -167,9 +171,16 @@ def _run_check(root: Path, excludes: set, as_json: bool, block_markers: tuple) -
     return code
 
 
+class _CheckArgParser(argparse.ArgumentParser):
+    # Exit 1 (usage) on a bad flag/arg, not argparse's default 2 — 2 means "integrity failure" here.
+    def error(self, message: str):  # noqa: D401
+        self.print_usage(sys.stderr)
+        self.exit(1, f"{self.prog}: error: {message}\n")
+
+
 def _run_check_cli(argv: List[str]) -> int:
     """Parse `darnlink check [PATH] [--exclude … --ignore-block … --json]` (report-only: no --write)."""
-    parser = argparse.ArgumentParser(
+    parser = _CheckArgParser(
         prog="darnlink check",
         description="report-only gate: run BOTH the repair (integrity) and robustify (strict) checks "
         "over PATH and exit 0 (clean) / 2 (integrity) / 3 (strict). Never writes.",

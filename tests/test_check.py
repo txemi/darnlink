@@ -11,6 +11,8 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
 from darnlink.cli import main
 
 U = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -92,3 +94,22 @@ def test_json_separates_the_two_axes(tmp_path, capsys):
 def test_not_a_directory_exits_1(tmp_path):
     missing = tmp_path / "nope"
     assert main(["check", str(missing)]) == 1
+
+
+def test_bad_flag_exits_1_not_2(tmp_path):
+    # argparse defaults to exit 2 on a parse error, which would collide with "integrity failure";
+    # `check` must use 1 for usage errors (Copilot review, PR #6).
+    with pytest.raises(SystemExit) as e:
+        main(["check", str(tmp_path), "--nonexistent-flag"])
+    assert e.value.code == 1
+
+
+def test_json_includes_invalid_frontmatter_details(tmp_path, capsys):
+    # invalid YAML frontmatter -> integrity failure; the --json must carry the file, not just a count.
+    _w(tmp_path / "bad.md", "---\nuuid: [unterminated\n---\n# bad\n")
+    code = main(["check", str(tmp_path), "--json"])
+    out = json.loads(capsys.readouterr().out)
+    assert code == 2
+    assert any("bad.md" in p for p in out["integrity"]["invalid_frontmatter_files"])
+    assert any(f["kind"] == "invalid_frontmatter" and "bad.md" in f["file"]
+               for f in out["integrity"]["findings"])
