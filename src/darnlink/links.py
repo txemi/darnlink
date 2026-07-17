@@ -117,6 +117,19 @@ def code_spans(content: str) -> List[Span]:
     return fenced + _inline_code_spans(content, fenced)
 
 
+def _carries_marker(content: str, keyword: str, marker_re: "re.Pattern[str]") -> bool:
+    """True if `marker_re` matches outside a code span (so a file documenting the marker as an
+    example does not opt itself out). Pure & deterministic.
+
+    The `keyword` substring test is a cheap reject: markers are rare, and `code_spans()` parses the
+    whole file, so the common case (no marker at all) must not pay for it. It is safe because every
+    marker regex requires that keyword literally — a file that lacks the substring cannot match."""
+    if keyword not in content:
+        return False
+    code = code_spans(content)
+    return any(not _in_spans(m.start(), code) for m in marker_re.finditer(content))
+
+
 # A whole-file opt-out: a file carrying this marker is removed from the darnlink graph entirely.
 IGNORE_FILE_MARKER = "<!-- darnlink-ignore-file -->"
 _IGNORE_FILE_RE = re.compile(r"<!--\s*darnlink-ignore-file\s*-->")
@@ -126,8 +139,27 @@ def file_is_ignored(content: str) -> bool:
     """True if the file opts out of darnlink via a `<!-- darnlink-ignore-file -->` marker that is
     NOT inside a code span (so a file documenting the marker as an example does not self-ignore).
     FR-019..FR-021; composes with code_spans (feature 002). Pure & deterministic."""
-    code = code_spans(content)
-    return any(not _in_spans(m.start(), code) for m in _IGNORE_FILE_RE.finditer(content))
+    return _carries_marker(content, "darnlink-ignore-file", _IGNORE_FILE_RE)
+
+
+# A SOURCE-only opt-out: darnlink never rewrites the links inside this file, but the file stays a
+# first-class target (its uuid is indexed, so inbound robust links resolve and heal). This is the
+# axis `darnlink-ignore-file` fuses: that one also drops the file as a target (FR-019), which the
+# motivating case — a generated, heavily-linked INDEX.md — cannot afford. Feature 006.
+IGNORE_LINKS_MARKER = "<!-- darnlink-ignore-links -->"
+_IGNORE_LINKS_RE = re.compile(r"<!--\s*darnlink-ignore-links\s*-->")
+
+
+def file_ignores_links(content: str) -> bool:
+    """True if the file opts its OWN links out via a `<!-- darnlink-ignore-links -->` marker that is
+    NOT inside a code span. Says nothing about the target axis: the file keeps its uuid indexed.
+    FR-033/FR-036/FR-037; composes with code_spans (feature 002). Pure & deterministic.
+
+    Note (FR-040): the marker must not precede the frontmatter block — the canonical reader only
+    recognises a *leading* `---`, so a marker on line 1 would hide the file's own uuid and silently
+    cost it the target axis. Detection itself is position-free; the ordering is a property of the
+    frontmatter format, not of this check."""
+    return _carries_marker(content, "darnlink-ignore-links", _IGNORE_LINKS_RE)
 
 
 @dataclass(frozen=True)

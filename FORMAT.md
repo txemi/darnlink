@@ -60,18 +60,49 @@ ignored: they are examples, not navigational links, and rewriting them would cor
 
 ## 5. Opting a file out
 
-A file can remove itself from the darnlink graph entirely with a marker comment:
+darnlink asks two independent questions about a file, and there is a marker for each. Both are
+invisible when rendered, and (per §4) an occurrence inside a code block is treated as an example, not
+as opting the file out. Both are self-contained: the generator just emits the marker — no external
+ignore list, no config (Principle III).
+
+| Marker | Its own links rewritten? | Still a target (its `uuid` resolves)? |
+|---|---|---|
+| *(none — default)* | yes | yes |
+| `<!-- darnlink-ignore-links -->` | **no** | **yes** |
+| `<!-- darnlink-ignore-file -->` | **no** | **no** |
+
+### `<!-- darnlink-ignore-links -->` — leave my links alone
+
+```markdown
+<!-- darnlink-ignore-links -->
+```
+
+darnlink never rewrites the links **inside** this file: they are not robustified, and not repaired
+even when their target moves. The file stays a first-class **target**, so other documents can anchor
+to it and their links keep healing when it moves.
+
+This is what a **generated** file wants. Its generator rewrites it wholesale on every run, so any
+anchoring darnlink does there is churn — but a generated index (`INDEX.md`, `PRIORITIES.md`) is
+usually the file everything else links *to*, so it cannot afford to stop being a target. Stale links
+inside it are not darnlink's problem to fix: the generator re-emits the correct paths on its next run.
+
+> **Placement matters.** Put the marker **after** the frontmatter block, never before it. Frontmatter
+> is only recognised at the very top of the file (§2), so a marker on line 1 pushes `---` down and
+> hides the file's own `uuid` — silently costing it the target axis, which is the whole point of this
+> marker. Detection itself is position-free; this ordering comes from the frontmatter format.
+
+### `<!-- darnlink-ignore-file -->` — pretend I don't exist
 
 ```markdown
 <!-- darnlink-ignore-file -->
 ```
 
 A file carrying this marker (anywhere, outside a code span) is **never** scanned as a source (its
-links are left untouched) and **never** indexed as a target (its `uuid` does not resolve links).
-This is the self-contained way to protect a generated file (e.g. an auto-built `INDEX.md`) that
-lives in a directory darnlink otherwise processes — the generator just emits the marker, and no
-external ignore list is needed. The marker is invisible when rendered, and (per §4) an occurrence
-inside a code block is treated as an example, not as opting the file out.
+links are left untouched) and **never** indexed as a target (its `uuid` does not resolve links). Use
+it for a file that should leave the graph completely — not merely for a generated one, which almost
+always still wants inbound links (use `ignore-links` for that).
+
+If a file carries both markers, `ignore-file` wins: the stronger claim takes precedence.
 
 ## 6. Properties
 

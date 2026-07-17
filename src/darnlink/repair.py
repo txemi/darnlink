@@ -17,7 +17,8 @@ from pathlib import Path
 from typing import Dict, List
 
 from .frontmatter_index import DEFAULT_EXCLUDES, FrontmatterIndex, iter_markdown_files
-from .links import code_spans, emit_robust_link, file_is_ignored, find_robust_links, ignored_spans
+from .links import (code_spans, emit_robust_link, file_ignores_links, file_is_ignored,
+                    find_robust_links, ignored_spans)
 from .paths import relative_link, resolve_href, split_fragment
 from .frontmatter_edit import read_text_keep_newlines, write_text_keep_newlines
 from .report import Finding, Kind
@@ -28,6 +29,7 @@ class RepairResult:
     findings: List[Finding] = field(default_factory=list)
     new_content: Dict[Path, str] = field(default_factory=dict)  # files that would change
     ignored: List[Path] = field(default_factory=list)  # files skipped via the ignore-file marker
+    link_ignored: List[Path] = field(default_factory=list)  # sources via the ignore-links marker (006)
 
 
 def plan_repairs(
@@ -45,6 +47,15 @@ def plan_repairs(
             continue
         if file_is_ignored(content):
             result.ignored.append(f)
+            continue
+        # Feature 006: its links are never rewritten — not even to fix a stale path. The generator
+        # re-emits the correct path on its next run; darnlink must not fight it. Unlike ignore-file
+        # this does NOT touch the target axis: the index still resolves this file's uuid (FR-034).
+        if file_ignores_links(content):
+            result.link_ignored.append(f)
+            result.findings.append(Finding(
+                Kind.IGNORED_LINKS, f,
+                "file carries darnlink-ignore-links; its links are left as-is (still a target)"))
             continue
         ignore = ignored_spans(content, block_markers) + code_spans(content)
         links = find_robust_links(content, ignore)
