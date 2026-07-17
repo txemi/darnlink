@@ -10,8 +10,9 @@ is that orchestration in one place; a consumer carries only a tiny config + a 3-
 ## What it does (read-only — never writes)
 
 - Runs darnlink at a **pinned ref** (deterministic).
-- `mode=check` → `darnlink check` (**both** axes: integrity + strict, exit `0/2/3`).
-  `mode=repair` → `darnlink .` (integrity only — for repos that don't robustify their links yet).
+- Always runs `darnlink check` (**both** axes, stable exit `0/2/3`); `mode` only picks which axes gate:
+  `mode=check` → integrity + strict both gate. `mode=repair` → **integrity only** — a strict-only
+  failure (`3`) is treated as clean (for repos that don't robustify their links yet).
 - `scope=repo` → judge the whole tree (**the wall — use in CI**).
   `scope=staged` → judge only the files you're committing (**multi-session pre-commit**, so a
   teammate's in-flight plain link doesn't block your commit). It filters `darnlink check --json` by

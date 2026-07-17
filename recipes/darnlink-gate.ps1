@@ -2,9 +2,10 @@
 #
 # See the bash version for the full rationale. Same contract: read-only; config in darnlink-gate.json
 # (ref/excludes/ignore_blocks/mode/scope) with env overrides (DARNLINK_REF, DARNLINK_GATE_MODE,
-# DARNLINK_GATE_SCOPE); mode=check → `darnlink check` (both axes, 0/2/3), mode=repair → integrity only;
-# scope=staged filters `darnlink check --json` by `git diff --cached` (Option B — darnlink stays
-# git-agnostic); fail-open on network; refuses --write. Exit 0/2/3/1.
+# DARNLINK_GATE_SCOPE). It ALWAYS runs `darnlink check` (stable 0/2/3 contract); MODE only picks which
+# axes gate: mode=check → integrity + strict both gate; mode=repair → integrity only (a strict-only
+# failure, 3, is treated as clean). scope=staged filters `darnlink check --json` by `git diff --cached`
+# (Option B — darnlink stays git-agnostic); fail-open on network; refuses --write. Exit 0/2/3/1.
 $ErrorActionPreference = "Stop"
 
 $root = (git rev-parse --show-toplevel 2>$null)
@@ -48,10 +49,11 @@ if ($LASTEXITCODE -ne 0) { Write-Warning "darnlink-gate: can't run darnlink at $
 
 if ($scope -ne 'staged') {
   # ---- whole-repo (the wall): darnlink's own exit code is the gate ----
-  if ($mode -eq 'repair') { & uvx --from $ref darnlink . @dlArgs @args }
-  else                    { & uvx --from $ref darnlink check . @dlArgs @args }
+  & uvx --from $ref darnlink check . @dlArgs @args   # always `check` → stable 0/2/3, regardless of MODE
   $rc = $LASTEXITCODE
   if ($rc -gt 3) { Write-Warning "darnlink-gate: darnlink unreachable (rc=$rc) -> SKIP; CI covers it."; exit 0 }
+  # mode=repair gates on integrity only: a strict-only failure (3) is clean.
+  if ($mode -eq 'repair' -and $rc -eq 3) { exit 0 }
   exit $rc
 }
 
@@ -68,7 +70,7 @@ $stagedSet = [System.Collections.Generic.HashSet[string]]::new()
 foreach ($p in $staged) { [void]$stagedSet.Add(([IO.Path]::GetFullPath((Join-Path $root $p)))) }
 function Hits($axis) { @($data.$axis.findings | Where-Object { $stagedSet.Contains(([IO.Path]::GetFullPath($_.file))) }) }
 $integ  = Hits 'integrity'
-$strict = Hits 'strict'
+$strict = if ($mode -eq 'repair') { @() } else { Hits 'strict' }   # mode=repair gates on integrity only
 foreach ($f in $integ)  { Write-Output "  [integrity/$($f.kind)] $($f.file): $($f.detail)" }
 foreach ($f in $strict) { Write-Output "  [strict/$($f.kind)] $($f.file): $($f.detail)" }
 if ($integ)  { Write-Output "darnlink-gate (staged): integrity failure in a file you're committing."; exit 2 }

@@ -8,10 +8,11 @@
 # This is that orchestration in ONE place. A consumer repo carries only a tiny config + a 3-line hook.
 #
 # WHAT IT DOES (all read-only — it never writes):
-#   • bootstraps uv/uvx if missing;
-#   • runs darnlink at a PINNED ref (deterministic);
-#   • mode=check  → `darnlink check` (BOTH axes: integrity + strict, exit 0/2/3);
-#     mode=repair → `darnlink .`     (integrity only — for repos that don't robustify yet);
+#   • runs darnlink at a PINNED ref (deterministic); fails OPEN if uv/uvx is missing (never bootstraps);
+#   • ALWAYS runs `darnlink check` (stable 0/2/3 contract); MODE only picks which axes gate:
+#     mode=check  → integrity + strict both gate (exit 0/2/3);
+#     mode=repair → integrity only — a strict-only failure (3) is treated as clean (for repos that
+#                   don't robustify their links yet);
 #   • scope=repo  → judge the whole tree (the wall — use in CI);
 #     scope=staged→ judge only the files you're committing (use in a multi-session pre-commit, so a
 #                   teammate's in-flight plain link doesn't block your commit). The repo-wide wall
@@ -86,11 +87,13 @@ if [ "$SCOPE" != "staged" ]; then
   # set +e around the run: darnlink exits 0/1/2/3 (findings ARE non-zero) — set -e must not kill us
   # before we read rc and run the rc>3 fail-open.
   set +e
-  if [ "$MODE" = "repair" ]; then run . "${DL_ARGS[@]}"; else run check . "${DL_ARGS[@]}"; fi
+  run check . "${DL_ARGS[@]}"        # always `check` → stable 0/2/3 contract, regardless of MODE
   rc=$?
   set -e
-  # rc>3 (e.g. 127 network) → fail open + warn; darnlink's own 0/1/2/3 pass through.
+  # rc>3 (e.g. 127 network) → fail open + warn; darnlink's own 0/2/3 pass through.
   if [ "$rc" -gt 3 ]; then echo "darnlink-gate: darnlink unreachable (rc=$rc) → SKIP; CI covers it." >&2; exit 0; fi
+  # mode=repair gates on integrity only: a strict-only failure (3) is clean.
+  if [ "$MODE" = "repair" ] && [ "$rc" -eq 3 ]; then exit 0; fi
   exit "$rc"
 fi
 
@@ -111,18 +114,21 @@ set -e
 if [ "$rc" -gt 3 ] || [ -z "$DL_JSON" ]; then
   echo "darnlink-gate (staged): darnlink unreachable (rc=$rc) → SKIP; CI covers the wall." >&2; exit 0
 fi
-export DL_JSON DL_ROOT="$root" DL_REF="$REF"
+export DL_JSON DL_ROOT="$root" DL_REF="$REF" DL_MODE="$MODE"
 export DL_STAGED="$(printf '%s\n' "${STAGED[@]}")"
 
 # Pass everything via env (no interpolation into the script → no injection from finding text).
 python3 <<'PY'
 import json, os, sys
 root = os.environ["DL_ROOT"]
-staged = {os.path.normpath(os.path.join(root, p)) for p in os.environ["DL_STAGED"].split("\n") if p.strip()}
+mode = os.environ.get("DL_MODE", "check")
+# realpath both sides: darnlink emits resolved absolute paths, so resolve symlinks here too to match.
+staged = {os.path.realpath(os.path.join(root, p)) for p in os.environ["DL_STAGED"].split("\n") if p.strip()}
 data = json.loads(os.environ["DL_JSON"])
 def hits(axis):
-    return [f for f in data.get(axis, {}).get("findings", []) if os.path.normpath(f["file"]) in staged]
-integ, strict = hits("integrity"), hits("strict")
+    return [f for f in data.get(axis, {}).get("findings", []) if os.path.realpath(f["file"]) in staged]
+integ = hits("integrity")
+strict = [] if mode == "repair" else hits("strict")   # mode=repair gates on integrity only
 for f in integ:  print(f"  [integrity/{f['kind']}] {f['file']}: {f['detail']}")
 for f in strict: print(f"  [strict/{f['kind']}] {f['file']}: {f['detail']}")
 if integ:  print("darnlink-gate (staged): integrity failure in a file you're committing."); sys.exit(2)
