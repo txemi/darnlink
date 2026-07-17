@@ -21,7 +21,8 @@ from .frontmatter_edit import (
     write_text_keep_newlines,
 )
 from .frontmatter_index import DEFAULT_EXCLUDES, iter_markdown_files, read_frontmatter_uuid
-from .links import code_spans, emit_robust_link, file_is_ignored, find_plain_links, ignored_spans
+from .links import (code_spans, emit_robust_link, file_ignores_links, file_is_ignored,
+                    find_plain_links, ignored_spans)
 from .paths import is_local_md, resolve_href
 from .report import Finding, Kind
 
@@ -31,6 +32,7 @@ class RobustifyResult:
     findings: List[Finding] = field(default_factory=list)
     new_content: Dict[Path, str] = field(default_factory=dict)
     ignored: List[Path] = field(default_factory=list)  # files skipped via the ignore-file marker
+    link_ignored: List[Path] = field(default_factory=list)  # sources via the ignore-links marker (006)
     invalid: List[Path] = field(default_factory=list)  # files with non-YAML frontmatter (reported)
 
 
@@ -56,6 +58,7 @@ def plan_robustify(
     no_create_globs: Tuple[str, ...] = (),
 ) -> RobustifyResult:
     result = RobustifyResult()
+    link_ignored: Set[Path] = set()   # feature 006: sources that opt their own links out
     contents: Dict[Path, str] = {}
     spans: Dict[Path, list] = {}
     files: List[Path] = []
@@ -67,6 +70,11 @@ def plan_robustify(
         if file_is_ignored(c):
             result.ignored.append(f)  # not a source and (being absent from contents) not a target
             continue
+        # Feature 006: source-only opt-out. It stays in `files`/`contents` on purpose — it must still
+        # be able to RECEIVE its own uuid as a target (FR-035), and that write lives in the Phase B
+        # loop. Only the link-rewriting halves (Phase A's decide, Phase B's annotate) skip it.
+        if file_ignores_links(c):
+            link_ignored.add(f.resolve())
         files.append(f)
         contents[f] = c
         spans[f] = ignored_spans(c, block_markers) + code_spans(c)
@@ -109,6 +117,8 @@ def plan_robustify(
         needs_uuid_write.add(target)
 
     for f in files:
+        if f.resolve() in link_ignored:
+            continue  # FR-033: its links are never rewritten -> they must not drive uuid creation
         for link in find_plain_links(contents.get(f, ""), spans.get(f, [])):
             t = _md_target(link.href, f)
             # Skip self-links (a file linking to itself, e.g. autogrid `path` rows): robustifying
@@ -122,7 +132,15 @@ def plan_robustify(
         pieces: List[str] = []
         cursor = 0
         changed = False
-        for link in find_plain_links(original, spans.get(f, [])):
+        if f.resolve() in link_ignored:
+            # FR-033: leave every link in it alone. We still fall through to the uuid write below,
+            # because opting out as a SOURCE says nothing about being a target (FR-034/FR-035).
+            result.link_ignored.append(f)
+            result.findings.append(Finding(
+                Kind.IGNORED_LINKS, f,
+                "file carries darnlink-ignore-links; its links are left as-is (still a target)"))
+        links = () if f.resolve() in link_ignored else find_plain_links(original, spans.get(f, []))
+        for link in links:
             t = _md_target(link.href, f)
             if t is None or t.resolve() == f.resolve():
                 continue  # skip non-md/external and self-links

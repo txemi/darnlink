@@ -130,6 +130,27 @@ def file_is_ignored(content: str) -> bool:
     return any(not _in_spans(m.start(), code) for m in _IGNORE_FILE_RE.finditer(content))
 
 
+# A SOURCE-only opt-out: darnlink never rewrites the links inside this file, but the file stays a
+# first-class target (its uuid is indexed, so inbound robust links resolve and heal). This is the
+# axis `darnlink-ignore-file` fuses: that one also drops the file as a target (FR-019), which the
+# motivating case — a generated, heavily-linked INDEX.md — cannot afford. Feature 006.
+IGNORE_LINKS_MARKER = "<!-- darnlink-ignore-links -->"
+_IGNORE_LINKS_RE = re.compile(r"<!--\s*darnlink-ignore-links\s*-->")
+
+
+def file_ignores_links(content: str) -> bool:
+    """True if the file opts its OWN links out via a `<!-- darnlink-ignore-links -->` marker that is
+    NOT inside a code span. Says nothing about the target axis: the file keeps its uuid indexed.
+    FR-033/FR-036/FR-037; composes with code_spans (feature 002). Pure & deterministic.
+
+    Note (FR-040): the marker must not precede the frontmatter block — the canonical reader only
+    recognises a *leading* `---`, so a marker on line 1 would hide the file's own uuid and silently
+    cost it the target axis. Detection itself is position-free; the ordering is a property of the
+    frontmatter format, not of this check."""
+    code = code_spans(content)
+    return any(not _in_spans(m.start(), code) for m in _IGNORE_LINKS_RE.finditer(content))
+
+
 @dataclass(frozen=True)
 class RobustLink:
     text: str

@@ -171,10 +171,16 @@ repos:
 ```
 
 To adopt it on an existing repo: anchor what's already anchorable once with
-`darnlink . --robustify --write` (review the diff, commit), then the gate stays green. **Generated
-files** with plain links you don't want to anchor: put `<!-- darnlink-ignore-file -->` at the top of
-each (or have the generator emit it), or `--exclude <dir>` a whole tree. darnlink itself is gated
-this way (see `tools/check.sh` / CI).
+`darnlink . --robustify --write` (review the diff, commit), then the gate stays green.
+
+**Generated files** with plain links you don't want to anchor: have the generator emit
+`<!-- darnlink-ignore-links -->` (just below the frontmatter). darnlink then leaves the links inside
+them alone — no churn when the generator re-runs — while they stay linkable targets, which matters
+because a generated `INDEX.md` is usually what everything else links *to*. Use
+`<!-- darnlink-ignore-file -->` only for a file that should leave the graph entirely (it also stops
+resolving inbound links), or `--exclude <dir>` for a whole tree. See
+[FORMAT.md §5](FORMAT.md#5-opting-a-file-out) <!-- uuid: 9052d864-2a45-4ed4-8725-d8a394e7a7ef -->
+for the two markers side by side. darnlink itself is gated this way (see `tools/check.sh` / CI).
 
 ## Used by
 

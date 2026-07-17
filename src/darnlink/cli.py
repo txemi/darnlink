@@ -26,12 +26,15 @@ def _findings_json(
     write: bool,
     ignored: Optional[List[Path]] = None,
     invalid: Optional[List[Path]] = None,
+    link_ignored: Optional[List[Path]] = None,
 ) -> str:
     return json.dumps(
         {
             "wrote": wrote,
             "applied": write,
             "ignored_files": [str(p) for p in (ignored or [])],
+            # feature 006: opted out as a SOURCE only — still indexed as a target
+            "link_ignored_files": [str(p) for p in (link_ignored or [])],
             "invalid_frontmatter_files": [str(p) for p in (invalid or [])],
             "findings": [{"kind": f.kind.value, "file": str(f.file), "detail": f.detail} for f in findings],
         },
@@ -48,11 +51,12 @@ def _run_repair(root: Path, write: bool, excludes: set, as_json: bool, block_mar
     wrote = len(apply_repairs(result)) if write else 0
 
     if as_json:
-        print(_findings_json(result.findings, wrote, write, result.ignored, index.invalid))
+        print(_findings_json(result.findings, wrote, write, result.ignored, index.invalid,
+                             result.link_ignored))
     else:
         print(f"darnlink repair — root: {root}")
         print(f"  indexed uuids: {len(index.by_uuid)} | duplicate uuids: {len(index.duplicates)}")
-        print(f"  links to repair: {len(repairs)} | conflicts: {len(conflicts)} | unresolved: {len(unresolved)} | ignored files: {len(result.ignored)} | invalid frontmatter: {len(index.invalid)}")
+        print(f"  links to repair: {len(repairs)} | conflicts: {len(conflicts)} | unresolved: {len(unresolved)} | ignored files: {len(result.ignored)} | link-ignored: {len(result.link_ignored)} | invalid frontmatter: {len(index.invalid)}")
         for f in repairs:
             print(f"  [repair] {f.file}: {f.detail}")
         for f in conflicts:
@@ -77,16 +81,19 @@ def _run_robustify(root: Path, write: bool, create_frontmatter: bool, excludes: 
     wrote = len(apply_robustify(result)) if write else 0
 
     if as_json:
-        print(_findings_json(result.findings, wrote, write, result.ignored, result.invalid))
+        print(_findings_json(result.findings, wrote, write, result.ignored, result.invalid,
+                             result.link_ignored))
     else:
         print(f"darnlink robustify — root: {root}")
-        print(f"  plain links to robustify: {len(upgrades)} | skipped (no frontmatter): {len(skipped)} | deny-listed: {len(denied)} | ignored files: {len(result.ignored)} | invalid frontmatter: {len(result.invalid)}")
+        print(f"  plain links to robustify: {len(upgrades)} | skipped (no frontmatter): {len(skipped)} | deny-listed: {len(denied)} | ignored files: {len(result.ignored)} | link-ignored: {len(result.link_ignored)} | invalid frontmatter: {len(result.invalid)}")
         for f in upgrades:
             print(f"  [robustify] {f.file}: {f.detail}")
         for f in skipped:
             print(f"  [no-frontmatter] {f.file}: {f.detail} (use --create-frontmatter to allow)")
         for f in denied:
             print(f"  [deny-listed] {f.file}: {f.detail}")
+        for f in [x for x in result.findings if x.kind is Kind.IGNORED_LINKS]:
+            print(f"  [link-ignored] {f.file}: {f.detail}")
         for p in result.invalid:
             print(f"  [invalid-frontmatter] {p}: not valid YAML; left untouched (fix the file)")
         if write:

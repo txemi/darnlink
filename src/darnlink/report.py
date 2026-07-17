@@ -14,6 +14,7 @@ class Kind(str, Enum):
     AMBIGUOUS = "ambiguous"        # robust link whose uuid is in more than one file
     NO_FRONTMATTER = "no_frontmatter"  # robustify target has no frontmatter (needs --create-frontmatter)
     DENY_LISTED = "deny_listed"        # robustify target matches --no-create-frontmatter-for: never given a uuid
+    IGNORED_LINKS = "ignored_links"    # source carries <!-- darnlink-ignore-links -->: its own links are left alone (it stays a target)
     INVALID_FRONTMATTER = "invalid_frontmatter"  # frontmatter present but not valid YAML; reported, never touched
 
 

@@ -7,6 +7,18 @@ All notable changes to darnlink are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- **`<!-- darnlink-ignore-links -->` — a source-only opt-out.** darnlink never rewrites the links
+  *inside* a file carrying it (neither robustified nor repaired), but the file stays a first-class
+  **target**: its `uuid` is still indexed, so inbound robust links keep resolving and still heal when
+  it moves. This is what a **generated** file needs — its generator rewrites it wholesale, so
+  anchoring inside it is churn, yet a generated `INDEX.md` is usually the file everything links *to*.
+  `<!-- darnlink-ignore-file -->` could not serve that case: it drops the file from the graph on both
+  axes, taking inbound links down with it, so projects worked around it with external allowlists —
+  which darnlink cannot honour, so `--robustify --write` wrote into those files anyway and the
+  workaround could only complain afterwards. Put the marker **after** the frontmatter (a marker on
+  line 1 hides the file's own `uuid`). Reported as `link-ignored` / kind `ignored_links` and listed
+  under `link_ignored_files` in `--json`; a strict `--robustify` gate passes on a tree whose
+  generated files carry it. Documented in FORMAT.md §5; spec `006-ignore-links-marker`.
 - **Strict, fail-closed gate** — a first-class way to require that every *anchorable* link is robust,
   not just that existing robust links keep working. Run `darnlink . --robustify` (dry-run: it reports
   and exits non-zero, it does not write) or wire the new `darnlink-strict` pre-commit hook id. A target
