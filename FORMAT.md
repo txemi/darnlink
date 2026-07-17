@@ -60,16 +60,43 @@ ignored: they are examples, not navigational links, and rewriting them would cor
 
 ## 5. Opting a file out
 
-darnlink asks two independent questions about a file, and there is a marker for each. Both are
-invisible when rendered, and (per §4) an occurrence inside a code block is treated as an example, not
-as opting the file out. Both are self-contained: the generator just emits the marker — no external
-ignore list, no config (Principle III).
+Everything darnlink reads lives **in the file** — no database, no config (Principle III). Beyond the
+link anchor (§1) and frontmatter `uuid` (§2), a file has three ways to tell darnlink to leave some or
+all of its links alone:
+
+| In the file | Means |
+|---|---|
+| `<!-- NAME-start --> … <!-- NAME-end -->` | Leave the links in this **region** alone (opt-in via `--ignore-block NAME`). |
+| `<!-- darnlink-ignore-links -->` | Leave **my** links alone — but keep anchoring to me. |
+| `<!-- darnlink-ignore-file -->` | Pretend I don't exist (neither source nor target). |
+
+The two `ignore-*` markers are the two independent axes darnlink cares about — *do you rewrite my
+links?* and *may others anchor to me?*:
 
 | Marker | Its own links rewritten? | Still a target (its `uuid` resolves)? |
 |---|---|---|
 | *(none — default)* | yes | yes |
 | `<!-- darnlink-ignore-links -->` | **no** | **yes** |
 | `<!-- darnlink-ignore-file -->` | **no** | **no** |
+
+All three are invisible when rendered, and (per §4) an occurrence inside a code block is treated as
+an example, not as an opt-out.
+
+### Generated regions — `<!-- NAME-start --> … <!-- NAME-end -->`
+
+Links inside such a region are left untouched, exactly as if they were code. Unlike the two markers
+below, the region is **opt-in from the command line**: darnlink only honours the names it is told
+about (`--ignore-block NAME`, repeatable), because `NAME` is yours to choose:
+
+```markdown
+<!-- autogrid-start -->
+| Doc | Path |
+| A   | [a.md](docs/a.md) |
+<!-- autogrid-end -->
+```
+
+Use it when a generator owns **part** of a file a human owns the rest of. If the generator owns the
+**whole** file, `<!-- darnlink-ignore-links -->` says so with no CLI flag at all.
 
 ### `<!-- darnlink-ignore-links -->` — leave my links alone
 

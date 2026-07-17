@@ -82,12 +82,48 @@ or submodule content, mirrors, generated output:
 darnlink <folder> --exclude vendor --exclude mirror --ignore-block autogrid
 ```
 
-- `--exclude NAME` — skip any directory named `NAME` (repeatable).
-- `--ignore-block NAME` — leave links inside generated blocks
-  `<!-- NAME-start --> … <!-- NAME-end -->` untouched (repeatable).
-- `--no-create-frontmatter-for GLOB` — for files a pipeline regenerates (e.g. `content.md`, a
-  generated `INDEX.md`): never seed a uuid there (it would be wiped on the next refresh), so the
-  link is left plain.
+`--exclude` and `--ignore-block` are repeatable. For a whole file rather than a directory or a
+region, a file can opt itself out from the inside — see [FORMAT.md §5](FORMAT.md#5-opting-a-file-out) <!-- uuid: 9052d864-2a45-4ed4-8725-d8a394e7a7ef -->.
+The full flag list is under [All options](#all-options) below.
+
+## All options
+
+The sections above introduce these in context; this is the full list (same as `darnlink --help`).
+
+| Option | What it does |
+|---|---|
+| `path` *(positional)* | Root directory to scan. Default: `.` — darnlink takes a **directory**, not a file list. |
+| `--write` | Apply the changes. Without it darnlink only **reports** — it never modifies a file. |
+| `--robustify` | Upgrade plain links to robust. Without it the operation is *repair* (fix robust links whose target moved). |
+| `--create-frontmatter` | *(robustify)* Allow creating frontmatter on a target that has none, so it can take a `uuid`. Opt-in on purpose. |
+| `--no-create-frontmatter-for GLOB` | *(robustify)* Basename glob whose targets **never** get a `uuid` — no block created, no line inserted — regardless of `--create-frontmatter`. Reusing a `uuid` the target already has is unaffected. Repeatable. |
+| `--exclude NAME` | Skip any directory named `NAME`. Repeatable. |
+| `--ignore-block NAME` | Leave links inside `<!-- NAME-start --> … <!-- NAME-end -->` blocks alone. Repeatable. |
+| `--json` | Machine-readable output (see below). |
+
+Files can also opt themselves out from the inside, with no CLI flag: see
+[FORMAT.md §5](FORMAT.md#5-opting-a-file-out) <!-- uuid: 9052d864-2a45-4ed4-8725-d8a394e7a7ef --> for `<!-- darnlink-ignore-links -->` (leave *my* links
+alone, but keep anchoring to me) and `<!-- darnlink-ignore-file -->` (drop me from the graph).
+
+### `--json` output
+
+Stable shape, meant for gates and scripts:
+
+```json
+{
+  "wrote": 0,
+  "applied": false,
+  "ignored_files": ["path/to/opted-out.md"],
+  "link_ignored_files": ["path/to/generated/INDEX.md"],
+  "invalid_frontmatter_files": [],
+  "findings": [{ "kind": "robustify", "file": "docs/a.md", "detail": "b.md +uuid <uuid>" }]
+}
+```
+
+`kind` is one of: `repair`, `conflict`, `robustify`, `unresolvable`, `ambiguous`, `no_frontmatter`,
+`deny_listed`, `ignored_links`, `invalid_frontmatter`. A gate that wants "is anything left to do?"
+should count the kinds it cares about (e.g. `robustify`) rather than the length of `findings` — the
+non-actionable kinds are reported precisely so nothing is skipped silently.
 
 ## For language models / agents
 
@@ -172,6 +208,15 @@ repos:
 
 To adopt it on an existing repo: anchor what's already anchorable once with
 `darnlink . --robustify --write` (review the diff, commit), then the gate stays green.
+
+> **Scope note for repos with many contributors.** All the hooks run over the **whole tree**
+> (`pass_filenames: false` — darnlink takes a directory, not a file list), and the strict check is
+> *fail-closed*. So a plain, un-anchored link that **someone else** left in a file you never touched
+> will block **your** commit. That is fine for a small repo, but with several people (or parallel
+> agents) committing at once it means one un-anchored link blocks everyone. A practical split: run
+> `darnlink-strict` in **CI** (the real wall — nothing un-anchored lands on the main branch), and the
+> plain `darnlink` hook **locally** (fast, and it only fails on links that actually broke), so a
+> teammate's in-flight plain link doesn't stop your commit.
 
 **Generated files** with plain links you don't want to anchor: have the generator emit
 `<!-- darnlink-ignore-links -->` (just below the frontmatter). darnlink then leaves the links inside
