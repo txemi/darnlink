@@ -82,8 +82,10 @@ or submodule content, mirrors, generated output:
 darnlink <folder> --exclude vendor --exclude mirror --ignore-block autogrid
 ```
 
-`--exclude` and `--ignore-block` are repeatable. For a whole file rather than a directory or a
-region, a file can opt itself out from the inside — see [FORMAT.md §5](FORMAT.md#5-opting-a-file-out) <!-- uuid: 9052d864-2a45-4ed4-8725-d8a394e7a7ef -->.
+`--exclude` and `--ignore-block` are repeatable. `--exclude` is a glob — **keep patterns tight**: a
+wide one like `*` silently drops directories from the scan (their links stop being checked). Prefer
+word-boundary patterns (`old`, `old_*`, `*_old`) over a greedy `*old*`. For a whole file rather than a
+directory or a region, a file can opt itself out from the inside — see [FORMAT.md §5](FORMAT.md#5-opting-a-file-out) <!-- uuid: 9052d864-2a45-4ed4-8725-d8a394e7a7ef -->.
 The full flag list is under [All options](#all-options) below.
 
 ## All options
@@ -97,7 +99,7 @@ The sections above introduce these in context; this is the full list (same as `d
 | `--robustify` | Upgrade plain links to robust. Without it the operation is *repair* (fix robust links whose target moved). |
 | `--create-frontmatter` | *(robustify)* Allow creating frontmatter on a target that has none, so it can take a `uuid`. Opt-in on purpose. |
 | `--no-create-frontmatter-for GLOB` | *(robustify)* Basename glob whose targets **never** get a `uuid` — no block created, no line inserted — regardless of `--create-frontmatter`. Reusing a `uuid` the target already has is unaffected. Repeatable. |
-| `--exclude NAME` | Skip any directory named `NAME`. Repeatable. |
+| `--exclude PATTERN` | Skip any directory whose name matches `PATTERN` (glob / `fnmatch`, case-sensitive; a plain name matches exactly). Repeatable — e.g. `--exclude old --exclude 'old_*' --exclude '*_old'` skips the whole `old` family. |
 | `--ignore-block NAME` | Leave links inside `<!-- NAME-start --> … <!-- NAME-end -->` blocks alone. Repeatable. |
 | `--json` | Machine-readable output (see below). |
 

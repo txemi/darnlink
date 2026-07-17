@@ -194,7 +194,7 @@ def _run_check_cli(argv: List[str]) -> int:
         "over PATH and exit 0 (clean) / 2 (integrity) / 3 (strict). Never writes.",
     )
     parser.add_argument("path", nargs="?", default=".", help="root directory to scan (default: .)")
-    parser.add_argument("--exclude", action="append", default=[], metavar="NAME", help="directory name to skip (repeatable)")
+    parser.add_argument("--exclude", action="append", default=[], metavar="PATTERN", help="directory-name glob to skip (fnmatch, case-sensitive; a plain name matches exactly) (repeatable)")
     parser.add_argument("--ignore-block", action="append", default=[], metavar="NAME",
                         help="ignore links inside <!-- NAME-start --> … <!-- NAME-end --> blocks (repeatable)")
     parser.add_argument("--json", action="store_true", help="machine-readable output")
@@ -231,7 +231,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--create-frontmatter (repeatable; e.g. --no-create-frontmatter-for content.md). For files a "
         "pipeline regenerates. Reusing a uuid the target already has is unaffected.",
     )
-    parser.add_argument("--exclude", action="append", default=[], metavar="NAME", help="directory name to skip (repeatable)")
+    parser.add_argument("--exclude", action="append", default=[], metavar="PATTERN", help="directory-name glob to skip (fnmatch, case-sensitive; a plain name matches exactly) (repeatable)")
     parser.add_argument(
         "--ignore-block",
         action="append",

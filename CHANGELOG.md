@@ -6,6 +6,13 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- **`--exclude` now takes a glob** (`fnmatch`, case-sensitive), not just an exact name — so a repo can
+  skip a whole family in one declarative line instead of listing every directory and letting the list
+  drift: `--exclude old --exclude 'old_*' --exclude '*_old' --exclude '*.old'`. **Backward-compatible**:
+  a pattern with no wildcards matches exactly, so every existing `--exclude NAME` is unchanged. Spec
+  `009-glob-excludes`.
+
 ## [0.3.0] — 2026-07-17
 
 ### Added

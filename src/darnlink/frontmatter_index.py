@@ -5,6 +5,7 @@ This plain dictionary replaces the predecessor's heavy entity model
 """
 from __future__ import annotations
 
+import fnmatch
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -13,6 +14,13 @@ from typing import Dict, Iterator, List
 import frontmatter
 
 DEFAULT_EXCLUDES = {".git", "node_modules", ".venv", "__pycache__", "_build", ".tox", "dist", "build"}
+
+
+def _dir_excluded(name: str, excludes) -> bool:
+    """A directory name is excluded if it matches any pattern by glob (fnmatch, case-sensitive).
+    A pattern with no wildcards matches exactly, so plain names (`node_modules`) still work — the
+    glob is purely additive. Lets a repo exclude a family with one line, e.g. `old`, `old_*`, `*_old`."""
+    return any(fnmatch.fnmatchcase(name, pat) for pat in excludes)
 
 
 @dataclass
@@ -32,7 +40,7 @@ def iter_markdown_files(root: Path, excludes: set[str] = DEFAULT_EXCLUDES) -> It
     """Yield all `.md` files under `root`, skipping excluded directory names."""
     root = root.resolve()
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in excludes]
+        dirnames[:] = [d for d in dirnames if not _dir_excluded(d, excludes)]
         for fn in filenames:
             if fn.lower().endswith(".md"):
                 yield Path(dirpath) / fn
