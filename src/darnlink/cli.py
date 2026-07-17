@@ -207,10 +207,133 @@ def _run_check_cli(argv: List[str]) -> int:
     return _run_check(root, excludes, args.json, tuple(args.ignore_block))
 
 
+def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
+    """Feature 010 (EXPERIMENTAL spike): `darnlink web-check PATH --online [--write] [--json]`.
+
+    Cross-repo web links (GitHub URLs anchored to the destination file's frontmatter `uuid`). OFF by
+    default: without `--online` this makes NO network call and only lists the web links it sees (the
+    core already ignores them — see paths.is_web_href). With `--online` it fetches each destination URL
+    once (GitHub Contents API, stdlib urllib), reads its uuid, and:
+      * plain web link + destination has a uuid  -> ANCHOR it (`--write` applies; dry-run reports)
+      * anchored web link                         -> VERIFY the uuid matches (mismatch/404 => error)
+    It never searches where a moved file went (no web index; that is the LLM layer's job).
+    `--online` knowingly trades P-IV (network) and is why it is opt-in. Auth: sends $GITHUB_TOKEN when
+    set (private repos); a private repo with no token is reported `web_unverifiable`, never a crash.
+
+    Exit: 0 clean/applied · 4 integrity (web_mismatch or web_not_found) · 3 anchors pending in dry-run ·
+    1 usage. `web_unverifiable` is reported (never silent — Constitution II) but does not fail the exit.
+    """
+    import os
+    from .weblinks import check_web_links_online, default_fetcher
+
+    parser = _CheckArgParser(
+        prog="darnlink web-check",
+        description="EXPERIMENTAL: anchor/verify cross-repo web links (GitHub URLs anchored to a uuid). "
+        "OFF by default; --online fetches the destination URL. Writes only with --write.",
+    )
+    parser.add_argument("path", nargs="?", default=".", help="root directory to scan (default: .)")
+    parser.add_argument("--online", action="store_true",
+                        help="opt in to network: fetch each destination URL to read its uuid (trades P-IV)")
+    parser.add_argument("--write", action="store_true", help="apply anchors to plain web links (needs --online)")
+    parser.add_argument("--ignore-block", action="append", default=[], metavar="NAME",
+                        help="ignore links inside <!-- NAME-start --> … <!-- NAME-end --> blocks (repeatable)")
+    parser.add_argument("--json", action="store_true", help="machine-readable output")
+    args = parser.parse_args(argv)
+
+    root = Path(args.path).resolve()
+    if not root.is_dir():
+        print(f"error: not a directory: {root}", file=sys.stderr)
+        return 1
+    if args.write and not args.online:
+        print("error: --write requires --online (there is nothing to anchor without fetching)", file=sys.stderr)
+        return 1
+
+    block_markers = tuple(args.ignore_block)
+
+    if not args.online:
+        # Off-by-default: no network, no new behaviour. Just surface which web links exist so the user
+        # knows --online is available. The core already treats these as inert (not broken).
+        from .weblinks import find_web_links
+        from .links import ignored_spans, code_spans
+        from .frontmatter_index import iter_markdown_files
+        from .frontmatter_edit import read_text_keep_newlines
+        seen = 0
+        listing = []
+        for f in iter_markdown_files(root):
+            try:
+                content = read_text_keep_newlines(f)
+            except Exception:
+                continue
+            ignore = ignored_spans(content, block_markers) + code_spans(content)
+            for link in find_web_links(content, ignore):
+                seen += 1
+                listing.append((f, link.href, link.uuid is not None))
+        if args.json:
+            print(json.dumps({"web_check": True, "online": False, "exit_code": 0,
+                              "web_links_seen": seen,
+                              "links": [{"file": str(f), "href": h, "anchored": a} for f, h, a in listing]}, indent=2))
+        else:
+            print(f"darnlink web-check (EXPERIMENTAL, offline) — root: {root}")
+            print(f"  web links seen: {seen} (core ignores them; run with --online to fetch & verify/anchor)")
+            for f, h, a in listing:
+                print(f"  [{'anchored' if a else 'plain'}] {f}: {h}")
+        return 0
+
+    token = os.environ.get("GITHUB_TOKEN") or None
+    findings, edits = check_web_links_online(root, token, fetcher or default_fetcher, block_markers)
+    ok = [x for x in findings if x.kind == "web_ok"]
+    anchors = [x for x in findings if x.kind == "web_anchor"]
+    mismatch = [x for x in findings if x.kind == "web_mismatch"]
+    notfound = [x for x in findings if x.kind == "web_not_found"]
+    unverifiable = [x for x in findings if x.kind == "web_unverifiable"]
+
+    wrote = 0
+    if args.write and edits:
+        from .frontmatter_edit import write_text_keep_newlines
+        for path, content in edits.items():
+            write_text_keep_newlines(path, content)
+            wrote += 1
+
+    integrity_fail = bool(mismatch or notfound)
+    anchors_pending = bool(anchors) and not args.write
+    code = 4 if integrity_fail else (3 if anchors_pending else 0)
+
+    if args.json:
+        print(json.dumps({
+            "web_check": True, "online": True, "exit_code": code, "wrote": wrote, "applied": args.write,
+            "web_ok": len(ok), "web_anchor": len(anchors), "web_mismatch": len(mismatch),
+            "web_not_found": len(notfound), "web_unverifiable": len(unverifiable),
+            "findings": [{"kind": x.kind, "file": str(x.file), "href": x.href,
+                          "detail": x.detail, "anchored_uuid": x.anchored_uuid} for x in findings],
+        }, indent=2))
+    else:
+        print(f"darnlink web-check (EXPERIMENTAL, online) — root: {root}")
+        print(f"  ok {len(ok)} | anchor {len(anchors)} | mismatch {len(mismatch)} | "
+              f"not-found {len(notfound)} | unverifiable {len(unverifiable)}")
+        for x in mismatch:
+            print(f"  [web_mismatch] {x.file}: {x.detail} ({x.href})")
+        for x in notfound:
+            print(f"  [web_not_found] {x.file}: {x.detail} ({x.href})")
+        for x in anchors:
+            print(f"  [web_anchor] {x.file}: {x.detail}")
+        for x in unverifiable:
+            print(f"  [web_unverifiable] {x.file}: {x.detail} ({x.href})")
+        if args.write:
+            print(f"  WROTE {wrote} file(s).")
+        elif anchors_pending:
+            print("  (dry-run — nothing written. Re-run with --write to anchor.)")
+        outcome = {0: "clean", 3: "anchors pending", 4: "integrity failure"}[code]
+        print(f"  → exit {code} ({outcome})")
+
+    return code
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     raw = list(sys.argv[1:] if argv is None else argv)
     if raw and raw[0] == "check":  # feature 007: report-only gate subcommand
         return _run_check_cli(raw[1:])
+    if raw and raw[0] == "web-check":  # feature 010 (EXPERIMENTAL): cross-repo web-link resolver
+        return _run_web_check_cli(raw[1:])
 
     parser = argparse.ArgumentParser(
         prog="darnlink",

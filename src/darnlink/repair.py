@@ -19,7 +19,7 @@ from typing import Dict, List
 from .frontmatter_index import DEFAULT_EXCLUDES, FrontmatterIndex, iter_markdown_files
 from .links import (code_spans, emit_robust_link, file_ignores_links, file_is_ignored,
                     find_robust_links, ignored_spans)
-from .paths import relative_link, resolve_href, split_fragment
+from .paths import is_web_href, relative_link, resolve_href, split_fragment
 from .frontmatter_edit import read_text_keep_newlines, write_text_keep_newlines
 from .report import Finding, Kind
 
@@ -66,6 +66,12 @@ def plan_repairs(
         cursor = 0
         changed = False
         for link in links:
+            # Feature 010: a robust link whose href is a web URL is a CROSS-REPO link; its uuid may
+            # live in another repository the core never scans. The core stays local (P-III/P-IV) and
+            # leaves it alone — `darnlink web-check` handles it. Without this guard the core wrongly
+            # reports it `unresolvable`, which would fail an existing gate the moment a web link appears.
+            if is_web_href(link.href):
+                continue
             if index.is_ambiguous(link.uuid):
                 result.findings.append(
                     Finding(Kind.AMBIGUOUS, f, f"uuid {link.uuid} in multiple files; left untouched")

@@ -33,6 +33,14 @@ def relative_link(target: Path, linking_file: Path, fragment: str = "") -> str:
     return f"{rel_posix}#{fragment}" if fragment else rel_posix
 
 
+def is_web_href(href: str) -> bool:
+    """True if href is an absolute web URL (http/https). Feature 010: the core repair/check path must
+    skip robust links whose href is a URL — their uuid may live in ANOTHER repo, which the core never
+    scans, so treating them as local would wrongly report them `unresolvable`. Cross-repo web links are
+    handled only by the opt-in `web-check` subcommand (specs/010-web-robustness)."""
+    return href.strip().lower().startswith(("http://", "https://"))
+
+
 def is_local_md(href: str) -> bool:
     """True if href is a relative link to a local .md file (not a URL, not an anchor-only link)."""
     path_part, _ = split_fragment(href)
