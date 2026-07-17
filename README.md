@@ -82,8 +82,10 @@ or submodule content, mirrors, generated output:
 darnlink <folder> --exclude vendor --exclude mirror --ignore-block autogrid
 ```
 
-`--exclude` and `--ignore-block` are repeatable. For a whole file rather than a directory or a
-region, a file can opt itself out from the inside — see [FORMAT.md §5](FORMAT.md#5-opting-a-file-out) <!-- uuid: 9052d864-2a45-4ed4-8725-d8a394e7a7ef -->.
+`--exclude` and `--ignore-block` are repeatable. `--exclude` is a glob — **keep patterns tight**: a
+wide one like `*` silently drops directories from the scan (their links stop being checked). Prefer
+word-boundary patterns (`old`, `old_*`, `*_old`) over a greedy `*old*`. For a whole file rather than a
+directory or a region, a file can opt itself out from the inside — see [FORMAT.md §5](FORMAT.md#5-opting-a-file-out) <!-- uuid: 9052d864-2a45-4ed4-8725-d8a394e7a7ef -->.
 The full flag list is under [All options](#all-options) below.
 
 ## All options
