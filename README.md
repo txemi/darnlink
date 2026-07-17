@@ -189,6 +189,12 @@ it does **not** write):
 darnlink . --robustify        # exits non-zero if any plain link to an anchorable target is un-anchored
 ```
 
+> **One command for both axes — `darnlink check`.** `--robustify` and plain `darnlink .` catch
+> *disjoint* failures (an un-anchored plain link vs. a broken robust link) — a gate that runs only one
+> is blind to the other. `darnlink check` runs **both** in one report-only invocation and exits with a
+> distinguishable code — `0` clean · `2` integrity (broken/invalid) · `3` strict (un-anchored) — so CI
+> can't forget a half and can tell *which* axis failed. darnlink checks; your CI/hook decides to block.
+
 This is **fail-closed**: it fails until every link that *can* be robust *is* robust. A target is
 *anchorable* when it's a local Markdown file with frontmatter (darnlink reuses its `uuid`, or adds
 one). Links whose target **can't** take a `uuid` are left alone — external/non-local targets,

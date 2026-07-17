@@ -6,6 +6,16 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- **`darnlink check` — a report-only gate subcommand.** Runs **both** axes in one invocation — repair
+  (integrity: broken/unresolvable robust links + invalid frontmatter) and robustify (strict:
+  anchorable plain links left un-anchored) — and exits with a **distinguishable code**: `0` clean, `2`
+  integrity failure, `3` strict-only failure (integrity takes precedence when both fail). It never
+  writes. This closes the "strict is not a superset of repair" trap: a gate that ran only
+  `--robustify` was blind to broken robust links, and vice-versa; `check` can't forget a half. darnlink
+  *checks and reports* — the consumer (CI/hook acting on the exit code) is what *gates*. Spec
+  `007-darnlink-check`.
+
 ## [0.2.0] — 2026-07-17
 
 ### Added
