@@ -6,6 +6,8 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-07-18
+
 ### Added
 - **`recipes/darnlink-gate`** — a ready-made, config-driven gate wrapper (bash + `.ps1`), shipped as a
   **reference recipe** (not part of the CLI/package — the tool stays "links & UUIDs only"). It runs
@@ -13,6 +15,8 @@ All notable changes to darnlink are documented here. The format is based on
   and fails open on network — so a repo wires darnlink into its gate with a tiny `darnlink-gate.json` +
   a 3-line hook instead of a bespoke wrapper that drifts. It lives in the **public** repo so any CI can
   fetch it **without a token**. See `recipes/README.md`.
+- The recipe's `mode=repair` gates on **integrity only** — it always runs `darnlink check` (stable
+  `0/2/3` contract) but treats a strict-only failure as clean, on both repo and staged scope.
 
 ## [0.4.0] — 2026-07-17
 
@@ -87,7 +91,8 @@ First public release.
 - Ships a [pre-commit](https://pre-commit.com/) hook (`darnlink`, `darnlink-repair`).
 - Format specification: [FORMAT.md](FORMAT.md) <!-- uuid: 9052d864-2a45-4ed4-8725-d8a394e7a7ef -->.
 
-[Unreleased]: https://github.com/txemi/darnlink/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/txemi/darnlink/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/txemi/darnlink/releases/tag/v0.5.0
 [0.4.0]: https://github.com/txemi/darnlink/releases/tag/v0.4.0
 [0.3.0]: https://github.com/txemi/darnlink/releases/tag/v0.3.0
 [0.2.0]: https://github.com/txemi/darnlink/releases/tag/v0.2.0
