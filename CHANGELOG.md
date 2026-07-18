@@ -6,6 +6,14 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- **`recipes/darnlink-gate`** — a ready-made, config-driven gate wrapper (bash + `.ps1`), shipped as a
+  **reference recipe** (not part of the CLI/package — the tool stays "links & UUIDs only"). It runs
+  **both** checks, scopes to staged files in pre-commit vs the whole repo in CI, pins the darnlink ref,
+  and fails open on network — so a repo wires darnlink into its gate with a tiny `darnlink-gate.json` +
+  a 3-line hook instead of a bespoke wrapper that drifts. It lives in the **public** repo so any CI can
+  fetch it **without a token**. See `recipes/README.md`.
+
 ## [0.4.0] — 2026-07-17
 
 ### Added

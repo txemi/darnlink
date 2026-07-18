@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+# darnlink-gate — the ONE generic darnlink quality-gate recipe for every repo that uses darnlink.
+#
+# WHY THIS EXISTS. darnlink is a pure link tool (it checks/reports; it deliberately knows nothing
+# about gates, git, excludes-policy, or CI — see its Constitution). Every consumer repo needs the
+# SAME orchestration around it, and until now each repo re-implemented it in its own `*_gate.sh`,
+# so the wrappers drifted (the "strict ⊇ repair" myth, ignore-file vs ignore-links, un-pinned refs).
+# This is that orchestration in ONE place. A consumer repo carries only a tiny config + a 3-line hook.
+#
+# WHAT IT DOES (all read-only — it never writes):
+#   • runs darnlink at a PINNED ref (deterministic); fails OPEN if uv/uvx is missing (never bootstraps);
+#   • ALWAYS runs `darnlink check` (stable 0/2/3 contract); MODE only picks which axes gate:
+#     mode=check  → integrity + strict both gate (exit 0/2/3);
+#     mode=repair → integrity only — a strict-only failure (3) is treated as clean (for repos that
+#                   don't robustify their links yet);
+#   • scope=repo  → judge the whole tree (the wall — use in CI);
+#     scope=staged→ judge only the files you're committing (use in a multi-session pre-commit, so a
+#                   teammate's in-flight plain link doesn't block your commit). The repo-wide wall
+#                   stays in CI. [Option B of darnlink spec 008: git lives HERE, not in darnlink.]
+#   • fails OPEN on a network/uvx error (offline commit isn't bricked; CI is the backstop).
+#
+# CONFIG. Reads `darnlink-gate.json` at the repo root (all keys optional):
+#   { "ref": "git+https://github.com/txemi/darnlink@v0.5.0",
+#     "excludes": ["secrets","external_repos"], "ignore_blocks": ["txmd-autogrid"],
+#     "mode": "check", "scope": "repo" }
+# Env overrides (so one config serves both surfaces): DARNLINK_REF, DARNLINK_GATE_MODE,
+# DARNLINK_GATE_SCOPE. Typical wiring: config says scope=repo; the pre-commit hook exports
+# DARNLINK_GATE_SCOPE=staged; CI leaves it repo.
+#
+# EXIT: 0 clean · 2 integrity failure · 3 strict-only failure · 1 usage · 0 (warn) on fail-open.
+set -euo pipefail
+
+root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cfg="$root/darnlink-gate.json"
+
+# --- read config (JSON, all optional) via python; env wins over file ---
+read_cfg() { python3 - "$cfg" "$1" "$2" <<'PY' 2>/dev/null || printf '%s' "$2"
+import json, sys
+cfg, key, default = sys.argv[1], sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else ""
+try:
+    d = json.load(open(cfg, encoding="utf-8"))
+except Exception:
+    d = {}
+v = d.get(key, default)
+print("\n".join(v) if isinstance(v, list) else (v if v is not None else default))
+PY
+}
+
+REF="${DARNLINK_REF:-$(read_cfg ref 'git+https://github.com/txemi/darnlink@v0.5.0')}"
+MODE="${DARNLINK_GATE_MODE:-$(read_cfg mode check)}"
+SCOPE="${DARNLINK_GATE_SCOPE:-$(read_cfg scope repo)}"
+mapfile -t EXCLUDES < <(read_cfg excludes "")
+mapfile -t IGNORE_BLOCKS < <(read_cfg ignore_blocks "")
+
+# --- guard: this recipe is READ-ONLY. Never let a --write slip through it. ---
+for a in "$@"; do
+  case "$a" in
+    --write) echo "darnlink-gate: refusing --write (this gate is read-only; robustify by hand: 'uvx --from $REF darnlink . --robustify --write')." >&2; exit 1;;
+  esac
+done
+
+# --- build darnlink args (excludes + ignore-blocks) ---
+DL_ARGS=()
+for e in "${EXCLUDES[@]}";      do [ -n "$e" ] && DL_ARGS+=(--exclude "$e"); done
+for b in "${IGNORE_BLOCKS[@]}"; do [ -n "$b" ] && DL_ARGS+=(--ignore-block "$b"); done
+
+# --- fail OPEN if uv/uvx unreachable (don't brick offline commits; CI covers it) ---
+if ! command -v uvx >/dev/null 2>&1; then
+  echo "darnlink-gate: uvx not found → SKIP (install uv; CI covers the wall)." >&2
+  exit 0
+fi
+
+cd "$root"
+run() { uvx --from "$REF" darnlink "$@"; }   # single source of the darnlink invocation
+
+# Pre-flight: can uvx actually BUILD+RUN darnlink at this ref? darnlink's own exit codes (0/1/2/3)
+# overlap a uvx fetch failure (bad ref / no network also exits low), so we can't tell "darnlink ran
+# and found issues" from "couldn't run darnlink" by the check's exit code alone. `--help` runs iff
+# darnlink is reachable. If it isn't → fail OPEN (don't brick a commit; CI covers the wall).
+if ! run --help >/dev/null 2>&1; then
+  echo "darnlink-gate: can't run darnlink at $REF (bad ref / no network) → SKIP; CI covers the wall." >&2
+  exit 0
+fi
+
+if [ "$SCOPE" != "staged" ]; then
+  # ---- whole-repo (the wall). darnlink's own exit code is the gate. ----
+  # set +e around the run: darnlink exits 0/1/2/3 (findings ARE non-zero) — set -e must not kill us
+  # before we read rc and run the rc>3 fail-open.
+  set +e
+  run check . "${DL_ARGS[@]}"        # always `check` → stable 0/2/3 contract, regardless of MODE
+  rc=$?
+  set -e
+  # rc>3 (e.g. 127 network) → fail open + warn; darnlink's own 0/2/3 pass through.
+  if [ "$rc" -gt 3 ]; then echo "darnlink-gate: darnlink unreachable (rc=$rc) → SKIP; CI covers it." >&2; exit 0; fi
+  # mode=repair gates on integrity only: a strict-only failure (3) is clean.
+  if [ "$MODE" = "repair" ] && [ "$rc" -eq 3 ]; then exit 0; fi
+  exit "$rc"
+fi
+
+# ---- staged scope (Option B): darnlink judges the whole tree; WE filter findings to staged files.
+#      darnlink stays git-agnostic; the git lives here. Only fail on findings in files you're committing.
+# python3 does the filtering — fail OPEN if it's missing (don't brick a commit; CI covers the wall).
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "darnlink-gate (staged): python3 not found → SKIP; CI covers the wall." >&2; exit 0
+fi
+mapfile -t STAGED < <(git diff --cached --name-only --diff-filter=ACMR -- '*.md' 2>/dev/null || true)
+[ "${#STAGED[@]}" -eq 0 ] && { echo "darnlink-gate (staged): no staged .md — nothing to judge."; exit 0; }
+
+# darnlink check exits 0/2/3 on findings (expected — we still get JSON); only rc>3 (e.g. 127) is
+# "unreachable". Don't let set -e or a findings-exit trip the fail-open path.
+set +e
+DL_JSON="$(run check . --json "${DL_ARGS[@]}" 2>/dev/null)"; rc=$?
+set -e
+if [ "$rc" -gt 3 ] || [ -z "$DL_JSON" ]; then
+  echo "darnlink-gate (staged): darnlink unreachable (rc=$rc) → SKIP; CI covers the wall." >&2; exit 0
+fi
+export DL_JSON DL_ROOT="$root" DL_REF="$REF" DL_MODE="$MODE"
+export DL_STAGED="$(printf '%s\n' "${STAGED[@]}")"
+
+# Pass everything via env (no interpolation into the script → no injection from finding text).
+python3 <<'PY'
+import json, os, sys
+root = os.environ["DL_ROOT"]
+mode = os.environ.get("DL_MODE", "check")
+# realpath both sides: darnlink emits resolved absolute paths, so resolve symlinks here too to match.
+staged = {os.path.realpath(os.path.join(root, p)) for p in os.environ["DL_STAGED"].split("\n") if p.strip()}
+data = json.loads(os.environ["DL_JSON"])
+def hits(axis):
+    return [f for f in data.get(axis, {}).get("findings", []) if os.path.realpath(f["file"]) in staged]
+integ = hits("integrity")
+strict = [] if mode == "repair" else hits("strict")   # mode=repair gates on integrity only
+for f in integ:  print(f"  [integrity/{f['kind']}] {f['file']}: {f['detail']}")
+for f in strict: print(f"  [strict/{f['kind']}] {f['file']}: {f['detail']}")
+if integ:  print("darnlink-gate (staged): integrity failure in a file you're committing."); sys.exit(2)
+if strict: print("darnlink-gate (staged): un-anchored plain link in a file you're committing "
+                 f"(anchor it: uvx --from {os.environ['DL_REF']} darnlink . --robustify --write)."); sys.exit(3)
+print("darnlink-gate (staged): clean."); sys.exit(0)
+PY
