@@ -149,7 +149,7 @@ breakage before it lands. Pick the one that fits your workflow — near copy-pas
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/txemi/darnlink
-    rev: v0.1.1
+    rev: v0.5.0
     hooks:
       - id: darnlink            # fail the commit if any robust link is broken
       # - id: darnlink-repair   # …or auto-repair in place instead of failing
@@ -212,7 +212,7 @@ pre-commit hook with the `darnlink-strict` id:
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/txemi/darnlink
-    rev: v0.2.0   # darnlink-strict ships here
+    rev: v0.5.0   # darnlink-strict ships since v0.2.0
     hooks:
       - id: darnlink            # links that *are* robust must not break
       - id: darnlink-strict     # …and every anchorable link *must* be robust (fail-closed)
@@ -256,7 +256,7 @@ The idea of surviving refactors by anchoring to an identity isn't new, but the s
 
 ## Status
 
-Early (v0.1.0). Built spec-first with [GitHub Spec Kit](https://github.com/github/spec-kit) — see
+Early (v0.5.0). Built spec-first with [GitHub Spec Kit](https://github.com/github/spec-kit) — see
 `.specify/` and `specs/`.
 
 ## License

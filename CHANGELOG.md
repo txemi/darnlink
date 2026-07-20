@@ -6,13 +6,29 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-07-21
+
 ### Added
+- **Published on PyPI** — darnlink is now installable from the index, so the one-liner drops the
+  `--from git+…` scaffolding: `uvx darnlink <folder>` (or `pipx install darnlink`). Lower friction
+  and a proper package page instead of a bare repo URL.
+- **PyPI packaging metadata** — `classifiers` (license, supported Python versions, topics) and
+  `[project.urls]` (Homepage, Repository, Issues, Changelog), so the package is categorised,
+  searchable and links back to the project.
+- **Release automation via PyPI Trusted Publishing (OIDC)** — `.github/workflows/publish.yml` builds
+  the sdist + wheel, runs `twine check`, and uploads on a published GitHub Release. **No API token
+  is stored anywhere.**
 - **`recipes/darnlink-gate`: modo FAIL-CLOSED** (`DARNLINK_GATE_FAIL_CLOSED=1`, o `"fail_closed": true`
   en `darnlink-gate.json`). La receta falla **abierta** por defecto —correcto en pre-commit: un commit
   offline no debe quedar bloqueado— pero eso **en CI es peligroso**: el gate *es* el muro, y un fallo
   transitorio de red/PyPI daba **build VERDE con cero ficheros validados**. Con el flag, esos casos
   salen con código **4** (distinguible de los hallazgos: `2` integridad, `3` strict). Actívalo siempre
   en CI. Detectado por una revisión adversarial de la propia receta.
+
+### Fixed
+- **Docs: stale version pins.** The README's quality-gate examples still pinned `rev: v0.1.1` /
+  `rev: v0.2.0`, and the Status section said "Early (v0.1.0)". Anyone copy-pasting the gate got a
+  release from before the strict gate existed.
 
 ## [0.5.0] — 2026-07-18
 
