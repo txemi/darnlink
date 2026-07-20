@@ -47,6 +47,15 @@ uvx darnlink <folder> --write
 Prefer a permanent install? `pipx install darnlink` (or `uv tool install darnlink`), then just
 `darnlink <folder>`.
 
+**Straight from the repo** — when you need a ref PyPI can't give you: an *immutable commit* for a
+reproducible CI gate (a tag can be force-moved; a SHA can't), or unreleased `main`:
+
+```bash
+uvx --from git+https://github.com/txemi/darnlink@v0.6.0 darnlink <folder>   # a tag
+uvx --from git+https://github.com/txemi/darnlink@<sha>  darnlink <folder>   # an immutable commit
+uvx --from git+https://github.com/txemi/darnlink        darnlink <folder>   # latest main
+```
+
 **Safe by default:** without `--write`, darnlink only *reports* what it would change — it never
 modifies a file.
 
