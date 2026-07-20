@@ -5,7 +5,12 @@
 # DARNLINK_GATE_SCOPE). It ALWAYS runs `darnlink check` (stable 0/2/3 contract); MODE only picks which
 # axes gate: mode=check → integrity + strict both gate; mode=repair → integrity only (a strict-only
 # failure, 3, is treated as clean). scope=staged filters `darnlink check --json` by `git diff --cached`
-# (Option B — darnlink stays git-agnostic); fail-open on network; refuses --write. Exit 0/2/3/1.
+# (Option B — darnlink stays git-agnostic); refuses --write.
+#
+# FAIL-OPEN by default (an offline commit must not be bricked) — set DARNLINK_GATE_FAIL_CLOSED=1 (or
+# "fail_closed": true in the json) in CI, where the gate IS the wall and failing open would mean a
+# GREEN build with zero files validated. Exit: 0 clean · 2 integrity · 3 strict · 1 usage ·
+# 4 could-not-gate (fail-closed only).
 $ErrorActionPreference = "Stop"
 
 $root = (git rev-parse --show-toplevel 2>$null)
@@ -22,6 +27,26 @@ function CfgOr($key, $default) { if ($cfg.$key) { return $cfg.$key } else { retu
 $ref   = if ($env:DARNLINK_REF)        { $env:DARNLINK_REF }        else { CfgOr 'ref' 'git+https://github.com/txemi/darnlink@v0.5.0' }
 $mode  = if ($env:DARNLINK_GATE_MODE)  { $env:DARNLINK_GATE_MODE }  else { CfgOr 'mode' 'check' }
 $scope = if ($env:DARNLINK_GATE_SCOPE) { $env:DARNLINK_GATE_SCOPE } else { CfgOr 'scope' 'repo' }
+# FAIL-CLOSED (parity with the bash recipe). Fails OPEN by default — right for pre-commit, DANGEROUS
+# in CI, where a transient network/PyPI hiccup would give a GREEN build with zero files validated.
+# Normalise: the json may carry a real boolean, and 'false'/'no'/'off'/0 must all mean OFF (a naive
+# truthiness test would arm it for the very consumer asking to turn it off).
+$rawFC = if ($null -ne $env:DARNLINK_GATE_FAIL_CLOSED) { $env:DARNLINK_GATE_FAIL_CLOSED } else { CfgOr 'fail_closed' '' }
+$failClosed = -not ([string]::IsNullOrWhiteSpace([string]$rawFC) -or
+                    ([string]$rawFC).Trim().ToLower() -in @('0','false','no','off'))
+
+# ONE place decides what to do when the gate could NOT run: skip (default) or abort red (CI).
+# Never "green without validating", which is the expensive silent failure.
+function Invoke-Bail([string]$reason) {
+  if ($failClosed) {
+    # NOT Write-Error: with $ErrorActionPreference = "Stop" it raises a terminating error and the
+    # script would die with exit 1 — never reaching the `exit 4` that tells CI "could not gate".
+    [Console]::Error.WriteLine("darnlink-gate: $reason -> FAILING (fail-closed is on: nothing was validated).")
+    exit 4
+  }
+  Write-Warning "darnlink-gate: $reason -> SKIP; CI covers the wall."
+  exit 0
+}
 $excludes     = @(CfgOr 'excludes' @())
 $ignoreBlocks = @(CfgOr 'ignore_blocks' @())
 
@@ -35,7 +60,7 @@ if ($args -contains '--write') {
 if (-not (Get-Command uvx -ErrorAction SilentlyContinue)) {
   $uvBin = Join-Path $env:USERPROFILE ".local\bin"
   if (Test-Path (Join-Path $uvBin "uvx.exe")) { $env:Path = "$uvBin;$env:Path" }
-  else { Write-Warning "darnlink-gate: uvx not found -> SKIP (install uv; CI covers the wall)."; exit 0 }
+  else { Invoke-Bail "uvx not found" }
 }
 
 $dlArgs = @()
@@ -45,13 +70,13 @@ foreach ($b in $ignoreBlocks) { if ($b) { $dlArgs += @('--ignore-block', $b) } }
 # Pre-flight: can uvx BUILD+RUN darnlink at this ref? darnlink's exit codes (0/1/2/3) overlap a uvx
 # fetch failure, so confirm reachability first; if not -> fail OPEN (don't brick a commit; CI covers it).
 & uvx --from $ref darnlink --help *> $null
-if ($LASTEXITCODE -ne 0) { Write-Warning "darnlink-gate: can't run darnlink at $ref (bad ref / no network) -> SKIP; CI covers the wall."; exit 0 }
+if ($LASTEXITCODE -ne 0) { Invoke-Bail "can't run darnlink at $ref (bad ref / no network)" }
 
 if ($scope -ne 'staged') {
   # ---- whole-repo (the wall): darnlink's own exit code is the gate ----
   & uvx --from $ref darnlink check . @dlArgs @args   # always `check` → stable 0/2/3, regardless of MODE
   $rc = $LASTEXITCODE
-  if ($rc -gt 3) { Write-Warning "darnlink-gate: darnlink unreachable (rc=$rc) -> SKIP; CI covers it."; exit 0 }
+  if ($rc -gt 3) { Invoke-Bail "darnlink unreachable (rc=$rc)" }
   # mode=repair gates on integrity only: a strict-only failure (3) is clean.
   if ($mode -eq 'repair' -and $rc -eq 3) { exit 0 }
   exit $rc
@@ -63,7 +88,7 @@ if (-not $staged) { Write-Output "darnlink-gate (staged): no staged .md — noth
 
 $json = (& uvx --from $ref darnlink check . --json @dlArgs 2>$null | Out-String)
 $rc = $LASTEXITCODE
-if ($rc -gt 3 -or -not $json.Trim()) { Write-Warning "darnlink-gate (staged): darnlink unreachable (rc=$rc) -> SKIP; CI covers the wall."; exit 0 }
+if ($rc -gt 3 -or -not $json.Trim()) { Invoke-Bail "(staged) darnlink unreachable (rc=$rc)" }
 
 $data = $json | ConvertFrom-Json
 $stagedSet = [System.Collections.Generic.HashSet[string]]::new()
