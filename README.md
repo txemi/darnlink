@@ -3,6 +3,7 @@
 > **Never break a Markdown link again.**
 > Deterministic, automatic, self-healing links.
 
+[![PyPI](https://img.shields.io/pypi/v/darnlink.svg)](https://pypi.org/project/darnlink/)
 [![CI](https://github.com/txemi/darnlink/actions/workflows/ci.yml/badge.svg)](https://github.com/txemi/darnlink/actions/workflows/ci.yml)
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
@@ -32,15 +33,19 @@ That's the whole idea: the link survived the move on its own.
 
 ## Use it in one line — no install, no clone
 
-The package is not on PyPI yet, so run it straight from GitHub with [`uv`](https://docs.astral.sh/uv/):
+darnlink is on [PyPI](https://pypi.org/project/darnlink/), so [`uv`](https://docs.astral.sh/uv/)
+fetches and runs it for you — nothing to install:
 
 ```bash
 # dry-run: show what it would do (writes nothing)
-uvx --from git+https://github.com/txemi/darnlink darnlink <folder>
+uvx darnlink <folder>
 
 # apply
-uvx --from git+https://github.com/txemi/darnlink darnlink <folder> --write
+uvx darnlink <folder> --write
 ```
+
+Prefer a permanent install? `pipx install darnlink` (or `uv tool install darnlink`), then just
+`darnlink <folder>`.
 
 **Safe by default:** without `--write`, darnlink only *reports* what it would change — it never
 modifies a file.
@@ -48,7 +53,7 @@ modifies a file.
 Upgrade plain links so they self-heal in the future (and create a UUID where the target lacks one):
 
 ```bash
-uvx --from git+https://github.com/txemi/darnlink darnlink <folder> --robustify --create-frontmatter --write
+uvx darnlink <folder> --robustify --create-frontmatter --write
 ```
 
 ## How it works (it's simple)
@@ -149,7 +154,7 @@ breakage before it lands. Pick the one that fits your workflow — near copy-pas
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/txemi/darnlink
-    rev: v0.5.0
+    rev: v0.6.0
     hooks:
       - id: darnlink            # fail the commit if any robust link is broken
       # - id: darnlink-repair   # …or auto-repair in place instead of failing
@@ -167,7 +172,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uvx --from git+https://github.com/txemi/darnlink darnlink .
+      - run: uvx darnlink .
 ```
 
 **3. Plain git hook** (no framework):
@@ -175,7 +180,7 @@ jobs:
 ```bash
 # .git/hooks/pre-commit  (chmod +x)
 #!/usr/bin/env bash
-uvx --from git+https://github.com/txemi/darnlink darnlink . || {
+uvx darnlink . || {
   echo "darnlink: broken robust links — re-run with --write to repair"; exit 1
 }
 ```
@@ -212,7 +217,7 @@ pre-commit hook with the `darnlink-strict` id:
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/txemi/darnlink
-    rev: v0.5.0   # darnlink-strict ships since v0.2.0
+    rev: v0.6.0   # darnlink-strict ships since v0.2.0
     hooks:
       - id: darnlink            # links that *are* robust must not break
       - id: darnlink-strict     # …and every anchorable link *must* be robust (fail-closed)
@@ -256,7 +261,7 @@ The idea of surviving refactors by anchoring to an identity isn't new, but the s
 
 ## Status
 
-Early (v0.5.0). Built spec-first with [GitHub Spec Kit](https://github.com/github/spec-kit) — see
+Early (v0.6.0). Built spec-first with [GitHub Spec Kit](https://github.com/github/spec-kit) — see
 `.specify/` and `specs/`.
 
 ## License
