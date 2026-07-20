@@ -6,6 +6,14 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- **`recipes/darnlink-gate`: modo FAIL-CLOSED** (`DARNLINK_GATE_FAIL_CLOSED=1`, o `"fail_closed": true`
+  en `darnlink-gate.json`). La receta falla **abierta** por defecto —correcto en pre-commit: un commit
+  offline no debe quedar bloqueado— pero eso **en CI es peligroso**: el gate *es* el muro, y un fallo
+  transitorio de red/PyPI daba **build VERDE con cero ficheros validados**. Con el flag, esos casos
+  salen con código **4** (distinguible de los hallazgos: `2` integridad, `3` strict). Actívalo siempre
+  en CI. Detectado por una revisión adversarial de la propia receta.
+
 ## [0.5.0] — 2026-07-18
 
 ### Added
