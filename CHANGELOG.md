@@ -6,6 +6,27 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- **`--only FILE` / `--only-from FILE` — scope writes to specific files** (feature 010). darnlink now
+  separates the two scopes the positional `path` used to fuse: the **index** scope (which files are
+  read — still the whole tree, so a link's target resolves wherever it lives) and the **write** scope
+  (which files are modified). `--only` narrows the latter; `--only-from` reads the list from a file or
+  stdin (`-`), so a caller can pipe `git diff --cached --name-only` in without darnlink learning about
+  git. This makes the common "anchor the links in the file I'm committing, touch nothing else" case
+  possible — previously you either scanned your subtree (and the tool couldn't see out-of-subtree
+  targets, so it anchored nothing) or ran repo-wide (and rewrote everyone's links).
+- **`--no-target-writes`** — with `--only`, refuse the one write that otherwise lands outside the
+  scope (adding a `uuid` to a *target* so a link can be anchored). Links that would need it stay plain
+  and are reported; the guarantee becomes absolute: **no** file outside `--only` is touched.
+- **New finding kinds** in human and `--json` output: `out_of_scope`, `target_uuid_write`,
+  `target_write_refused`. `--json` gains `write_scope` and `suppressed_outside_write_scope`.
+
+### Fixed
+- **`out_of_scope` no longer misreported as `no_frontmatter`.** A plain link whose target exists but
+  was never scanned (outside `path`, or excluded) used to be reported as "target has no frontmatter"
+  — stating as fact something the run never checked. It now has its own kind and an honest message.
+  This is the confusion that motivated feature 010.
+
 ## [0.6.0] — 2026-07-21
 
 ### Added

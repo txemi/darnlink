@@ -108,11 +108,14 @@ The sections above introduce these in context; this is the full list (same as `d
 
 | Option | What it does |
 |---|---|
-| `path` *(positional)* | Root directory to scan. Default: `.` — darnlink takes a **directory**, not a file list. |
+| `path` *(positional)* | Root directory to scan. Default: `.` — darnlink takes a **directory**, not a file list. (To write to specific files while still scanning the whole tree, use `--only`, below.) |
 | `--write` | Apply the changes. Without it darnlink only **reports** — it never modifies a file. |
 | `--robustify` | Upgrade plain links to robust. Without it the operation is *repair* (fix robust links whose target moved). |
 | `--create-frontmatter` | *(robustify)* Allow creating frontmatter on a target that has none, so it can take a `uuid`. Opt-in on purpose. |
 | `--no-create-frontmatter-for GLOB` | *(robustify)* Basename glob whose targets **never** get a `uuid` — no block created, no line inserted — regardless of `--create-frontmatter`. Reusing a `uuid` the target already has is unaffected. Repeatable. |
+| `--only FILE` | Restrict **writes** to these `.md` files. The tree is still scanned and indexed in full — so a link's target can live anywhere — but only these files are modified. Repeatable. See [Scoping writes to specific files](#scoping-writes-to-specific-files---only). |
+| `--only-from FILE` | Read `--only` paths from `FILE`, one per line (`-` = stdin). Combines with `--only`. Lets you pipe a generated list (e.g. staged files) without darnlink knowing about git. |
+| `--no-target-writes` | *(with `--only`)* Never write a `uuid` into a target **outside** the write scope: such links are left plain and reported. Guarantees **no** file outside `--only` is touched. |
 | `--exclude PATTERN` | Skip any directory whose name matches `PATTERN` (glob / `fnmatch`, case-sensitive; a plain name matches exactly). Repeatable — e.g. `--exclude old --exclude 'old_*' --exclude '*_old'` skips the whole `old` family. |
 | `--ignore-block NAME` | Leave links inside `<!-- NAME-start --> … <!-- NAME-end -->` blocks alone. Repeatable. |
 | `--json` | Machine-readable output (see below). |
@@ -129,6 +132,8 @@ Stable shape, meant for gates and scripts:
 {
   "wrote": 0,
   "applied": false,
+  "write_scope": null,
+  "suppressed_outside_write_scope": 0,
   "ignored_files": ["path/to/opted-out.md"],
   "link_ignored_files": ["path/to/generated/INDEX.md"],
   "invalid_frontmatter_files": [],
@@ -137,9 +142,53 @@ Stable shape, meant for gates and scripts:
 ```
 
 `kind` is one of: `repair`, `conflict`, `robustify`, `unresolvable`, `ambiguous`, `no_frontmatter`,
-`deny_listed`, `ignored_links`, `invalid_frontmatter`. A gate that wants "is anything left to do?"
-should count the kinds it cares about (e.g. `robustify`) rather than the length of `findings` — the
-non-actionable kinds are reported precisely so nothing is skipped silently.
+`out_of_scope`, `deny_listed`, `ignored_links`, `invalid_frontmatter`, `target_uuid_write`,
+`target_write_refused`. A gate that wants "is anything left to do?" should count the kinds it cares
+about (e.g. `robustify`) rather than the length of `findings` — the non-actionable kinds are
+reported precisely so nothing is skipped silently.
+
+`write_scope` is `null` unless `--only` is in effect, when it lists the files that may be written;
+`suppressed_outside_write_scope` counts actionable findings in files outside that scope — not shown,
+but surfaced so a narrowed run never reads as a clean tree.
+
+`out_of_scope` is worth calling out: it means a plain link's target **exists but was never scanned**
+(it lives outside `path`, or an `--exclude` skipped it), so its `uuid` is unknown and the link is
+left plain. That is a different fact from `no_frontmatter` (target scanned, but it has none) — the
+two used to collapse into one, which reported a scope miss as if the target were malformed.
+
+### Scoping writes to specific files (`--only`)
+
+By default darnlink writes to every file it scans. `--only` narrows the **write** scope to named
+files while still building the target graph from the whole tree — the two are separate axes:
+
+```bash
+# Scan the whole repo (so targets resolve wherever they live), but only rewrite ONE file:
+darnlink . --robustify --write --only tasks/56/README.md
+```
+
+Why the split matters: the link you want to anchor lives in your file, but its **target** usually
+lives elsewhere in the repo. Scanning only your subtree (`darnlink tasks/56`) can't see the target,
+so it reports `out_of_scope` and anchors nothing; scanning the whole repo without `--only` would
+rewrite every robustifiable link in the tree, including other people's work in flight. `--only` is
+"read everything, write here".
+
+- The **one** write that may land outside `--only` is adding a `uuid` to a *target* so the link can
+  be anchored at all — it is reported (kind `target_uuid_write`) before it happens. Pass
+  `--no-target-writes` to refuse even that: the link stays plain, and **nothing** outside `--only`
+  is touched.
+- A **repair** run under `--only` only ever inspects the links *inside* the scoped files. A moved
+  target's *inbound* links live in files you didn't name — a clean scoped result is **not** proof the
+  tree is clean. Keep a full-tree run in CI for that.
+- darnlink never touches git. To scope to your staged files, pipe them in — this is the whole
+  `--only-from -` use case:
+
+```bash
+git diff --cached --diff-filter=ACMR --name-only -- '*.md' \
+  | darnlink . --robustify --write --only-from -
+```
+
+  (darnlink edits the files but does **not** re-stage them; your hook re-runs `git add` if it wants
+  the fixes in the same commit.)
 
 ## For language models / agents
 
