@@ -29,7 +29,7 @@ Exit: `0` clean · `2` integrity failure · `3` strict-only failure · `1` usage
 
 ```json
 {
-  "ref": "git+https://github.com/txemi/darnlink@v0.6.0",
+  "ref": "git+https://github.com/txemi/darnlink@v0.7.0",
   "excludes": ["secrets", "external_repos"],
   "ignore_blocks": ["txmd-autogrid"],
   "mode": "check",
@@ -57,11 +57,11 @@ exec env DARNLINK_GATE_SCOPE=staged darnlink-gate
 any CI can fetch it **without a token** (no private checkout, no cred):
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/txemi/darnlink/v0.6.0/recipes/darnlink-gate -o darnlink-gate
+curl -sSL https://raw.githubusercontent.com/txemi/darnlink/v0.7.0/recipes/darnlink-gate -o darnlink-gate
 chmod +x darnlink-gate
 ```
 
-Pin the tag (`v0.6.0`) so the gate is deterministic. Windows agents fetch `darnlink-gate.ps1` the same
+Pin the tag (`v0.7.0`) so the gate is deterministic. Windows agents fetch `darnlink-gate.ps1` the same
 way. Locally, drop it on your `PATH` (e.g. `~/.local/bin`).
 
 ## Notes

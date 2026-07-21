@@ -25,7 +25,7 @@
 #     hallazgos: 2 integridad / 3 strict).
 #
 # CONFIG. Reads `darnlink-gate.json` at the repo root (all keys optional):
-#   { "ref": "git+https://github.com/txemi/darnlink@v0.6.0",
+#   { "ref": "git+https://github.com/txemi/darnlink@v0.7.0",
 #     "excludes": ["secrets","external_repos"], "ignore_blocks": ["txmd-autogrid"],
 #     "mode": "check", "scope": "repo", "fail_closed": true }
 # ⚠️ In CI prefer the ENV VAR over the json key: reading the json needs python3, so if python3 is
@@ -55,7 +55,7 @@ print("\n".join(v) if isinstance(v, list) else (v if v is not None else default)
 PY
 }
 
-REF="${DARNLINK_REF:-$(read_cfg ref 'git+https://github.com/txemi/darnlink@v0.6.0')}"
+REF="${DARNLINK_REF:-$(read_cfg ref 'git+https://github.com/txemi/darnlink@v0.7.0')}"
 MODE="${DARNLINK_GATE_MODE:-$(read_cfg mode check)}"
 SCOPE="${DARNLINK_GATE_SCOPE:-$(read_cfg scope repo)}"
 # FAIL-CLOSED. By default this recipe fails OPEN (don't brick an offline commit — see below). That

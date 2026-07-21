@@ -6,6 +6,8 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-07-22
+
 ### Added
 - **`--only FILE` / `--only-from FILE` — scope writes to specific files** (feature 010). darnlink now
   separates the two scopes the positional `path` used to fuse: the **index** scope (which files are
