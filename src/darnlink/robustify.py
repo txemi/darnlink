@@ -160,6 +160,17 @@ def plan_robustify(
     # whose target ALREADY has a uuid are counted; deciding the rest would mean minting uuids for
     # files this run has no mandate to touch.
     if only is not None:
+        has_uuid: Dict[Path, bool] = {}  # target -> already has a uuid; parse each target once (Copilot)
+
+        def _target_has_uuid(tr: Path) -> bool:
+            cached = has_uuid.get(tr)
+            if cached is None:
+                c = contents.get(tr)
+                status, existing = read_frontmatter_uuid(c) if c is not None else ("none", None)
+                cached = status == "valid" and bool(existing)
+                has_uuid[tr] = cached
+            return cached
+
         for f in files:
             if in_scope(f, only) or f.resolve() in link_ignored:
                 continue
@@ -168,13 +179,9 @@ def plan_robustify(
                 if t is None or t.resolve() == f.resolve():
                     continue
                 tr = t.resolve()
-                if tr in ignored_targets:
+                if tr in ignored_targets or tr not in contents:
                     continue
-                c = contents.get(tr)
-                if c is None:
-                    continue
-                status, existing = read_frontmatter_uuid(c)
-                if status == "valid" and existing:
+                if _target_has_uuid(tr):
                     result.suppressed += 1
 
     # --- Phase B: per file, annotate plain links, then add its own uuid if it is a target ---
@@ -210,8 +217,9 @@ def plan_robustify(
             if tr in skip_out_of_scope:
                 result.findings.append(
                     Finding(Kind.OUT_OF_SCOPE, f,
-                            f"{link.href}: target is outside the scanned root (or excluded); "
-                            f"its uuid was never read — widen PATH to anchor this link")
+                            f"{link.href}: target is outside the scanned root (or skipped by "
+                            f"--exclude); its uuid was never read — scan the target (widen PATH "
+                            f"or drop the --exclude that hides it) to anchor this link")
                 )
                 continue
             if tr in skip_target_write:
