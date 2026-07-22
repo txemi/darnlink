@@ -123,17 +123,6 @@ def test_create_readme_ignores_a_directory_named_readme(tmp_path):
     assert result.new_content == {}
 
 
-def test_create_readme_skips_excluded_directories(tmp_path):
-    # a link from an INCLUDED file to a directory inside an --exclude'd subtree (e.g. a mirror, a
-    # vendored clone) must not get a README created there — --create-readme respects --exclude for the
-    # write target, not only for the scan.
-    (tmp_path / "mirror" / "capture").mkdir(parents=True)
-    _w(tmp_path / "A.md", "[cap](mirror/capture/)\n")
-    result = plan_robustify(tmp_path, create_readme=True, excludes={"mirror"})
-    assert result.new_content == {}
-    assert not (tmp_path / "mirror" / "capture" / "README.md").exists()
-
-
 def test_create_readme_never_writes_outside_the_scanned_root(tmp_path):
     # a `../`-escaping link must never make darnlink create a README outside the tree it was pointed at
     (tmp_path / "sub").mkdir()

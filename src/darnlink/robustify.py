@@ -22,7 +22,7 @@ from .frontmatter_edit import (
     read_text_keep_newlines,
     write_text_keep_newlines,
 )
-from .frontmatter_index import DEFAULT_EXCLUDES, _dir_excluded, iter_markdown_files, read_frontmatter_uuid
+from .frontmatter_index import DEFAULT_EXCLUDES, dir_excluded, iter_markdown_files, read_frontmatter_uuid
 from .links import (code_spans, emit_robust_link, file_ignores_links, file_is_ignored,
                     find_plain_links, ignored_spans)
 from .paths import DIR_ANCHOR, is_local_relative, names_md, resolve_href
@@ -100,7 +100,7 @@ def _within_excluded(directory: Path, root: Path, excludes) -> bool:
         rel = directory.resolve().relative_to(root)
     except ValueError:
         return False  # outside root is handled by the caller's own root check
-    return any(_dir_excluded(part, excludes) for part in rel.parts)
+    return any(dir_excluded(part, excludes) for part in rel.parts)
 
 
 def plan_robustify(
