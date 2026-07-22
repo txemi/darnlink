@@ -204,7 +204,8 @@ breakage before it lands. Pick the one that fits your workflow — near copy-pas
 
 > **Want a ready-made wrapper instead of wiring it yourself?** [`recipes/darnlink-gate`](recipes/README.md)
 > does all of the below (both checks, staged-in-pre-commit vs whole-repo-in-CI, pinned ref, fail-open)
-> from a tiny `darnlink-gate.json`. It's a reference recipe, fetchable in CI without a token.
+> from a tiny `darnlink-gate.json`. It's a reference recipe, fetchable in CI without a token — with
+> complete copy-paste hook & CI files in [`recipes/examples/`](recipes/examples/).
 
 **1. pre-commit** (recommended — darnlink ships a hook):
 
