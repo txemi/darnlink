@@ -302,7 +302,7 @@ To adopt it on an existing repo: anchor what's already anchorable once with
 > on a large repo with a big generated mirror. The end-to-end playbook — the two-bucket strategy,
 > how generators cooperate (stable `uuid` + the `darnlink-ignore-links` marker), bulk-adopting a mirror from
 > its stored raw, the traps, and the pre-commit/pre-push/CI wall architecture — is in
-> **[docs/elevating-your-link-gate.md](docs/elevating-your-link-gate.md)**.
+> **[docs/elevating-your-link-gate.md](docs/elevating-your-link-gate.md) <!-- uuid: e95eaed1-9866-4c48-a0d7-99a6382f5bf9 -->**.
 
 > **Scope note for repos with many contributors.** All the hooks run over the **whole tree**
 > (`pass_filenames: false` — darnlink takes a directory, not a file list), and the strict check is

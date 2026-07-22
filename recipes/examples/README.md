@@ -12,7 +12,7 @@ recipe ([`../darnlink-gate`](../darnlink-gate)) at the scope that fits each laye
 | [`github-actions-darnlink-gate.yml`](github-actions-darnlink-gate.yml) | server wall | **whole repo** | **closed** |
 | [`Jenkinsfile-stage.groovy`](Jenkinsfile-stage.groovy) | server wall (self-hosted) | **whole repo** | **closed** |
 
-**The scope split is deliberate** (see [`../../docs/elevating-your-link-gate.md §7`](../../docs/elevating-your-link-gate.md)):
+**The scope split is deliberate** (see [`../../docs/elevating-your-link-gate.md §7`](../../docs/elevating-your-link-gate.md) <!-- uuid: e95eaed1-9866-4c48-a0d7-99a6382f5bf9 -->):
 staged locally so parallel contributors don't block each other; whole-repo where the gate is the wall.
 A whole-repo **pre-commit** would deadlock — don't; that's what pre-push is for.
 
@@ -21,4 +21,4 @@ A whole-repo **pre-commit** would deadlock — don't; that's what pre-push is fo
 
 **Raising to fail-closed links (`mode=max`)** is a one-line change in `darnlink-gate.json`
 (`"mode": "max"`) once the repo's gap is 0 — the hooks and CI here need no edit. Follow
-[`../../docs/elevating-your-link-gate.md`](../../docs/elevating-your-link-gate.md) to get the gap to 0 first.
+[`../../docs/elevating-your-link-gate.md`](../../docs/elevating-your-link-gate.md) <!-- uuid: e95eaed1-9866-4c48-a0d7-99a6382f5bf9 --> to get the gap to 0 first.

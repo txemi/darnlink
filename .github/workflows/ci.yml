@@ -27,8 +27,9 @@ jobs:
         run: uv run pytest -q
       - name: darnlink self-check (links must be clean)
         run: uv run darnlink .
-      - name: darnlink strict self-check (fail-closed — every anchorable link must be robust)
-        run: uv run darnlink . --robustify
+      - name: darnlink MAX self-check (fail-closed — every link's target must carry a uuid)
+        # README.md deny-listed: it's the PyPI/GitHub landing page, kept frontmatter-free.
+        run: uv run darnlink . --robustify --create-frontmatter --no-create-frontmatter-for README.md
 
   # Exercises the commands users actually run (packaging + entry point + the literal README
   # one-liner) on Linux AND Windows — so the copy-paste one-liner is proven on both.
