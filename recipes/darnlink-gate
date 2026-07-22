@@ -17,8 +17,9 @@
 #     mode=check  → integrity + strict (the default). Runs `darnlink check` (stable 0/2/3 contract);
 #     mode=max    → integrity + strict + create-frontmatter = FAIL-CLOSED links: a link to a file
 #                   that has no `uuid` fails the gate (see docs/elevating-your-link-gate.md). `check`
-#                   tops out at strict, so max runs `darnlink . --robustify --create-frontmatter` in
-#                   DRY-RUN (never --write) and gates on its exit. WHOLE-REPO ONLY — the staged
+#                   has no create-frontmatter axis and the bare `--robustify --create-frontmatter` has
+#                   no integrity axis, so max runs BOTH dry-run passes (check UNION create-frontmatter)
+#                   and fails if either does — a true superset of check. WHOLE-REPO ONLY — the staged
 #                   pre-commit stays at strict on purpose (fast, "is what I commit clean?"); the
 #                   whole-repo wall (pre-push / CI) is where max is enforced.
 #   • scope=repo  → judge the whole tree (the wall — use in CI);
@@ -35,7 +36,7 @@
 #   { "ref": "git+https://github.com/txemi/darnlink@v0.7.0",
 #     "excludes": ["secrets","external_repos"], "ignore_blocks": ["txmd-autogrid"],
 #     "mode": "check", "scope": "repo", "fail_closed": true }
-#   mode ∈ { repair | check | max } — see WHAT IT DOES. Raising it is the "trinquete": only up.
+#   mode ∈ { repair | check | max } — see WHAT IT DOES. Raising it is a one-way ratchet: only up.
 # ⚠️ In CI prefer the ENV VAR over the json key: reading the json needs python3, so if python3 is
 #    missing the key is silently lost — and "python3 missing" is one of the very cases fail-closed
 #    exists to catch. `DARNLINK_GATE_FAIL_CLOSED=1` is read by the shell and always applies.
@@ -119,14 +120,16 @@ if [ "$SCOPE" != "staged" ]; then
   # before we read rc and run the rc>3 fail-open.
   set +e
   if [ "$MODE" = "max" ]; then
-    # LEVEL 3 (fail-closed): `check` has no create-frontmatter axis, so run the robustify pass in
-    # DRY-RUN (no --write ⇒ report-only) — a SUPERSET of check (repair + strict + create-frontmatter),
-    # so it can only tighten. Any finding ⇒ non-zero ⇒ gate fails; rc>3 still means "couldn't run".
-    run . --robustify --create-frontmatter "${DL_ARGS[@]}"
+    # LEVEL 3 = `check` (integrity + strict) UNION the create-frontmatter axis. Neither half alone is
+    # a superset of check: `check` runs plan_repairs+plan_robustify but has no create-frontmatter axis;
+    # the bare `--robustify --create-frontmatter` ADDS create-frontmatter but DROPS integrity (it never
+    # runs plan_repairs — a broken/moved robust link sails through). So run BOTH dry-run passes and
+    # fail if either does. This makes max a TRUE superset of check (the ratchet holds). Both read-only.
+    run check . "${DL_ARGS[@]}"; rc=$?
+    if [ "$rc" -eq 0 ]; then run . --robustify --create-frontmatter "${DL_ARGS[@]}"; rc=$?; fi
   else
-    run check . "${DL_ARGS[@]}"      # `darnlink check` → stable 0/2/3 contract (mode=check|repair)
+    run check . "${DL_ARGS[@]}"; rc=$?   # `darnlink check` → stable 0/2/3 contract (mode=check|repair)
   fi
-  rc=$?
   set -e
   # rc>3 (e.g. 127 network) → fail open + warn; darnlink's own low exit codes pass through.
   if [ "$rc" -gt 3 ]; then bail "darnlink unreachable (rc=$rc)"; fi

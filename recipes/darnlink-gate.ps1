@@ -2,15 +2,20 @@
 #
 # See the bash version for the full rationale. Same contract: read-only; config in darnlink-gate.json
 # (ref/excludes/ignore_blocks/mode/scope) with env overrides (DARNLINK_REF, DARNLINK_GATE_MODE,
-# DARNLINK_GATE_SCOPE). It ALWAYS runs `darnlink check` (stable 0/2/3 contract); MODE only picks which
-# axes gate: mode=check → integrity + strict both gate; mode=repair → integrity only (a strict-only
-# failure, 3, is treated as clean). scope=staged filters `darnlink check --json` by `git diff --cached`
-# (Option B — darnlink stays git-agnostic); refuses --write.
+# DARNLINK_GATE_SCOPE). MODE picks which axes gate — a one-way ratchet (repair ⊂ check ⊂ max):
+#   mode=repair → integrity only (a strict-only failure, 3, is treated as clean);
+#   mode=check  → integrity + strict, via `darnlink check` (stable 0/2/3 contract);
+#   mode=max    → integrity + strict + create-frontmatter (fail-closed links). Runs BOTH `check` AND
+#                 `darnlink . --robustify --create-frontmatter` (dry-run) — check has no create-fm axis
+#                 and the bare pass has no integrity axis, so max unions them. WHOLE-REPO only; the
+#                 staged pre-commit stays at strict by design (see the bash version §7 note).
+# scope=staged filters `darnlink check --json` by `git diff --cached` (Option B — darnlink stays
+# git-agnostic); refuses --write.
 #
 # FAIL-OPEN by default (an offline commit must not be bricked) — set DARNLINK_GATE_FAIL_CLOSED=1 (or
 # "fail_closed": true in the json) in CI, where the gate IS the wall and failing open would mean a
-# GREEN build with zero files validated. Exit: 0 clean · 2 integrity · 3 strict · 1 usage ·
-# 4 could-not-gate (fail-closed only).
+# GREEN build with zero files validated. Exit: 0 clean · 2 integrity · 3 strict · 1 usage / max
+# findings · 4 could-not-gate (fail-closed only).
 $ErrorActionPreference = "Stop"
 
 $root = (git rev-parse --show-toplevel 2>$null)
@@ -75,14 +80,20 @@ if ($LASTEXITCODE -ne 0) { Invoke-Bail "can't run darnlink at $ref (bad ref / no
 if ($scope -ne 'staged') {
   # ---- whole-repo (the wall): darnlink's own exit code is the gate ----
   if ($mode -eq 'max') {
-    # LEVEL 3 (fail-closed): `check` has no create-frontmatter axis, so run the robustify pass in
-    # DRY-RUN (no --write ⇒ report-only) — a SUPERSET of check (repair + strict + create-frontmatter),
-    # so it can only tighten. Any finding ⇒ non-zero ⇒ gate fails; rc>3 still means "couldn't run".
-    & uvx --from $ref darnlink . --robustify --create-frontmatter @dlArgs @args
+    # LEVEL 3 = check (integrity + strict) UNION create-frontmatter. `check` has no create-frontmatter
+    # axis; the bare `--robustify --create-frontmatter` DROPS integrity (never runs plan_repairs — a
+    # broken robust link would sail through). So run BOTH dry-run passes and fail if either does — a
+    # true superset of check. Both read-only.
+    & uvx --from $ref darnlink check . @dlArgs @args
+    $rc = $LASTEXITCODE
+    if ($rc -eq 0) {
+      & uvx --from $ref darnlink . --robustify --create-frontmatter @dlArgs @args
+      $rc = $LASTEXITCODE
+    }
   } else {
     & uvx --from $ref darnlink check . @dlArgs @args   # `darnlink check` → 0/2/3 (mode=check|repair)
+    $rc = $LASTEXITCODE
   }
-  $rc = $LASTEXITCODE
   if ($rc -gt 3) { Invoke-Bail "darnlink unreachable (rc=$rc)" }
   # mode=repair gates on integrity only: a strict-only failure (3) is clean.
   if ($mode -eq 'repair' -and $rc -eq 3) { exit 0 }

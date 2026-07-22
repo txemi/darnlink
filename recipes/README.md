@@ -16,8 +16,9 @@ is that orchestration in one place; a consumer carries only a tiny config + a 3-
     robustify their links yet).
   - `mode=check` → integrity **+** strict (the default). Runs `darnlink check` (stable `0/2/3`).
   - `mode=max` → integrity + strict **+ create-frontmatter** = **fail-closed links**: a link to a file
-    with **no `uuid`** fails the gate. `check` tops out at strict, so `max` runs
-    `darnlink . --robustify --create-frontmatter` in **dry-run** and gates on its exit.
+    with **no `uuid`** fails the gate. `check` has no create-frontmatter axis and the bare
+    `darnlink . --robustify --create-frontmatter` has no integrity axis, so `max` runs **both** dry-run
+    passes (a true superset of `check` — it can't silently drop broken robust links).
     **Whole-repo only** — the staged pre-commit stays at strict on purpose (fast); the whole-repo wall
     (pre-push / CI) is where `max` is enforced. See [`docs/elevating-your-link-gate.md`](../docs/elevating-your-link-gate.md).
 - `scope=repo` → judge the whole tree (**the wall — use in pre-push & CI**).
