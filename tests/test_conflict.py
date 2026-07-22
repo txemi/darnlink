@@ -69,12 +69,14 @@ def test_genuine_move_still_repairs(tmp_path):
     assert not any(f.kind is Kind.CONFLICT for f in result.findings)
 
 
-def test_directory_link_to_readme_is_repaired_not_conflict(tmp_path):
-    # A robust link pointing at a DIRECTORY (not an existing file) whose uuid lives in its README
-    # is a normal repair (dir -> README), not a conflict.
+def test_directory_link_to_readme_is_not_a_conflict(tmp_path):
+    # A robust link pointing at a DIRECTORY whose uuid lives in its README must never be flagged as a
+    # path/uuid CONFLICT (the conflict rule keys on the path resolving to a real *file*; a directory
+    # is not one). Since feature 011 (directory links) a directory link that already points at the
+    # right directory is simply correct — a no-op — not a rewrite into the README *file* as before.
     _w(tmp_path / "issue" / "README.md", f"---\nuuid: {OTHER_UUID}\n---\n# Issue\n")
     _w(tmp_path / "A.md", f"[issue](issue/) <!-- uuid: {OTHER_UUID} -->\n")
 
     result = plan_repairs(tmp_path, build_index(tmp_path))
-    assert any(f.kind is Kind.REPAIR for f in result.findings)
+    assert result.new_content == {}                       # already correct: nothing rewritten
     assert not any(f.kind is Kind.CONFLICT for f in result.findings)

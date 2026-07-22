@@ -19,7 +19,7 @@ from typing import Dict, List, Optional, Set
 from .frontmatter_index import DEFAULT_EXCLUDES, FrontmatterIndex, iter_markdown_files
 from .links import (code_spans, emit_robust_link, file_ignores_links, file_is_ignored,
                     find_robust_links, ignored_spans)
-from .paths import relative_link, resolve_href, split_fragment
+from .paths import DIR_ANCHOR, names_md, relative_link, resolve_href, split_fragment
 from .frontmatter_edit import read_text_keep_newlines, write_text_keep_newlines
 from .report import Finding, Kind
 from .scope import in_scope
@@ -91,23 +91,44 @@ def plan_repairs(
                 )
                 continue
             current = resolve_href(link.href, f)
-            if current == target.resolve():
-                continue  # already correct (cosmetic ./ differences are fine)
-            if current.is_file():
-                # The written path still points to a real file, but the uuid lives elsewhere:
-                # the two halves of the robust link disagree (typically a mis-pasted uuid). This
-                # is NOT a moved target, so don't guess which side is right — flag it for review.
+            _, frag = split_fragment(link.href)
+            # Feature 011: a link whose path does not name a `.md` file is a *directory* link — the
+            # uuid identifies the directory via its README.md, and the link points at the directory
+            # (the README's parent), not at the README file itself.
+            dir_link = not names_md(link.href)
+            if dir_link and target.name.lower() != DIR_ANCHOR.lower():
+                # The path names a directory but the uuid lives in a non-README file: the two halves
+                # disagree. Don't guess — flag like any other path/uuid conflict.
                 local.append(
                     Finding(
                         Kind.CONFLICT,
                         f,
-                        f"{link.href} resolves to an existing file, but uuid {link.uuid} lives in "
-                        f"{target} — path and uuid disagree; left untouched",
+                        f"{link.href} is a directory link, but uuid {link.uuid} lives in {target} "
+                        f"(not a {DIR_ANCHOR}) — path and uuid disagree; left untouched",
                     )
                 )
                 continue
-            _, frag = split_fragment(link.href)
-            new_href = relative_link(target, f, frag)
+            intended = target.parent if dir_link else target
+            if current == intended.resolve():
+                continue  # already correct (cosmetic ./ or trailing-slash differences are fine)
+            # Defensive: the written path still resolves to a real thing of the SAME kind — a file for
+            # a file link, a directory for a directory link — while the uuid lives elsewhere. The two
+            # halves disagree (typically a mis-pasted uuid); it is NOT a move, so flag, don't hijack.
+            if current.is_dir() if dir_link else current.is_file():
+                kind_word = "directory" if dir_link else "file"
+                local.append(
+                    Finding(
+                        Kind.CONFLICT,
+                        f,
+                        f"{link.href} resolves to an existing {kind_word}, but uuid {link.uuid} lives "
+                        f"in {target} — path and uuid disagree; left untouched",
+                    )
+                )
+                continue
+            base = relative_link(intended, f)  # path only; fragment re-appended below
+            if dir_link and not base.endswith("/"):
+                base += "/"  # keep directory links visibly directories (and re-recognisable as such)
+            new_href = f"{base}#{frag}" if frag else base
             local.append(Finding(Kind.REPAIR, f, f"{link.href} -> {new_href}"))
             # splice the rewritten robust link in place of the old span
             pieces.append(content[cursor:link.start])

@@ -94,6 +94,9 @@ A robust link stays a normal, clickable Markdown link:
 See [the design doc](docs/design.md) <!-- uuid: 7f3a1e2c-... -->
 ```
 
+Links to **directories** work too: a link to `docs/guide/` is anchored to the uuid of that folder's
+`README.md`, so it heals when the folder moves — same guarantee, for the hubs you link to by folder.
+
 Format spec: [FORMAT.md](FORMAT.md) <!-- uuid: 9052d864-2a45-4ed4-8725-d8a394e7a7ef -->.
 
 ## Excluding parts of the tree

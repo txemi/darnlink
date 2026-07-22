@@ -23,7 +23,7 @@ from .frontmatter_edit import (
 from .frontmatter_index import DEFAULT_EXCLUDES, iter_markdown_files, read_frontmatter_uuid
 from .links import (code_spans, emit_robust_link, file_ignores_links, file_is_ignored,
                     find_plain_links, ignored_spans)
-from .paths import is_local_md, resolve_href
+from .paths import DIR_ANCHOR, is_local_relative, names_md, resolve_href
 from .report import Finding, Kind
 from .scope import in_scope
 
@@ -38,12 +38,23 @@ class RobustifyResult:
     suppressed: int = 0  # anchorable links in files outside the write scope (010): counted, never hidden
 
 
-def _md_target(href: str, linking_file: Path) -> Path | None:
-    if not is_local_md(href):
+def _anchor_target(href: str, linking_file: Path) -> Path | None:
+    """The `.md` file whose `uuid` anchors this link, or None.
+
+    - A link to a `.md` file anchors to that file (the original behavior).
+    - A link to a *directory* anchors to that directory's `README.md` (feature 011): a folder's
+      identity is its README's uuid. A directory with no README is not anchorable — it returns None,
+      exactly like any other non-`.md` target, so the link is left plain.
+    """
+    if not is_local_relative(href):
         return None
     t = resolve_href(href, linking_file)
-    if t.exists() and t.suffix.lower() == ".md":
-        return t
+    if names_md(href):
+        return t if (t.exists() and t.suffix.lower() == ".md") else None
+    if t.is_dir():
+        readme = t / DIR_ANCHOR
+        if readme.exists():
+            return readme
     return None
 
 
@@ -149,7 +160,7 @@ def plan_robustify(
         if not in_scope(f, only):
             continue  # 010: its links are never rewritten either -> they must not create uuids
         for link in find_plain_links(contents.get(f, ""), spans.get(f, [])):
-            t = _md_target(link.href, f)
+            t = _anchor_target(link.href, f)
             # Skip self-links (a file linking to itself, e.g. autogrid `path` rows): robustifying
             # them is meaningless and would touch machine-generated blocks.
             if t is not None and t.resolve() != f.resolve():
@@ -175,7 +186,7 @@ def plan_robustify(
             if in_scope(f, only) or f.resolve() in link_ignored:
                 continue
             for link in find_plain_links(contents.get(f, ""), spans.get(f, [])):
-                t = _md_target(link.href, f)
+                t = _anchor_target(link.href, f)
                 if t is None or t.resolve() == f.resolve():
                     continue
                 tr = t.resolve()
@@ -203,7 +214,7 @@ def plan_robustify(
         # uuid below — being a target is not a write the caller has to name (FR-006).
         links = () if (f.resolve() in link_ignored or not scoped) else find_plain_links(original, spans.get(f, []))
         for link in links:
-            t = _md_target(link.href, f)
+            t = _anchor_target(link.href, f)
             if t is None or t.resolve() == f.resolve():
                 continue  # skip non-md/external and self-links
             tr = t.resolve()
