@@ -76,7 +76,10 @@ def _dir_link_missing_readme(href: str, linking_file: Path) -> Path | None:
     if not is_local_relative(href) or names_md(href):
         return None
     t = resolve_href(href, linking_file)
-    if t.is_dir() and not (t / DIR_ANCHOR).is_file():
+    # `exists()` (not `is_file()`): if a `README.md` is *already there* in any form — including the
+    # pathological case of a directory named `README.md` — the folder is not "missing" one, and we must
+    # not schedule a write to that path (creating over a directory would raise at apply time).
+    if t.is_dir() and not (t / DIR_ANCHOR).exists():
         return t
     return None
 
@@ -148,6 +151,7 @@ def plan_robustify(
     planned_readmes: Set[Path] = set()      # resolved README paths this run will create
     created_readmes: Dict[Path, str] = {}   # README path -> full content to write
     if create_readme:
+        root_resolved = root.resolve()
         for f in files:
             if f.resolve() in link_ignored or not in_scope(f, only):
                 continue  # same guards as Phase A: these links never drive writes
@@ -158,6 +162,8 @@ def plan_robustify(
                 readme = (d / DIR_ANCHOR).resolve()
                 if readme in planned_readmes:
                     continue  # one README per directory, however many links point at it
+                if not readme.is_relative_to(root_resolved):
+                    continue  # a `../`-escaping link must never make us write outside the scanned root
                 if not in_scope(readme, only):
                     continue  # respect --only: never create outside the write scope
                 if _basename_denied(readme, no_create_globs):
