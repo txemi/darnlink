@@ -1,6 +1,6 @@
 [project]
 name = "darnlink"
-version = "0.8.0"
+version = "0.9.0.dev0"
 description = "auto-healing Markdown links — anchor links to a UUID: repair moved links, robustify plain ones"
 readme = "README.md"
 requires-python = ">=3.10"
