@@ -33,6 +33,16 @@ Repairs resolve by **exact UUID match** against frontmatter. Given the same tree
 identical and reproducible. No fuzzy matching, no machine learning, no network calls. A
 traditional, auditable algorithm a human can verify.
 
+**Network carve-out (the single sanctioned exception).** Network calls are forbidden in the core and
+in **every default path**. A single opt-in **`web-check --online`** mode may fetch a *named
+destination URL* to read its frontmatter `uuid` (for cross-repo web links whose target lives in
+another repository the core never scans). It is **off by default**, never runs implicitly, and is the
+**only** place a network call is allowed. In that mode the output is a function of *the tree **and**
+the live responses*, so determinism there is **conditional** on what the destination returns — an
+explicit, bounded trade made knowingly for this one adjunct. The web anchor it writes uses a
+**distinct `web-uuid` marker** (never the core's `uuid`), so core determinism and the fleet's
+fail-closed gates are wholly unaffected by the feature's existence.
+
 ### V. Test-First & Acceptance-Driven
 Behavior is defined by tests before implementation. The cornerstone acceptance test:
 *rename/move a file that has N inbound robust links, run darnlink, and every link is repaired to
@@ -45,6 +55,12 @@ darnlink performs exactly two operations and no more:
    UUID is created only when something needs it), and append `<!-- uuid: … -->` to the link.
 2. **Repair** — fix a robust link whose path drifted: rewrite the path to the target located by
    its UUID.
+
+The two core operations remain **exactly two**. Cross-repo web-link resolution (`web-check`) is a
+**separate, opt-in subcommand**, deliberately **not** a third core operation — it reuses the same
+`uuid`-in-frontmatter primitive but is an adjunct, kept off the default path to prevent the scope
+creep this constitution exists to resist (Principle I still governs: it earns its place only as a
+non-core subcommand, never by widening the core).
 
 ## Technical Constraints
 - **Language**: Python 3.13+, standard library + `python-frontmatter` only. No heavy/ML deps.
@@ -67,4 +83,8 @@ This constitution governs scope and quality. Adding any capability beyond the tw
 requires explicitly amending Principle I and justifying why it cannot be a separate tool.
 Simplicity and scope discipline win ties.
 
-**Version**: 1.0.0 | **Ratified**: 2026-06-06 | **Last Amended**: 2026-06-06
+**Version**: 1.1.0 | **Ratified**: 2026-06-06 | **Last Amended**: 2026-07-22
+
+*1.1.0 (2026-07-22): Principle IV gains a single sanctioned network carve-out for the opt-in
+`web-check --online` mode; the Two Operations section affirms web-check is a non-core adjunct, not a
+third operation. Backward-compatible: the core and every default path stay offline and deterministic.*
