@@ -64,14 +64,14 @@ def test_contents_api_url():
 
 def test_find_web_links_plain_and_anchored():
     content = (f"a [p]({URL})\n"
-               f"b [q]({URL}) <!-- uuid: {UUID} -->\n"
+               f"b [q]({URL}) <!-- web-uuid: {UUID} -->\n"
                "c [local](x.md)\n")
     links = find_web_links(content)
     assert [l.uuid for l in links] == [None, UUID]
 
 
 def test_find_web_links_skips_code_fence():
-    content = f"```\n[x]({URL}) <!-- uuid: {UUID} -->\n```\n"
+    content = f"```\n[x]({URL}) <!-- web-uuid: {UUID} -->\n```\n"
     from darnlink.links import code_spans
     assert find_web_links(content, code_spans(content)) == []
 
@@ -85,7 +85,7 @@ def test_online_anchor_plain_link_dry_run(tmp_path):
     assert [f.kind for f in findings] == ["web_anchor"]
     assert findings[0].anchored_uuid == UUID
     assert (tmp_path / "conta.md") in edits
-    assert f"<!-- uuid: {UUID} -->" in edits[tmp_path / "conta.md"]
+    assert f"<!-- web-uuid: {UUID} -->" in edits[tmp_path / "conta.md"]
     # dry-run must not touch disk
     assert (tmp_path / "conta.md").read_text() == f"see [topo]({URL})\n"
 
@@ -96,7 +96,7 @@ def test_online_anchor_applied_with_write(tmp_path, capsys):
     code = _run_web_check_cli([str(tmp_path), "--online", "--write", "--json"], fetcher=fetch)
     out = json.loads(capsys.readouterr().out)
     assert code == 0 and out["wrote"] == 1
-    assert (tmp_path / "conta.md").read_text() == f"see [topo]({URL}) <!-- uuid: {UUID} -->\n"
+    assert (tmp_path / "conta.md").read_text() == f"see [topo]({URL}) <!-- web-uuid: {UUID} -->\n"
 
 
 def test_online_anchor_pending_exits_3(tmp_path):
@@ -108,7 +108,7 @@ def test_online_anchor_pending_exits_3(tmp_path):
 # --- ONLINE: verify an already-anchored link ---
 
 def test_online_verify_match_web_ok(tmp_path):
-    _w(tmp_path / "conta.md", f"see [topo]({URL}) <!-- uuid: {UUID} -->\n")
+    _w(tmp_path / "conta.md", f"see [topo]({URL}) <!-- web-uuid: {UUID} -->\n")
     fetch = _fetcher({URL: (200, f"---\nuuid: {UUID}\n---\n")})
     findings, edits = check_web_links_online(tmp_path, None, fetch)
     assert [f.kind for f in findings] == ["web_ok"]
@@ -116,13 +116,13 @@ def test_online_verify_match_web_ok(tmp_path):
 
 
 def test_online_verify_mismatch_exits_4(tmp_path):
-    _w(tmp_path / "conta.md", f"see [topo]({URL}) <!-- uuid: {UUID} -->\n")
+    _w(tmp_path / "conta.md", f"see [topo]({URL}) <!-- web-uuid: {UUID} -->\n")
     fetch = _fetcher({URL: (200, f"---\nuuid: {OTHER}\n---\n")})  # destination uuid differs
     assert _run_web_check_cli([str(tmp_path), "--online"], fetcher=fetch) == 4
 
 
 def test_online_dest_has_no_uuid_is_mismatch(tmp_path):
-    _w(tmp_path / "conta.md", f"see [topo]({URL}) <!-- uuid: {UUID} -->\n")
+    _w(tmp_path / "conta.md", f"see [topo]({URL}) <!-- web-uuid: {UUID} -->\n")
     fetch = _fetcher({URL: (200, "# a destination with no frontmatter\n")})
     findings, _ = check_web_links_online(tmp_path, None, fetch)
     assert findings[0].kind == "web_mismatch"
@@ -131,7 +131,7 @@ def test_online_dest_has_no_uuid_is_mismatch(tmp_path):
 # --- failure cases: 404, private-no-token, unparseable, network error ---
 
 def test_online_404_is_web_not_found_exits_4(tmp_path):
-    _w(tmp_path / "conta.md", f"see [topo]({URL}) <!-- uuid: {UUID} -->\n")
+    _w(tmp_path / "conta.md", f"see [topo]({URL}) <!-- web-uuid: {UUID} -->\n")
     fetch = _fetcher({})  # every URL -> 404
     findings, _ = check_web_links_online(tmp_path, None, fetch)
     assert findings[0].kind == "web_not_found"
@@ -139,7 +139,7 @@ def test_online_404_is_web_not_found_exits_4(tmp_path):
 
 
 def test_online_private_no_token_is_unverifiable(tmp_path):
-    _w(tmp_path / "conta.md", f"see [topo]({URL}) <!-- uuid: {UUID} -->\n")
+    _w(tmp_path / "conta.md", f"see [topo]({URL}) <!-- web-uuid: {UUID} -->\n")
     fetch = _fetcher({URL: (403, None)})  # private repo, no token -> 403
     findings, _ = check_web_links_online(tmp_path, token=None, fetcher=fetch)
     assert findings[0].kind == "web_unverifiable"
@@ -149,7 +149,7 @@ def test_online_private_no_token_is_unverifiable(tmp_path):
 
 
 def test_online_private_with_token_reads_uuid(tmp_path):
-    _w(tmp_path / "conta.md", f"see [topo]({URL}) <!-- uuid: {UUID} -->\n")
+    _w(tmp_path / "conta.md", f"see [topo]({URL}) <!-- web-uuid: {UUID} -->\n")
 
     def fetch(gu, token):  # 403 without token, 200 with it
         return (200, f"---\nuuid: {UUID}\n---\n") if token else (403, None)
@@ -159,14 +159,14 @@ def test_online_private_with_token_reads_uuid(tmp_path):
 
 
 def test_online_network_error_is_unverifiable(tmp_path):
-    _w(tmp_path / "conta.md", f"see [topo]({URL}) <!-- uuid: {UUID} -->\n")
+    _w(tmp_path / "conta.md", f"see [topo]({URL}) <!-- web-uuid: {UUID} -->\n")
     fetch = _fetcher({URL: (-1, None)})  # URLError/timeout mapped to -1
     findings, _ = check_web_links_online(tmp_path, None, fetch)
     assert findings[0].kind == "web_unverifiable"
 
 
 def test_online_unparseable_url_is_unverifiable(tmp_path):
-    _w(tmp_path / "conta.md", f"see [x](https://example.com/whatever) <!-- uuid: {UUID} -->\n")
+    _w(tmp_path / "conta.md", f"see [x](https://example.com/whatever) <!-- web-uuid: {UUID} -->\n")
     findings, _ = check_web_links_online(tmp_path, None, _fetcher({}))
     assert findings[0].kind == "web_unverifiable"
 
@@ -192,7 +192,14 @@ def test_write_without_online_is_usage_error(tmp_path):
 # --- core is untouched: repair / robustify / check ignore web links entirely ---
 
 def test_core_ignores_web_links(tmp_path):
-    _w(tmp_path / "conta.md", f"see [topo]({URL}) <!-- uuid: {UUID} -->\n")  # uuid not local
+    # Blocker 1: the web anchor is `<!-- web-uuid: X -->`, NOT the core's `<!-- uuid: X -->`. This is
+    # what lets ANY repo's core gate — even one without darnlink-web's is_web_href guard — stay clean
+    # next to a cross-repo web link: the core's marker regex simply never matches it, so it never tries
+    # to resolve X locally (which would fail: X lives in another repo) and never fails the gate.
+    from darnlink.links import find_robust_links
+    src = f"see [topo]({URL}) <!-- web-uuid: {UUID} -->\n"
+    assert find_robust_links(src) == []               # the core does not even SEE it as a robust link
+    _w(tmp_path / "conta.md", src)                    # uuid not local
     assert main([str(tmp_path)]) == 0                 # repair: web link inert
     assert main([str(tmp_path), "--robustify"]) == 0  # robustify: not a local .md
     assert main(["check", str(tmp_path)]) == 0        # check: both axes clean
@@ -201,7 +208,7 @@ def test_core_ignores_web_links(tmp_path):
 # --- report-only unless --write: verify path never mutates disk ---
 
 def test_verify_never_writes(tmp_path):
-    _w(tmp_path / "conta.md", f"see [topo]({URL}) <!-- uuid: {UUID} -->\n")
+    _w(tmp_path / "conta.md", f"see [topo]({URL}) <!-- web-uuid: {UUID} -->\n")
     fetch = _fetcher({URL: (200, f"---\nuuid: {OTHER}\n---\n")})
     before = _checksums(tmp_path)
     _run_web_check_cli([str(tmp_path), "--online"], fetcher=fetch)  # mismatch, but read-only

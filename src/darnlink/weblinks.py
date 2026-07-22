@@ -26,8 +26,21 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from .frontmatter_index import read_frontmatter_uuid
-from .links import (MD_LINK_RE, Span, _TRAILING_UUID_RE, _in_spans, code_spans,
-                    emit_robust_link, ignored_spans)
+from .links import MD_LINK_RE, Span, _in_spans, code_spans, ignored_spans
+
+# A web anchor is DELIBERATELY marked `web-uuid` (not the core's `uuid`): the destination uuid lives
+# in ANOTHER repo, so the core's intra-repo repair/robustify — which keys on `<!-- uuid: X -->` — must
+# never mistake a cross-repo web link for one of its own (FR-002). The destination repo is not recorded
+# in the marker: the link's own href already names it, and a bare uuid also fits non-GitHub web links.
+_TRAILING_WEB_UUID_RE = re.compile(
+    r"\s*<!--\s*web-uuid:\s*(?P<uuid>[0-9a-fA-F-]{36})\s*-->"
+)
+
+
+def emit_web_anchor(text: str, href: str, uuid: str) -> str:
+    """`[text](href) <!-- web-uuid: uuid -->` — the cross-repo counterpart of the core's robust link.
+    `web-uuid` (not `uuid`) keeps it invisible to the core's marker (see FR-002)."""
+    return f"[{text}]({href}) <!-- web-uuid: {uuid} -->"
 
 # github.com/<owner>/<repo>/blob/<ref>/<path...>  (also tolerates /raw/ and a leading www.)
 _GITHUB_BLOB_RE = re.compile(
@@ -68,7 +81,7 @@ class WebLink:
 
 def find_web_links(content: str, ignore: Sequence[Span] = ()) -> List[WebLink]:
     """All Markdown links whose href is an http(s) URL, in document order, skipping `ignore` spans.
-    A trailing `<!-- uuid: X -->` marks the link as already anchored (its uuid is captured)."""
+    A trailing `<!-- web-uuid: owner/repo#X -->` marks the link as already anchored (its uuid is captured)."""
     out: List[WebLink] = []
     for m in MD_LINK_RE.finditer(content):
         href = m["href"]
@@ -76,10 +89,9 @@ def find_web_links(content: str, ignore: Sequence[Span] = ()) -> List[WebLink]:
             continue
         if _in_spans(m.start(), ignore):
             continue
-        tail = _TRAILING_UUID_RE.match(content, m.end())
+        tail = _TRAILING_WEB_UUID_RE.match(content, m.end())
         if tail:
-            uuid = re.search(r"[0-9a-fA-F-]{36}", tail.group()).group().lower()
-            out.append(WebLink(m["text"], href, uuid, m.start(), tail.end()))
+            out.append(WebLink(m["text"], href, tail["uuid"].lower(), m.start(), tail.end()))
         else:
             out.append(WebLink(m["text"], href, None, m.start(), m.end()))
     return out
@@ -194,7 +206,7 @@ def check_web_links_online(
             findings.append(fnd)
             if fnd.kind == "web_anchor" and fnd.anchored_uuid:
                 pieces.append(content[cursor:link.start])
-                pieces.append(emit_robust_link(link.text, link.href, fnd.anchored_uuid))
+                pieces.append(emit_web_anchor(link.text, link.href, fnd.anchored_uuid))
                 cursor = link.end
                 changed = True
         if changed:

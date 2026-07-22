@@ -19,7 +19,7 @@ lives in *another repository*, which darnlink, by design, never looks at. The as
 The motivating link (the real case the prototype exercises):
 
 ```
-Ver la [topología Jenkins](https://github.com/txemi/txnet1/blob/main/projects/software/homelab/docs_vivos/jenkins_topologia.md) <!-- uuid: 3f9c… -->
+Ver la [topología Jenkins](https://github.com/txemi/txnet1/blob/main/projects/software/homelab/docs_vivos/jenkins_topologia.md) <!-- web-uuid: 3f9c… -->
 ```
 
 lives in `txconta/.../jenkins_topologia.md` and points at `txnet1/.../docs_vivos/jenkins_topologia.md`.
@@ -43,7 +43,7 @@ darnlink gains a **separate, opt-in `web-check --online`** mode that, for each c
 **fetches the ONE destination URL** (not a crawler) via the GitHub Contents API, reads its frontmatter
 `uuid`, and:
 
-- **plain web link** + destination has a `uuid` → **anchor** the link (`[text](url) <!-- uuid: X -->`);
+- **plain web link** + destination has a `uuid` → **anchor** the link (`[text](url) <!-- web-uuid: X -->`);
   report under dry-run, apply under `--write`.
 - **already-anchored web link** → **verify** the link's `uuid` still matches the destination's; on
   **mismatch or 404**, report and exit non-zero.
@@ -52,6 +52,18 @@ It **does not** search where a moved file went — there is no web-side index to
 case). Finding the new location of a moved cross-repo target is left to the **layer above** (an LLM /
 human), which can then re-anchor. darnlink's job here is narrow: *anchor when it can read the target,
 verify when it already has a uuid, and fail loudly when the two disagree.*
+
+### The marker is `web-uuid`, deliberately NOT the core's `uuid` (resolves the cross-repo gate clash)
+
+A web anchor is written `[text](url) <!-- web-uuid: X -->`, **not** `<!-- uuid: X -->`. This is not
+cosmetic — it is what makes web anchors **safe to commit in any repo that already runs the core gate**.
+The core keys on `<!-- uuid: X -->` and resolves X **inside the same tree**; a web anchor's X lives in
+*another* repo. Had the web anchor reused `<!-- uuid: X -->`, every core gate in the fleet (all at
+fail-closed `max`) would see the marker, look X up locally, not find it, and **fail the build**
+(`unresolvable`, exit 2) — the anchor would be unusable the moment it was committed. `web-uuid` is a
+different marker the core's regex never matches, so the core ignores web anchors entirely — with or
+without the `is_web_href` guard. The destination repo is **not** stored in the marker: the link's own
+href already names it, and a bare uuid also fits non-GitHub web links.
 
 **Why the offline-checkout idea was dropped.** An earlier draft resolved offline against sibling repo
 checkouts the caller supplies. It kept P-IV but assumed the consumer always has the other repo checked
@@ -80,7 +92,7 @@ Reviewed against `.specify/memory/constitution.md` v1.0.0.
   "parse a GitHub blob URL + fetch one file", confined to `web-check`. **Held, with the amendment that
   P-I must bless a non-core subcommand** (see §Amendments). ✅ (conditioned)
 - **P-II Safe by Default (dry-run first):** `web-check` is **report-only unless `--write`**; `--write`
-  requires `--online` and only ever edits the **source** file (adds the `<!-- uuid: X -->` comment) —
+  requires `--online` and only ever edits the **source** file (adds the `<!-- web-uuid: X -->` comment) —
   never the destination repo. Dry-run mutates nothing. **Held.** ✅
 - **P-III Plain, Self-Contained, Tool-Agnostic (no external DB/index):** the link is plain Markdown that
   renders/clicks anywhere; **nothing is stored** in either repo — no manifest, no index file. Resolution
@@ -114,7 +126,7 @@ for the `--online` mode** — every other principle stands.
 ### Functional Requirements
 
 - **FR-001** darnlink MUST recognise a **web link**: a Markdown link whose href is an `http(s)://` URL.
-  A trailing `<!-- uuid: X -->` marks it **anchored**; without it the link is **plain**. Reuses the
+  A trailing `<!-- web-uuid: X -->` marks it **anchored**; without it the link is **plain**. Reuses the
   existing link + trailing-uuid grammar.
 - **FR-002** The **core** operations (`repair`, `robustify`, `check`) MUST **ignore web links entirely**:
   a web link is never a repair/robustify/`unresolvable` finding. (This is the "ignore web by default"
@@ -126,7 +138,7 @@ for the `--online` mode** — every other principle stands.
   (GitHub Contents API, stdlib `urllib`; **no crawling**), read the destination's frontmatter `uuid`,
   and classify the link (FR-005/FR-006). Each distinct URL is fetched at most once per run.
 - **FR-005** **Anchor:** a **plain** web link whose destination has a `uuid` MUST be reported
-  `web_anchor` (dry-run) and, under `--write`, rewritten to `[text](url) <!-- uuid: X -->`. `--write`
+  `web_anchor` (dry-run) and, under `--write`, rewritten to `[text](url) <!-- web-uuid: X -->`. `--write`
   MUST require `--online`. The write edits only the **source** file, never the destination repo.
 - **FR-006** **Verify:** an **anchored** web link MUST be re-fetched and checked. Matching uuid →
   `web_ok`. Destination uuid absent or **different** → `web_mismatch` (a failure). A destination that
@@ -146,7 +158,7 @@ for the `--online` mode** — every other principle stands.
 
 ### Key Entities
 
-- **Web link** — `[text](http(s)://…)` optionally followed by `<!-- uuid: X -->`. Renders/clicks as
+- **Web link** — `[text](http(s)://…)` optionally followed by `<!-- web-uuid: X -->`. Renders/clicks as
   ordinary Markdown with no tooling; the `uuid` is the only anchor (no manifest, no stored index).
 - **Web finding** — `web_ok` / `web_anchor` (uuid to add) / `web_mismatch` / `web_not_found` /
   `web_unverifiable`. A view over the single-URL fetch, not a new core model.
@@ -156,7 +168,7 @@ for the `--online` mode** — every other principle stands.
 ## Acceptance (what the prototype demonstrates — all with a mocked fetcher)
 
 1. **Anchor.** A plain web link + a destination that returns `uuid: X` → `web_anchor`; under `--write`
-   the source becomes `[text](url) <!-- uuid: X -->`; dry-run changes nothing (exit 3).
+   the source becomes `[text](url) <!-- web-uuid: X -->`; dry-run changes nothing (exit 3).
 2. **Verify OK.** An anchored link whose destination still returns the same uuid → `web_ok`, exit 0.
 3. **Verify mismatch.** Destination returns a different uuid (or none) → `web_mismatch`, exit 4.
 4. **Moved / 404.** Destination 404s → `web_not_found`, exit 4 (darnlink does not hunt for the new path).
