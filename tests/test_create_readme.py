@@ -93,6 +93,19 @@ def test_create_readme_uses_existing_readme_when_present(tmp_path):
     assert (tmp_path / "hub" / "README.md").read_text() == f"---\nuuid: {EXISTING}\n---\n# Hub\n"
 
 
+def test_create_readme_implies_create_frontmatter_for_existing_readme(tmp_path):
+    # FR-012f: --create-readme implies --create-frontmatter — at the API level, not just the CLI. A
+    # directory whose README exists but has NO frontmatter gets a uuid without the caller also passing
+    # create_frontmatter=True.
+    _w(tmp_path / "hub" / "README.md", "# Hub (no frontmatter)\n")
+    _w(tmp_path / "A.md", "[hub](hub/)\n")
+    result = plan_robustify(tmp_path, create_readme=True)   # create_frontmatter NOT passed
+    apply_robustify(result)
+    u = read_uuid_from_content((tmp_path / "hub" / "README.md").read_text())
+    assert u is not None                                    # uuid added to the existing README
+    assert find_robust_links((tmp_path / "A.md").read_text())[0].uuid == u
+
+
 def test_create_readme_respects_deny_list(tmp_path):
     (tmp_path / "hub").mkdir()
     _w(tmp_path / "A.md", "[hub](hub/)\n")

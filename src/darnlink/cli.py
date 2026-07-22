@@ -358,8 +358,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     block_markers = tuple(args.ignore_block)
     if args.robustify:
         return _run_robustify(
-            root, args.write,
-            args.create_frontmatter or args.create_readme,  # --create-readme implies --create-frontmatter
+            root, args.write, args.create_frontmatter,  # --create-readme implies it inside plan_robustify
             excludes, args.json, block_markers,
             tuple(args.no_create_frontmatter_for), only=only,
             allow_target_writes=not args.no_target_writes,

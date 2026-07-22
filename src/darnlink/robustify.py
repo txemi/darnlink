@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import AbstractSet, Dict, List, Optional, Set, Tuple
 
 from .frontmatter_edit import (
     add_uuid_to_content,
@@ -40,7 +40,7 @@ class RobustifyResult:
     suppressed: int = 0  # anchorable links in files outside the write scope (010): counted, never hidden
 
 
-def _anchor_target(href: str, linking_file: Path, extra_targets: "Set[Path]" = frozenset()) -> Path | None:
+def _anchor_target(href: str, linking_file: Path, extra_targets: AbstractSet[Path] = frozenset()) -> Path | None:
     """The `.md` file whose `uuid` anchors this link, or None.
 
     - A link to a `.md` file anchors to that file (the original behavior).
@@ -110,6 +110,12 @@ def plan_robustify(
     a `uuid` to a *target* so the link can be anchored at all (FR-006). Such links stay plain and are
     reported.
     """
+    # Feature 012: --create-readme implies --create-frontmatter, and the implication lives HERE (not
+    # only in the CLI) so it holds for every caller — a run willing to create a whole README is willing
+    # to add a uuid to an existing one it links to.
+    if create_readme:
+        create_frontmatter = True
+
     result = RobustifyResult()
     link_ignored: Set[Path] = set()   # feature 006: sources that opt their own links out
     contents: Dict[Path, str] = {}
