@@ -1,4 +1,4 @@
-"""Feature 011 (EXPERIMENTAL — see specs/011-web-robustness/spec.md).
+"""Feature 013 (EXPERIMENTAL — see specs/013-web-robustness/spec.md).
 
 Cross-repo **web-link** robustness: anchor/verify GitHub URLs that point at a file in ANOTHER repo,
 using that file's frontmatter `uuid`. Chosen design = **online-fetch, opt-in, OFF by default**.

@@ -1,4 +1,4 @@
-"""Feature 011 (EXPERIMENTAL spike): cross-repo web-link robustness, ONLINE-fetch design.
+"""Feature 013 (EXPERIMENTAL spike): cross-repo web-link robustness, ONLINE-fetch design.
 
 Network is never touched: every test injects a fake `fetcher` mapping a GithubUrl -> (status, text),
 so the fetch layer is exercised deterministically. Demonstrates the chosen design on the real case

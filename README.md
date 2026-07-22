@@ -17,6 +17,15 @@ pointing into it dies.
 reorganisation and it heals the links. It is built for trees of **many nested Markdown files**
 that get relocated and refactored over time.
 
+> ### 🌐 New — experimental product line: `darnlink-web`
+>
+> Today darnlink only heals **local, relative** links. **[`darnlink-web`](https://github.com/txemi/darnlink/tree/darnlink-web)**
+> is a separate, long-lived product line that extends it to **cross-repo web links** — GitHub URLs
+> anchored to the destination file's `uuid`, *verified* and *anchored* through an opt-in
+> `web-check --online` mode. It builds **on top of** `main` (inherits every non-web feature) and is
+> **not merged into `main`** — it's a spike we're evaluating in the open. Curious, or need cross-repo
+> link healing? **→ [the `darnlink-web` branch](https://github.com/txemi/darnlink/tree/darnlink-web).**
+
 ## See it heal a link
 
 ![darnlink repairs a link whose target was moved — same uuid, new path](demo/demo.gif)
@@ -84,6 +93,11 @@ A robust link stays a normal, clickable Markdown link:
 ```markdown
 See [the design doc](docs/design.md) <!-- uuid: 7f3a1e2c-... -->
 ```
+
+Links to **directories** work too: a link to `docs/guide/` is anchored to the uuid of that folder's
+`README.md`, so it heals when the folder moves — same guarantee, for the hubs you link to by folder.
+If a linked folder has no `README.md`, `--create-readme` makes one (with a uuid) so the link can be
+anchored; it is opt-in and only ever creates a README inside a directory that already exists.
 
 Format spec: [FORMAT.md](FORMAT.md) <!-- uuid: 9052d864-2a45-4ed4-8725-d8a394e7a7ef -->.
 
@@ -290,7 +304,7 @@ To adopt it on an existing repo: anchor what's already anchorable once with
 > on a large repo with a big generated mirror. The end-to-end playbook — the two-bucket strategy,
 > how generators cooperate (stable `uuid` + the `darnlink-ignore-links` marker), bulk-adopting a mirror from
 > its stored raw, the traps, and the pre-commit/pre-push/CI wall architecture — is in
-> **[docs/elevating-your-link-gate.md](docs/elevating-your-link-gate.md)**.
+> **[docs/elevating-your-link-gate.md](docs/elevating-your-link-gate.md) <!-- uuid: e95eaed1-9866-4c48-a0d7-99a6382f5bf9 -->**.
 
 > **Scope note for repos with many contributors.** All the hooks run over the **whole tree**
 > (`pass_filenames: false` — darnlink takes a directory, not a file list), and the strict check is
