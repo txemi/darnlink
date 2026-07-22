@@ -1,14 +1,19 @@
 """Repair: rewrite a robust link's path to wherever its UUID now lives.
 
-A robust link is *broken* when its written path does not resolve to the file whose frontmatter
+A robust link is *broken* when its written path does not resolve to the target whose frontmatter
 `uuid` matches the link's uuid. We then rewrite the path (relative to the linking file),
 preserving the link text, any `#fragment`, and the uuid comment. Exact-uuid match only; no guessing.
 
-Defensive rule: we only auto-repair when the written path is *stale* — i.e. it does not resolve
-to an existing file. If the path STILL resolves to a real (different) file while the uuid lives
-elsewhere, the two halves of the link disagree (typically a mis-pasted uuid). That is a CONFLICT,
-not a move: we leave it untouched and report it for a human to resolve, rather than silently
-following the uuid and hijacking a link whose path was the real intent.
+The target is usually a `.md` file. A link whose path names a *directory* (feature 011) is anchored
+to that directory's `README.md`: its uuid resolves to the README, and repair rewrites the path to the
+README's parent directory (kept a directory path, with a trailing slash).
+
+Defensive rule: we only auto-repair when the written path is *stale* — i.e. it does not resolve to an
+existing target (no file, for a file link; nothing at all — neither file nor directory — for a
+directory link). If the path STILL resolves to a real target while the uuid lives elsewhere, the two
+halves of the link disagree (typically a mis-pasted uuid). That is a CONFLICT, not a move: we leave it
+untouched and report it for a human to resolve, rather than silently following the uuid and hijacking
+a link whose path was the real intent.
 """
 from __future__ import annotations
 

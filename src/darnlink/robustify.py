@@ -1,8 +1,10 @@
 """Robustify: upgrade a plain relative link to a robust one.
 
-For each plain link that resolves to a local `.md` file, ensure that target has a `uuid` in its
-frontmatter (reuse it, or create one because a link now references it), then append the
-`<!-- uuid: … -->` annotation to the link. A UUID is created only where a link needs it.
+For each plain link that resolves to a local `.md` file — or to a *directory* (feature 011), which is
+anchored to its `README.md` — ensure that target has a `uuid` in its frontmatter (reuse it, or create
+one because a link now references it), then append the `<!-- uuid: … -->` annotation to the link. A
+UUID is created only where a link needs it. A directory with no `README.md` is not anchorable and its
+link is left plain (darnlink never creates a README).
 
 Targets without any frontmatter are skipped unless `create_frontmatter=True` (Constitution II:
 creating frontmatter is opt-in).
