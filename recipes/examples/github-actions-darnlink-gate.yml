@@ -1,0 +1,33 @@
+# EXAMPLE GitHub Actions workflow — darnlink link gate, the SERVER-SIDE wall (piece 4).
+#
+# The unbypassable wall: it catches even a `git commit --no-verify` that skipped the local hooks.
+# It fetches the PINNED recipe from the PUBLIC darnlink repo — no token, no private checkout — and
+# runs it FAIL-CLOSED, so a transient network/PyPI hiccup fails the build instead of passing green
+# with zero files validated.
+#
+# INSTALL: save as `.github/workflows/darnlink-gate.yml`. Per-repo policy (excludes, mode, scope)
+#          lives in `darnlink-gate.json`; keep the pinned tag here in sync with that file's `ref`.
+name: darnlink-gate
+
+on: [push, pull_request]
+
+permissions:
+  contents: read              # least privilege: the job only reads the tree
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    env:
+      DARNLINK_REF: git+https://github.com/txemi/darnlink@v0.7.0
+      DARNLINK_GATE_FAIL_CLOSED: "1"     # ← the wall MUST fail closed (prefer the env var; see recipe)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Fetch the pinned recipe (public repo → no token)
+        run: |
+          # -f: fail on a 404 (a moved/typo'd tag), instead of silently writing "404: Not Found".
+          curl -fsSL "https://raw.githubusercontent.com/txemi/darnlink/v0.7.0/recipes/darnlink-gate" \
+            -o "$RUNNER_TEMP/darnlink-gate"
+          chmod +x "$RUNNER_TEMP/darnlink-gate"
+      - name: darnlink gate (whole repo)
+        run: "$RUNNER_TEMP/darnlink-gate"   # scope=repo from darnlink-gate.json

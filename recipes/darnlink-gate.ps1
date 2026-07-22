@@ -74,7 +74,14 @@ if ($LASTEXITCODE -ne 0) { Invoke-Bail "can't run darnlink at $ref (bad ref / no
 
 if ($scope -ne 'staged') {
   # ---- whole-repo (the wall): darnlink's own exit code is the gate ----
-  & uvx --from $ref darnlink check . @dlArgs @args   # always `check` → stable 0/2/3, regardless of MODE
+  if ($mode -eq 'max') {
+    # LEVEL 3 (fail-closed): `check` has no create-frontmatter axis, so run the robustify pass in
+    # DRY-RUN (no --write ⇒ report-only) — a SUPERSET of check (repair + strict + create-frontmatter),
+    # so it can only tighten. Any finding ⇒ non-zero ⇒ gate fails; rc>3 still means "couldn't run".
+    & uvx --from $ref darnlink . --robustify --create-frontmatter @dlArgs @args
+  } else {
+    & uvx --from $ref darnlink check . @dlArgs @args   # `darnlink check` → 0/2/3 (mode=check|repair)
+  }
   $rc = $LASTEXITCODE
   if ($rc -gt 3) { Invoke-Bail "darnlink unreachable (rc=$rc)" }
   # mode=repair gates on integrity only: a strict-only failure (3) is clean.
@@ -83,6 +90,9 @@ if ($scope -ne 'staged') {
 }
 
 # ---- staged scope (Option B): darnlink judges the whole tree; WE filter findings to staged files ----
+# NOTE mode=max here behaves as strict (level 2), by design: the create-frontmatter axis needs
+# whole-tree reasoning, and per the wall architecture the staged pre-commit stays fast — max is
+# enforced at the whole-repo wall (pre-push / CI). See docs/elevating-your-link-gate.md §7.
 $staged = @(git diff --cached --name-only --diff-filter=ACMR -- '*.md' 2>$null)
 if (-not $staged) { Write-Output "darnlink-gate (staged): no staged .md — nothing to judge."; exit 0 }
 
