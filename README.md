@@ -284,6 +284,13 @@ repos:
 To adopt it on an existing repo: anchor what's already anchorable once with
 `darnlink . --robustify --write` (review the diff, commit), then the gate stays green.
 
+> **📘 Going all the way — elevate a whole repo to fail-closed.** The strictest setting
+> (`--robustify --create-frontmatter`: *every link's target must carry a `uuid`*) is reachable even
+> on a large repo with a big generated mirror. The end-to-end playbook — the two-bucket strategy,
+> how generators cooperate (stable `uuid` + the `ignore-links` marker), bulk-adopting a mirror from
+> its stored raw, the traps, and the pre-commit/pre-push/CI wall architecture — is in
+> **[docs/elevating-your-link-gate.md](docs/elevating-your-link-gate.md)**.
+
 > **Scope note for repos with many contributors.** All the hooks run over the **whole tree**
 > (`pass_filenames: false` — darnlink takes a directory, not a file list), and the strict check is
 > *fail-closed*. So a plain, un-anchored link that **someone else** left in a file you never touched
