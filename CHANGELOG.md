@@ -6,6 +6,27 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.7.1] — 2026-07-22
+
+Recipe & docs only — **the CLI/package is byte-for-byte identical to 0.7.0**. This release exists so
+the `recipes/` changes below live at a pinned tag that CI and hooks can fetch deterministically.
+
+### Added
+- **`recipes/darnlink-gate`: `mode=max`** — the fail-closed-links rung (`repair ⊂ check ⊂ max`). `max`
+  gates integrity **+** strict **+** create-frontmatter, i.e. *a link to a file with no `uuid` fails
+  the gate*. `check` has no create-frontmatter axis and the bare `--robustify --create-frontmatter`
+  has no integrity axis, so `max` runs **both** dry-run passes (a true superset of `check`). Whole-repo
+  only; the staged pre-commit stays at strict by design. Ported to `darnlink-gate.ps1`. See
+  `docs/elevating-your-link-gate.md`.
+- **`recipes/examples/`** — complete, copy-paste artifacts for all wall layers: `pre-commit` (staged),
+  `pre-push` (whole repo — previously undocumented), a full GitHub Actions workflow and a Jenkinsfile
+  stage (server wall, fail-closed). Not snippets to assemble.
+
+### Fixed
+- **`recipes/README.md` CI example was fail-**open**** — it ran `darnlink-gate` without
+  `DARNLINK_GATE_FAIL_CLOSED=1`, so a copy-paste gave a green build that validated nothing. Documented
+  fail-closed + exit 4, and the three-rung mode ladder. Playbook §6/§7 now cross-link the examples.
+
 ## [0.7.0] — 2026-07-22
 
 ### Added
