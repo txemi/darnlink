@@ -1,3 +1,6 @@
+---
+uuid: e95eaed1-9866-4c48-a0d7-99a6382f5bf9
+---
 # Elevating your link gate — from "robust links don't break" to fail-closed
 
 A playbook for taking an existing repository all the way to the strictest darnlink gate:
