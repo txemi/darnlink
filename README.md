@@ -3,6 +3,7 @@
 > **Never break a Markdown link again.**
 > Deterministic, automatic, self-healing links.
 
+[![PyPI](https://img.shields.io/pypi/v/darnlink.svg)](https://pypi.org/project/darnlink/)
 [![CI](https://github.com/txemi/darnlink/actions/workflows/ci.yml/badge.svg)](https://github.com/txemi/darnlink/actions/workflows/ci.yml)
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
@@ -32,14 +33,27 @@ That's the whole idea: the link survived the move on its own.
 
 ## Use it in one line — no install, no clone
 
-The package is not on PyPI yet, so run it straight from GitHub with [`uv`](https://docs.astral.sh/uv/):
+darnlink is on [PyPI](https://pypi.org/project/darnlink/), so [`uv`](https://docs.astral.sh/uv/)
+fetches and runs it for you — nothing to install:
 
 ```bash
 # dry-run: show what it would do (writes nothing)
-uvx --from git+https://github.com/txemi/darnlink darnlink <folder>
+uvx darnlink <folder>
 
 # apply
-uvx --from git+https://github.com/txemi/darnlink darnlink <folder> --write
+uvx darnlink <folder> --write
+```
+
+Prefer a permanent install? `pipx install darnlink` (or `uv tool install darnlink`), then just
+`darnlink <folder>`.
+
+**Straight from the repo** — when you need a ref PyPI can't give you: an *immutable commit* for a
+reproducible CI gate (a tag can be force-moved; a SHA can't), or unreleased `main`:
+
+```bash
+uvx --from git+https://github.com/txemi/darnlink@v0.7.0 darnlink <folder>   # a tag
+uvx --from git+https://github.com/txemi/darnlink@<sha>  darnlink <folder>   # an immutable commit
+uvx --from git+https://github.com/txemi/darnlink        darnlink <folder>   # latest main
 ```
 
 **Safe by default:** without `--write`, darnlink only *reports* what it would change — it never
@@ -48,7 +62,7 @@ modifies a file.
 Upgrade plain links so they self-heal in the future (and create a UUID where the target lacks one):
 
 ```bash
-uvx --from git+https://github.com/txemi/darnlink darnlink <folder> --robustify --create-frontmatter --write
+uvx darnlink <folder> --robustify --create-frontmatter --write
 ```
 
 ## How it works (it's simple)
@@ -94,11 +108,14 @@ The sections above introduce these in context; this is the full list (same as `d
 
 | Option | What it does |
 |---|---|
-| `path` *(positional)* | Root directory to scan. Default: `.` — darnlink takes a **directory**, not a file list. |
+| `path` *(positional)* | Root directory to scan. Default: `.` — darnlink takes a **directory**, not a file list. (To write to specific files while still scanning the whole tree, use `--only`, below.) |
 | `--write` | Apply the changes. Without it darnlink only **reports** — it never modifies a file. |
 | `--robustify` | Upgrade plain links to robust. Without it the operation is *repair* (fix robust links whose target moved). |
 | `--create-frontmatter` | *(robustify)* Allow creating frontmatter on a target that has none, so it can take a `uuid`. Opt-in on purpose. |
 | `--no-create-frontmatter-for GLOB` | *(robustify)* Basename glob whose targets **never** get a `uuid` — no block created, no line inserted — regardless of `--create-frontmatter`. Reusing a `uuid` the target already has is unaffected. Repeatable. |
+| `--only FILE` | Restrict **writes** to these `.md` files. The tree is still scanned and indexed in full — so a link's target can live anywhere — but only these files are modified. Repeatable. See [Scoping writes to specific files](#scoping-writes-to-specific-files---only). |
+| `--only-from FILE` | Read `--only` paths from `FILE`, one per line (`-` = stdin). Combines with `--only`. Lets you pipe a generated list (e.g. staged files) without darnlink knowing about git. |
+| `--no-target-writes` | *(with `--only`)* Never write a `uuid` into a target **outside** the write scope: such links are left plain and reported. Guarantees **no** file outside `--only` is touched. |
 | `--exclude PATTERN` | Skip any directory whose name matches `PATTERN` (glob / `fnmatch`, case-sensitive; a plain name matches exactly). Repeatable — e.g. `--exclude old --exclude 'old_*' --exclude '*_old'` skips the whole `old` family. |
 | `--ignore-block NAME` | Leave links inside `<!-- NAME-start --> … <!-- NAME-end -->` blocks alone. Repeatable. |
 | `--json` | Machine-readable output (see below). |
@@ -115,6 +132,8 @@ Stable shape, meant for gates and scripts:
 {
   "wrote": 0,
   "applied": false,
+  "write_scope": null,
+  "suppressed_outside_write_scope": 0,
   "ignored_files": ["path/to/opted-out.md"],
   "link_ignored_files": ["path/to/generated/INDEX.md"],
   "invalid_frontmatter_files": [],
@@ -123,9 +142,53 @@ Stable shape, meant for gates and scripts:
 ```
 
 `kind` is one of: `repair`, `conflict`, `robustify`, `unresolvable`, `ambiguous`, `no_frontmatter`,
-`deny_listed`, `ignored_links`, `invalid_frontmatter`. A gate that wants "is anything left to do?"
-should count the kinds it cares about (e.g. `robustify`) rather than the length of `findings` — the
-non-actionable kinds are reported precisely so nothing is skipped silently.
+`out_of_scope`, `deny_listed`, `ignored_links`, `invalid_frontmatter`, `target_uuid_write`,
+`target_write_refused`. A gate that wants "is anything left to do?" should count the kinds it cares
+about (e.g. `robustify`) rather than the length of `findings` — the non-actionable kinds are
+reported precisely so nothing is skipped silently.
+
+`write_scope` is `null` unless `--only` is in effect, when it lists the files that may be written;
+`suppressed_outside_write_scope` counts actionable findings in files outside that scope — not shown,
+but surfaced so a narrowed run never reads as a clean tree.
+
+`out_of_scope` is worth calling out: it means a plain link's target **exists but was never scanned**
+(it lives outside `path`, or an `--exclude` skipped it), so its `uuid` is unknown and the link is
+left plain. That is a different fact from `no_frontmatter` (target scanned, but it has none) — the
+two used to collapse into one, which reported a scope miss as if the target were malformed.
+
+### Scoping writes to specific files (`--only`)
+
+By default darnlink writes to every file it scans. `--only` narrows the **write** scope to named
+files while still building the target graph from the whole tree — the two are separate axes:
+
+```bash
+# Scan the whole repo (so targets resolve wherever they live), but only rewrite ONE file:
+darnlink . --robustify --write --only tasks/56/README.md
+```
+
+Why the split matters: the link you want to anchor lives in your file, but its **target** usually
+lives elsewhere in the repo. Scanning only your subtree (`darnlink tasks/56`) can't see the target,
+so it reports `out_of_scope` and anchors nothing; scanning the whole repo without `--only` would
+rewrite every robustifiable link in the tree, including other people's work in flight. `--only` is
+"read everything, write here".
+
+- The **one** write that may land outside `--only` is adding a `uuid` to a *target* so the link can
+  be anchored at all — it is reported (kind `target_uuid_write`) before it happens. Pass
+  `--no-target-writes` to refuse even that: the link stays plain, and **nothing** outside `--only`
+  is touched.
+- A **repair** run under `--only` only ever inspects the links *inside* the scoped files. A moved
+  target's *inbound* links live in files you didn't name — a clean scoped result is **not** proof the
+  tree is clean. Keep a full-tree run in CI for that.
+- darnlink never touches git. To scope to your staged files, pipe them in — this is the whole
+  `--only-from -` use case:
+
+```bash
+git diff --cached --diff-filter=ACMR --name-only -- '*.md' \
+  | darnlink . --robustify --write --only-from -
+```
+
+  (darnlink edits the files but does **not** re-stage them; your hook re-runs `git add` if it wants
+  the fixes in the same commit.)
 
 ## For language models / agents
 
@@ -139,13 +202,18 @@ runs it for you.
 darnlink **exits non-zero** when a robust link is broken, so any gate that runs it will block the
 breakage before it lands. Pick the one that fits your workflow — near copy-paste:
 
+> **Want a ready-made wrapper instead of wiring it yourself?** [`recipes/darnlink-gate`](recipes/README.md)
+> does all of the below (both checks, staged-in-pre-commit vs whole-repo-in-CI, pinned ref, fail-open)
+> from a tiny `darnlink-gate.json`. It's a reference recipe, fetchable in CI without a token — with
+> complete copy-paste hook & CI files in [`recipes/examples/`](recipes/examples/).
+
 **1. pre-commit** (recommended — darnlink ships a hook):
 
 ```yaml
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/txemi/darnlink
-    rev: v0.1.1
+    rev: v0.7.0
     hooks:
       - id: darnlink            # fail the commit if any robust link is broken
       # - id: darnlink-repair   # …or auto-repair in place instead of failing
@@ -163,7 +231,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uvx --from git+https://github.com/txemi/darnlink darnlink .
+      - run: uvx darnlink .
 ```
 
 **3. Plain git hook** (no framework):
@@ -171,7 +239,7 @@ jobs:
 ```bash
 # .git/hooks/pre-commit  (chmod +x)
 #!/usr/bin/env bash
-uvx --from git+https://github.com/txemi/darnlink darnlink . || {
+uvx darnlink . || {
   echo "darnlink: broken robust links — re-run with --write to repair"; exit 1
 }
 ```
@@ -208,7 +276,7 @@ pre-commit hook with the `darnlink-strict` id:
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/txemi/darnlink
-    rev: v0.2.0   # darnlink-strict ships here
+    rev: v0.7.0   # darnlink-strict ships since v0.2.0
     hooks:
       - id: darnlink            # links that *are* robust must not break
       - id: darnlink-strict     # …and every anchorable link *must* be robust (fail-closed)
@@ -216,6 +284,13 @@ repos:
 
 To adopt it on an existing repo: anchor what's already anchorable once with
 `darnlink . --robustify --write` (review the diff, commit), then the gate stays green.
+
+> **📘 Going all the way — elevate a whole repo to fail-closed.** The strictest setting
+> (`--robustify --create-frontmatter`: *every link's target must carry a `uuid`*) is reachable even
+> on a large repo with a big generated mirror. The end-to-end playbook — the two-bucket strategy,
+> how generators cooperate (stable `uuid` + the `darnlink-ignore-links` marker), bulk-adopting a mirror from
+> its stored raw, the traps, and the pre-commit/pre-push/CI wall architecture — is in
+> **[docs/elevating-your-link-gate.md](docs/elevating-your-link-gate.md)**.
 
 > **Scope note for repos with many contributors.** All the hooks run over the **whole tree**
 > (`pass_filenames: false` — darnlink takes a directory, not a file list), and the strict check is
@@ -252,7 +327,7 @@ The idea of surviving refactors by anchoring to an identity isn't new, but the s
 
 ## Status
 
-Early (v0.1.0). Built spec-first with [GitHub Spec Kit](https://github.com/github/spec-kit) — see
+Early (v0.7.0). Built spec-first with [GitHub Spec Kit](https://github.com/github/spec-kit) — see
 `.specify/` and `specs/`.
 
 ## License

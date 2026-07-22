@@ -1,6 +1,6 @@
 [project]
 name = "darnlink"
-version = "0.3.0"
+version = "0.7.1"
 description = "auto-healing Markdown links — anchor links to a UUID: repair moved links, robustify plain ones"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -8,6 +8,28 @@ license = { text = "GPL-3.0-or-later" }
 authors = [{ name = "txemi" }]
 keywords = ["markdown", "links", "uuid", "robust-links", "self-healing", "documentation"]
 dependencies = ["python-frontmatter>=1.0"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Documentation",
+    "Topic :: Software Development :: Documentation",
+    "Topic :: Text Processing :: Markup :: Markdown",
+    "Topic :: Utilities",
+]
+
+[project.urls]
+Homepage = "https://github.com/txemi/darnlink"
+Repository = "https://github.com/txemi/darnlink"
+Issues = "https://github.com/txemi/darnlink/issues"
+Changelog = "https://github.com/txemi/darnlink/blob/main/CHANGELOG.md"
 
 [project.scripts]
 darnlink = "darnlink.cli:main"

@@ -1,0 +1,44 @@
+name: Publish to PyPI
+
+# Publishes darnlink to PyPI when a GitHub Release is published.
+#
+# Auth: PyPI **Trusted Publishing** (OIDC) — no API token is stored anywhere.
+# One-time setup on PyPI (https://pypi.org/manage/account/publishing/):
+#   Owner: txemi | Repository: darnlink | Workflow: publish.yml
+#   (leave "Environment name" empty to match this workflow)
+#
+# Release flow:  bump version in pyproject.toml -> tag -> create GitHub Release
+#                -> this workflow builds and uploads sdist + wheel.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Build sdist + wheel
+        run: uv build
+      - name: Check metadata renders on PyPI
+        run: uvx twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # required for Trusted Publishing (OIDC)
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

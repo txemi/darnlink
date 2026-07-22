@@ -6,6 +6,88 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.7.1] — 2026-07-22
+
+Recipe & docs only — **the CLI/package is byte-for-byte identical to 0.7.0**. This release exists so
+the `recipes/` changes below live at a pinned tag that CI and hooks can fetch deterministically.
+
+### Added
+- **`recipes/darnlink-gate`: `mode=max`** — the fail-closed-links rung (`repair ⊂ check ⊂ max`). `max`
+  gates integrity **+** strict **+** create-frontmatter, i.e. *a link to a file with no `uuid` fails
+  the gate*. `check` has no create-frontmatter axis and the bare `--robustify --create-frontmatter`
+  has no integrity axis, so `max` runs **both** dry-run passes (a true superset of `check`). Whole-repo
+  only; the staged pre-commit stays at strict by design. Ported to `darnlink-gate.ps1`. See
+  `docs/elevating-your-link-gate.md`.
+- **`recipes/examples/`** — complete, copy-paste artifacts for all wall layers: `pre-commit` (staged),
+  `pre-push` (whole repo — previously undocumented), a full GitHub Actions workflow and a Jenkinsfile
+  stage (server wall, fail-closed). Not snippets to assemble.
+
+### Fixed
+- **`recipes/README.md` CI example was fail-**open**** — it ran `darnlink-gate` without
+  `DARNLINK_GATE_FAIL_CLOSED=1`, so a copy-paste gave a green build that validated nothing. Documented
+  fail-closed + exit 4, and the three-rung mode ladder. Playbook §6/§7 now cross-link the examples.
+
+## [0.7.0] — 2026-07-22
+
+### Added
+- **`--only FILE` / `--only-from FILE` — scope writes to specific files** (feature 010). darnlink now
+  separates the two scopes the positional `path` used to fuse: the **index** scope (which files are
+  read — still the whole tree, so a link's target resolves wherever it lives) and the **write** scope
+  (which files are modified). `--only` narrows the latter; `--only-from` reads the list from a file or
+  stdin (`-`), so a caller can pipe `git diff --cached --name-only` in without darnlink learning about
+  git. This makes the common "anchor the links in the file I'm committing, touch nothing else" case
+  possible — previously you either scanned your subtree (and the tool couldn't see out-of-subtree
+  targets, so it anchored nothing) or ran repo-wide (and rewrote everyone's links).
+- **`--no-target-writes`** — with `--only`, refuse the one write that otherwise lands outside the
+  scope (adding a `uuid` to a *target* so a link can be anchored). Links that would need it stay plain
+  and are reported; the guarantee becomes absolute: **no** file outside `--only` is touched.
+- **New finding kinds** in human and `--json` output: `out_of_scope`, `target_uuid_write`,
+  `target_write_refused`. `--json` gains `write_scope` and `suppressed_outside_write_scope`.
+
+### Fixed
+- **`out_of_scope` no longer misreported as `no_frontmatter`.** A plain link whose target exists but
+  was never scanned (outside `path`, or excluded) used to be reported as "target has no frontmatter"
+  — stating as fact something the run never checked. It now has its own kind and an honest message.
+  This is the confusion that motivated feature 010.
+
+## [0.6.0] — 2026-07-21
+
+### Added
+- **Published on PyPI** — darnlink is now installable from the index, so the one-liner drops the
+  `--from git+…` scaffolding: `uvx darnlink <folder>` (or `pipx install darnlink`). Lower friction
+  and a proper package page instead of a bare repo URL.
+- **PyPI packaging metadata** — `classifiers` (license, supported Python versions, topics) and
+  `[project.urls]` (Homepage, Repository, Issues, Changelog), so the package is categorised,
+  searchable and links back to the project.
+- **Release automation via PyPI Trusted Publishing (OIDC)** — `.github/workflows/publish.yml` builds
+  the sdist + wheel, runs `twine check`, and uploads on a published GitHub Release. **No API token
+  is stored anywhere.**
+- **`recipes/darnlink-gate`: modo FAIL-CLOSED** (`DARNLINK_GATE_FAIL_CLOSED=1`, o `"fail_closed": true`
+  en `darnlink-gate.json`). La receta falla **abierta** por defecto —correcto en pre-commit: un commit
+  offline no debe quedar bloqueado— pero eso **en CI es peligroso**: el gate *es* el muro, y un fallo
+  transitorio de red/PyPI daba **build VERDE con cero ficheros validados**. Con el flag, esos casos
+  salen con código **4** (distinguible de los hallazgos: `2` integridad, `3` strict). Actívalo siempre
+  en CI. Detectado por una revisión adversarial de la propia receta.
+
+### Fixed
+- **Docs: stale version pins.** The README's quality-gate examples still pinned `rev: v0.1.1` /
+  `rev: v0.2.0`, and the Status section said "Early (v0.1.0)". Anyone copy-pasting the gate got a
+  release from before the strict gate existed.
+
+## [0.5.0] — 2026-07-18
+
+### Added
+- **`recipes/darnlink-gate`** — a ready-made, config-driven gate wrapper (bash + `.ps1`), shipped as a
+  **reference recipe** (not part of the CLI/package — the tool stays "links & UUIDs only"). It runs
+  **both** checks, scopes to staged files in pre-commit vs the whole repo in CI, pins the darnlink ref,
+  and fails open on network — so a repo wires darnlink into its gate with a tiny `darnlink-gate.json` +
+  a 3-line hook instead of a bespoke wrapper that drifts. It lives in the **public** repo so any CI can
+  fetch it **without a token**. See `recipes/README.md`.
+- The recipe's `mode=repair` gates on **integrity only** — it always runs `darnlink check` (stable
+  `0/2/3` contract) but treats a strict-only failure as clean, on both repo and staged scope.
+
+## [0.4.0] — 2026-07-17
+
 ### Added
 - **`--exclude` now takes a glob** (`fnmatch`, case-sensitive), not just an exact name — so a repo can
   skip a whole family in one declarative line instead of listing every directory and letting the list
@@ -77,7 +159,9 @@ First public release.
 - Ships a [pre-commit](https://pre-commit.com/) hook (`darnlink`, `darnlink-repair`).
 - Format specification: [FORMAT.md](FORMAT.md) <!-- uuid: 9052d864-2a45-4ed4-8725-d8a394e7a7ef -->.
 
-[Unreleased]: https://github.com/txemi/darnlink/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/txemi/darnlink/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/txemi/darnlink/releases/tag/v0.5.0
+[0.4.0]: https://github.com/txemi/darnlink/releases/tag/v0.4.0
 [0.3.0]: https://github.com/txemi/darnlink/releases/tag/v0.3.0
 [0.2.0]: https://github.com/txemi/darnlink/releases/tag/v0.2.0
 [0.1.1]: https://github.com/txemi/darnlink/releases/tag/v0.1.1

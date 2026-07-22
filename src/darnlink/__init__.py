@@ -8,4 +8,4 @@ Plain Markdown, no database, no editor lock-in. Dry-run by default.
 See the project Constitution in .specify/memory/constitution.md.
 """
 
-__version__ = "0.3.0"
+__version__ = "0.5.0"
