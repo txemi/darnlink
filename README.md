@@ -17,6 +17,15 @@ pointing into it dies.
 reorganisation and it heals the links. It is built for trees of **many nested Markdown files**
 that get relocated and refactored over time.
 
+> ### 🌐 New — experimental product line: `darnlink-web`
+>
+> Today darnlink only heals **local, relative** links. **[`darnlink-web`](https://github.com/txemi/darnlink/tree/darnlink-web)**
+> is a separate, long-lived product line that extends it to **cross-repo web links** — GitHub URLs
+> anchored to the destination file's `uuid`, *verified* and *anchored* through an opt-in
+> `web-check --online` mode. It builds **on top of** `main` (inherits every non-web feature) and is
+> **not merged into `main`** — it's a spike we're evaluating in the open. Curious, or need cross-repo
+> link healing? **→ [the `darnlink-web` branch](https://github.com/txemi/darnlink/tree/darnlink-web).**
+
 ## See it heal a link
 
 ![darnlink repairs a link whose target was moved — same uuid, new path](demo/demo.gif)

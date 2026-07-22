@@ -65,6 +65,21 @@ Two gotchas worth knowing:
     -f pr='<PR node id>' -f b='<copilot bot node id>'
   ```
 
+## Spec & branch numbering (avoid collisions)
+
+Specs live in `specs/NNN-slug/` with a **contiguous, monotonic** number. The Spec Kit helper picks
+the next number by scanning both `specs/` **and branch names** (local + remote, via `ls-remote`).
+That only stays collision-free if every reservation is visible to the scanner, so:
+
+- **Every feature branch carries the `NNN-` prefix** and is **pushed** — that is what lets the
+  allocator see a number reserved on another branch and skip it. A spec numbered inside a branch
+  whose *name* has no `NNN-` prefix is invisible, and the next feature will grab the same number.
+- **Never "leave a gap"** by picking a high number by hand — it doesn't prevent collisions (two
+  people picking high collide again), breaks the contiguous sequence the tooling assumes, and rots
+  into confusing holes. Take the next number; let the scanner guarantee uniqueness.
+- **Long-lived product lines are the one exception** to the `NNN-` branch rule (e.g. `darnlink-web`):
+  they are lines, not features. Features *within* such a line still branch off it with `NNN-` names.
+
 ## License
 
 By contributing you agree your contributions are licensed under the
