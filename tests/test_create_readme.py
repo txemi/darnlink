@@ -133,6 +133,16 @@ def test_create_readme_never_writes_outside_the_scanned_root(tmp_path):
     assert not (tmp_path / "sibling" / "README.md").exists()
 
 
+def test_create_readme_never_writes_into_an_excluded_subtree(tmp_path):
+    # a link from an INCLUDED file to a directory INSIDE an --exclude'd subtree (e.g. a mirror) must
+    # not get a README created there — --exclude prunes the scan, and creation must respect it too.
+    (tmp_path / "mirror" / "captured_chat").mkdir(parents=True)
+    _w(tmp_path / "A.md", "[chat](mirror/captured_chat/)\n")
+    result = plan_robustify(tmp_path, create_readme=True, excludes={"mirror"})
+    assert result.new_content == {}
+    assert not (tmp_path / "mirror" / "captured_chat" / "README.md").exists()
+
+
 def test_created_readme_link_heals_after_move(tmp_path):
     (tmp_path / "docs" / "hub").mkdir(parents=True)
     _w(tmp_path / "A.md", "[hub](docs/hub/)\n")
