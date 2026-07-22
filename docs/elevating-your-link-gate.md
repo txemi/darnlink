@@ -223,6 +223,40 @@ load-bearing reason the maximum is livable.
 fail-closed). They're whole working artifacts, not snippets to assemble — assembling the CI one wrong
 is how you get a wall that fails *open*.
 
+## 8. Extend the wall to cross-repo web links (opt-in `web-check --online`)
+
+Everything above hardens links **within one tree**. If your docs are split across repos — a file in
+repo A links to a file in repo B by its `https://github.com/owner/B/blob/…` URL — the core gate can't
+help: B's `uuid` lives in a repository the core never scans. Those cross-repo URLs 404 silently the
+moment the target moves in B, and no amount of local strictness catches it.
+
+`web-check` closes that last gap, and it's worth adding **once you actually have cross-repo links**:
+
+```bash
+# anchor plain cross-repo links to their destination's uuid (writes the <!-- web-uuid --> marker)
+darnlink web-check . --online --write
+
+# in the wall (pre-push / CI): verify every anchored web link still matches its destination; fail on drift
+darnlink web-check . --online          # exit 4 on mismatch/404, 0 clean
+```
+
+Why it's safe to add to an existing fail-closed gate:
+
+- **Opt-in and off by default.** Nothing happens without the `web-check` subcommand *and* `--online`.
+  Your existing `darnlink`/`check` gate is completely unchanged — it never makes a network call.
+- **It won't fight your core gate.** The anchor it writes is `<!-- web-uuid: X -->`, a *different*
+  marker from the core's `<!-- uuid: X -->` — the core ignores it entirely, so a web anchor never
+  trips the local `unresolvable` check. (This is the whole reason it uses its own marker.)
+- **Honest about what it can't reach.** A **private** destination needs a `GITHUB_TOKEN`/`GH_TOKEN`
+  (public repos work tokenless); without one it reports `web_unverifiable` and does **not** fail the
+  build — never a false green, never a crash. Run the online layer wherever a token already lives (a
+  self-hosted CI runner with a GitHub App is the natural home).
+- **Narrow by design.** It *anchors* a plain link and *verifies* an anchored one; it does **not** hunt
+  for where a moved target went (no web-side index to walk deterministically) — that's left to the
+  human/LLM layer, which re-anchors once it knows the new URL.
+
+Add it as one extra step in the wall (pre-push + CI), gated on having a token for any private targets.
+
 ## Checklist
 
 - [ ] Read the gap with `--robustify --create-frontmatter`; split into Bucket A / Bucket B.
@@ -233,3 +267,5 @@ is how you get a wall that fails *open*.
 - [ ] Back-fill existing generated/mirror files offline from their stored raw; never touch the raw.
 - [ ] Gap = 0 → flip the gate to `--create-frontmatter`.
 - [ ] Wire the walls: pre-commit (staged) · pre-push (whole repo) · CI/self-hosted (whole repo).
+- [ ] **If you have cross-repo web links:** anchor them with `web-check --online --write`, add
+      `web-check --online` to the pre-push/CI wall, and provide a token for any private destinations.
