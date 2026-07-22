@@ -77,6 +77,15 @@ def test_robustify_directory_link_readme_no_uuid_reports_no_frontmatter(tmp_path
     assert any(f.kind is Kind.NO_FRONTMATTER for f in result.findings)
 
 
+def test_robustify_ignores_directory_named_like_an_md_file(tmp_path):
+    # a *directory* whose name ends in `.md` must not be mistaken for an anchor file (it would fail
+    # the later frontmatter read). Regression for the Copilot finding on _anchor_target.
+    (tmp_path / "weird.md").mkdir()
+    _w(tmp_path / "A.md", "[weird](weird.md)\n")
+    result = plan_robustify(tmp_path, create_frontmatter=True)
+    assert result.new_content == {}
+
+
 # --- Repair ------------------------------------------------------------------------------------
 
 def test_repair_directory_link_after_directory_moves(tmp_path):

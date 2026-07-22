@@ -52,10 +52,12 @@ def _anchor_target(href: str, linking_file: Path) -> Path | None:
         return None
     t = resolve_href(href, linking_file)
     if names_md(href):
-        return t if (t.exists() and t.suffix.lower() == ".md") else None
+        # is_file() (not exists()): a *directory* named `foo.md` exists with a `.md` suffix but is
+        # not an anchor — treating it as one would fail the later frontmatter read/write.
+        return t if (t.is_file() and t.suffix.lower() == ".md") else None
     if t.is_dir():
         readme = t / DIR_ANCHOR
-        if readme.exists():
+        if readme.is_file():  # a directory named `README.md` is not an anchor either
             return readme
     return None
 
