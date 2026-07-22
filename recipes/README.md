@@ -20,7 +20,7 @@ is that orchestration in one place; a consumer carries only a tiny config + a 3-
     `darnlink . --robustify --create-frontmatter` has no integrity axis, so `max` runs **both** dry-run
     passes (a true superset of `check` — it can't silently drop broken robust links).
     **Whole-repo only** — the staged pre-commit stays at strict on purpose (fast); the whole-repo wall
-    (pre-push / CI) is where `max` is enforced. See [`docs/elevating-your-link-gate.md`](../docs/elevating-your-link-gate.md).
+    (pre-push / CI) is where `max` is enforced. See [`docs/elevating-your-link-gate.md`](../docs/elevating-your-link-gate.md) <!-- uuid: e95eaed1-9866-4c48-a0d7-99a6382f5bf9 -->.
 - `scope=repo` → judge the whole tree (**the wall — use in pre-push & CI**).
   `scope=staged` → judge only the files you're committing (**multi-session pre-commit**, so a
   teammate's in-flight plain link doesn't block your commit). It filters `darnlink check --json` by
@@ -39,7 +39,7 @@ Exit: `0` clean · `2` integrity failure · `3` strict-only failure · `1` usage
 ## Adopt it in a repo (the wall in 4 pieces)
 
 The gate runs at three layers, each at the scope that fits — **deliberate, not redundant** (see
-[`docs/elevating-your-link-gate.md §7`](../docs/elevating-your-link-gate.md)): staged & fast locally,
+[`docs/elevating-your-link-gate.md §7`](../docs/elevating-your-link-gate.md) <!-- uuid: e95eaed1-9866-4c48-a0d7-99a6382f5bf9 -->): staged & fast locally,
 whole-repo where it's the wall.
 
 **1. Config** — `darnlink-gate.json` at the repo root (all keys optional):
