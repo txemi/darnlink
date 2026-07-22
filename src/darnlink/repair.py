@@ -111,11 +111,14 @@ def plan_repairs(
             intended = target.parent if dir_link else target
             if current == intended.resolve():
                 continue  # already correct (cosmetic ./ or trailing-slash differences are fine)
-            # Defensive: the written path still resolves to a real thing of the SAME kind — a file for
-            # a file link, a directory for a directory link — while the uuid lives elsewhere. The two
-            # halves disagree (typically a mis-pasted uuid); it is NOT a move, so flag, don't hijack.
-            if current.is_dir() if dir_link else current.is_file():
-                kind_word = "directory" if dir_link else "file"
+            # Defensive: the written path still resolves to a real target while the uuid lives
+            # elsewhere — the two halves disagree (typically a mis-pasted uuid). It is NOT a move, so
+            # flag, don't hijack. A file link keys on a real *file* (its existing behavior); a
+            # directory link keys on the path resolving to *anything* — a real directory, or a file
+            # that shadows the folder path — so a non-`.md` link whose path is still a live file is a
+            # conflict, not a rewrite.
+            if current.exists() if dir_link else current.is_file():
+                kind_word = "file" if current.is_file() else "directory"
                 local.append(
                     Finding(
                         Kind.CONFLICT,

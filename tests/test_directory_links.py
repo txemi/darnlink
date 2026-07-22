@@ -122,6 +122,19 @@ def test_repair_directory_link_conflict_when_old_path_is_a_real_dir(tmp_path):
     assert any(f.kind is Kind.CONFLICT for f in result.findings)
 
 
+def test_repair_directory_link_conflict_when_old_path_is_a_real_file(tmp_path):
+    # A non-`.md` link (classified as a directory link) whose path still resolves to a real FILE while
+    # its uuid lives in a README elsewhere must NOT be hijacked — the path still resolves, so it is a
+    # conflict, not a moved directory. (Regression for the Copilot finding on the defensive check.)
+    _w(tmp_path / "new_home" / "README.md", f"---\nuuid: {DIR_UUID}\n---\n# Guide\n")
+    _w(tmp_path / "LICENSE", "MIT\n")       # a real, non-.md file sits at the written path
+    _w(tmp_path / "A.md", f"[license](LICENSE) <!-- uuid: {DIR_UUID} -->\n")
+    index = build_index(tmp_path)
+    result = plan_repairs(tmp_path, index)
+    assert result.new_content == {}
+    assert any(f.kind is Kind.CONFLICT for f in result.findings)
+
+
 def test_repair_directory_link_conflict_when_uuid_is_not_a_readme(tmp_path):
     # a directory link whose uuid lives in a non-README file is malformed: flag, don't guess.
     _w(tmp_path / "notes.md", f"---\nuuid: {OTHER_UUID}\n---\n# Notes\n")
