@@ -140,10 +140,13 @@ def _run_robustify(root: Path, write: bool, create_frontmatter: bool, excludes: 
             print(_scope_note(result.suppressed))
         if write:
             print(f"  WROTE {wrote} file(s).")
-        elif upgrades:
+        elif result.new_content:
             print("  (dry-run — nothing written. Re-run with --write to apply.)")
 
-    return 1 if result.invalid or (upgrades and not write) else 0
+    # Any planned write (a robustified link, a created README, a target uuid) is a pending change: the
+    # dry-run gate must exit non-zero for all of them, not just ROBUSTIFY — otherwise a --create-readme
+    # run with no plain-link upgrades would report 0 despite files waiting to be written.
+    return 1 if result.invalid or (result.new_content and not write) else 0
 
 
 def _run_check(root: Path, excludes: set, as_json: bool, block_markers: tuple,
