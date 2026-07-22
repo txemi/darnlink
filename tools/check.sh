@@ -11,4 +11,8 @@ cd "$(git rev-parse --show-toplevel)"
 uv sync --extra dev   # set up the environment (project + dev deps), like CI's install step
 uv run pytest -q
 uv run darnlink .              # repair check: robust links must not be broken
-uv run darnlink . --robustify  # strict check (fail-closed): every anchorable link must be robust
+# MAX self-gate (dogfood the strictest setting): every link's target must carry a uuid.
+# README.md is deny-listed — it's the PyPI/GitHub landing page, so it stays frontmatter-free
+# (its OUTBOUND links are still anchored with invisible <!-- uuid --> comments; only a frontmatter
+# uuid would show on the package page, which we don't want). See docs/elevating-your-link-gate.md.
+uv run darnlink . --robustify --create-frontmatter --no-create-frontmatter-for README.md
