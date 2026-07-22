@@ -39,6 +39,17 @@ def test_clean_tree_exits_0(tmp_path):
     assert main(["check", str(tmp_path)]) == 0
 
 
+def test_check_output_is_cp1252_safe(tmp_path, capsys):
+    # Regression: `darnlink check` printed a summary with '->' (was U+2192 '→'), which a Windows
+    # cp1252 console (the Spanish-Windows default) cannot encode -> UnicodeEncodeError -> the gate
+    # exited non-zero on ENCODING, not on links (a false red for the whole Windows fleet). The output
+    # must be encodable in cp1252 so the gate never crashes there.
+    _clean_tree(tmp_path)
+    main(["check", str(tmp_path)])
+    out = capsys.readouterr().out
+    out.encode("cp1252")  # raises UnicodeEncodeError if any char is outside cp1252
+
+
 def test_broken_robust_link_exits_2(tmp_path):
     # B lives in new/, but A still points at old/ (path stale) — a repairable/broken robust link.
     _w(tmp_path / "new" / "B.md", f"---\nuuid: {U}\n---\n# B\n")

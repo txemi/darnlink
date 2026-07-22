@@ -6,6 +6,15 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.9.1] — 2026-07-22
+
+### Fixed
+- **`darnlink check` no longer crashes on a Windows cp1252 console.** The summary line printed `→`
+  (U+2192), which the Spanish-Windows default code page (cp1252) cannot encode → `UnicodeEncodeError`
+  → the gate exited non-zero on *encoding*, not on links (a false red for every Windows repo running
+  the gate). The arrow is now ASCII `->`, and `main()` makes stdout/stderr degrade unencodable output
+  instead of raising, so the gate can never crash on a console encoding again.
+
 ## [0.9.0] — 2026-07-22
 
 Cross-repo **web-link** robustness lands as an opt-in adjunct, and the core becomes **web-aware**.

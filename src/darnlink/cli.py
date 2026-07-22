@@ -215,9 +215,9 @@ def _run_check(root: Path, excludes: set, as_json: bool, block_markers: tuple,
             print(f"  scope: {len(only)} file(s) (--only) — findings limited to their own links")
         print(f"  [integrity] repair: {len(repairs)} | conflicts: {len(conflicts)} | "
               f"unresolved: {len(unresolved)} | invalid frontmatter: {len(invalid)} "
-              f"→ {'FAIL' if integrity_fail else 'ok'}")
+              f"-> {'FAIL' if integrity_fail else 'ok'}")
         print(f"  [strict]    to robustify: {len(upgrades)} | invalid frontmatter: {len(rob_invalid)} "
-              f"→ {'FAIL' if strict_fail else 'ok'}")
+              f"-> {'FAIL' if strict_fail else 'ok'}")
         for f in repairs + conflicts + unresolved:
             print(f"  [integrity/{f.kind.value}] {f.file}: {f.detail}")
         for p in invalid:
@@ -226,7 +226,7 @@ def _run_check(root: Path, excludes: set, as_json: bool, block_markers: tuple,
             print(f"  [strict/robustify] {f.file}: {f.detail}")
         for p in rob_invalid:
             print(f"  [strict/invalid-frontmatter] {p}: not valid YAML; left untouched (fix the file)")
-        print(f"  → exit {code} ({outcome})")
+        print(f"  -> exit {code} ({outcome})")
 
     return code
 
@@ -393,12 +393,26 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
         elif anchors_pending:
             print("  (dry-run — nothing written. Re-run with --write to anchor.)")
         outcome = {0: "clean", 3: "anchors pending", 4: "integrity failure"}[code]
-        print(f"  → exit {code} ({outcome})")
+        print(f"  -> exit {code} ({outcome})")
 
     return code
 
 
+def _make_stdio_encoding_safe() -> None:
+    """A quality gate must never fail with UnicodeEncodeError just because the console cannot encode a
+    character we print. A Windows cp1252 code page (the Spanish-Windows default) can't encode chars
+    outside its set, so `print()` would raise and the gate would exit non-zero on *encoding*, not on
+    links — a false red. Degrade unencodable output (backslash-escape) instead of crashing. Keeps the
+    console's own encoding, so normal ASCII output is unaffected. No-op where reconfigure() is absent."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="backslashreplace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
 def main(argv: Optional[List[str]] = None) -> int:
+    _make_stdio_encoding_safe()
     raw = list(sys.argv[1:] if argv is None else argv)
     if raw and raw[0] == "check":  # feature 007: report-only gate subcommand
         return _run_check_cli(raw[1:])
