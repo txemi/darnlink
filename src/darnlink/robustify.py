@@ -40,13 +40,17 @@ class RobustifyResult:
     suppressed: int = 0  # anchorable links in files outside the write scope (010): counted, never hidden
 
 
-def _anchor_target(href: str, linking_file: Path) -> Path | None:
+def _anchor_target(href: str, linking_file: Path, extra_targets: "Set[Path]" = frozenset()) -> Path | None:
     """The `.md` file whose `uuid` anchors this link, or None.
 
     - A link to a `.md` file anchors to that file (the original behavior).
     - A link to a *directory* anchors to that directory's `README.md` (feature 011): a folder's
       identity is its README's uuid. A directory with no README is not anchorable — it returns None,
       exactly like any other non-`.md` target, so the link is left plain.
+
+    `extra_targets` (feature 012) are resolved README paths that this run is about to CREATE
+    (`--create-readme`); they are treated as if already present so their directory links can be
+    anchored in the same pass.
     """
     if not is_local_relative(href):
         return None
@@ -57,8 +61,23 @@ def _anchor_target(href: str, linking_file: Path) -> Path | None:
         return t if (t.is_file() and t.suffix.lower() == ".md") else None
     if t.is_dir():
         readme = t / DIR_ANCHOR
-        if readme.is_file():  # a directory named `README.md` is not an anchor either
+        if readme.is_file() or readme.resolve() in extra_targets:  # a dir named `README.md` is not an anchor
             return readme
+    return None
+
+
+def _dir_link_missing_readme(href: str, linking_file: Path) -> Path | None:
+    """The existing *directory* a link points at that has **no** `README.md`, or None.
+
+    Feature 012: these are the directory links `--create-readme` can make anchorable by creating a
+    `README.md`. Only a real, existing directory qualifies — darnlink never invents the directory
+    itself, only a README inside one that is already there.
+    """
+    if not is_local_relative(href) or names_md(href):
+        return None
+    t = resolve_href(href, linking_file)
+    if t.is_dir() and not (t / DIR_ANCHOR).is_file():
+        return t
     return None
 
 
@@ -75,6 +94,7 @@ def plan_robustify(
     no_create_globs: Tuple[str, ...] = (),
     only: Optional[Set[Path]] = None,
     allow_target_writes: bool = True,
+    create_readme: bool = False,
 ) -> RobustifyResult:
     """Plan the robustify pass over `root` (no writes).
 
@@ -121,6 +141,33 @@ def plan_robustify(
     skip_out_of_scope: Set[Path] = set()   # targets that exist but were never scanned (FR-009)
     skip_target_write: Set[Path] = set()   # targets needing a uuid, refused by --no-target-writes (FR-006)
 
+    # --- Feature 012: plan a README.md for directory links whose folder has none (--create-readme) ---
+    # Done before Phase A so the created READMEs act as ordinary targets for the rest of the pass: they
+    # go into `contents` and `target_uuid`, and `_anchor_target` is told to treat them as present via
+    # `planned_readmes`. The file itself is written from `created_readmes` after Phase B.
+    planned_readmes: Set[Path] = set()      # resolved README paths this run will create
+    created_readmes: Dict[Path, str] = {}   # README path -> full content to write
+    if create_readme:
+        for f in files:
+            if f.resolve() in link_ignored or not in_scope(f, only):
+                continue  # same guards as Phase A: these links never drive writes
+            for link in find_plain_links(contents.get(f, ""), spans.get(f, [])):
+                d = _dir_link_missing_readme(link.href, f)
+                if d is None:
+                    continue
+                readme = (d / DIR_ANCHOR).resolve()
+                if readme in planned_readmes:
+                    continue  # one README per directory, however many links point at it
+                if not in_scope(readme, only):
+                    continue  # respect --only: never create outside the write scope
+                if _basename_denied(readme, no_create_globs):
+                    continue  # README.md deny-listed (--no-create-frontmatter-for): never created
+                u = new_uuid()
+                planned_readmes.add(readme)
+                created_readmes[readme] = f"---\nuuid: {u}\n---\n\n# {d.name}\n"
+                contents[readme] = created_readmes[readme]  # act as a scanned target hereafter
+                target_uuid[readme] = u
+
     def decide(target: Path) -> None:
         target = target.resolve()
         if (target in target_uuid or target in skip_no_fm or target in skip_denied
@@ -164,7 +211,7 @@ def plan_robustify(
         if not in_scope(f, only):
             continue  # 010: its links are never rewritten either -> they must not create uuids
         for link in find_plain_links(contents.get(f, ""), spans.get(f, [])):
-            t = _anchor_target(link.href, f)
+            t = _anchor_target(link.href, f, planned_readmes)
             # Skip self-links (a file linking to itself, e.g. autogrid `path` rows): robustifying
             # them is meaningless and would touch machine-generated blocks.
             if t is not None and t.resolve() != f.resolve():
@@ -190,7 +237,7 @@ def plan_robustify(
             if in_scope(f, only) or f.resolve() in link_ignored:
                 continue
             for link in find_plain_links(contents.get(f, ""), spans.get(f, [])):
-                t = _anchor_target(link.href, f)
+                t = _anchor_target(link.href, f, planned_readmes)
                 if t is None or t.resolve() == f.resolve():
                     continue
                 tr = t.resolve()
@@ -218,7 +265,7 @@ def plan_robustify(
         # uuid below — being a target is not a write the caller has to name (FR-006).
         links = () if (f.resolve() in link_ignored or not scoped) else find_plain_links(original, spans.get(f, []))
         for link in links:
-            t = _anchor_target(link.href, f)
+            t = _anchor_target(link.href, f, planned_readmes)
             if t is None or t.resolve() == f.resolve():
                 continue  # skip non-md/external and self-links
             tr = t.resolve()
@@ -266,6 +313,14 @@ def plan_robustify(
 
         if content != original:
             result.new_content[f] = content
+
+    # Feature 012: schedule the created READMEs and name each one (in the dry-run report too, so the
+    # caller sees the file that will be born before --write does it).
+    for readme in sorted(created_readmes):
+        result.new_content[readme] = created_readmes[readme]
+        result.findings.append(Finding(
+            Kind.CREATE_README, readme,
+            f"created {DIR_ANCHOR} with uuid {target_uuid[readme]} to anchor a directory link"))
 
     # FR-006: name every uuid write that lands OUTSIDE the write scope — in the dry-run report too,
     # so the caller sees it before it happens and can refuse it with --no-target-writes.

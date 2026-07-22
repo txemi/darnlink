@@ -99,9 +99,10 @@ def _run_repair(root: Path, write: bool, excludes: set, as_json: bool, block_mar
     return 1 if conflicts or unresolved or index.invalid or (repairs and not write) else 0
 
 
-def _run_robustify(root: Path, write: bool, create_frontmatter: bool, excludes: set, as_json: bool, block_markers: tuple, no_create_globs: tuple, only: Optional[set] = None, allow_target_writes: bool = True) -> int:
-    result = plan_robustify(root, create_frontmatter=create_frontmatter, excludes=excludes, block_markers=block_markers, no_create_globs=no_create_globs, only=only, allow_target_writes=allow_target_writes)
+def _run_robustify(root: Path, write: bool, create_frontmatter: bool, excludes: set, as_json: bool, block_markers: tuple, no_create_globs: tuple, only: Optional[set] = None, allow_target_writes: bool = True, create_readme: bool = False) -> int:
+    result = plan_robustify(root, create_frontmatter=create_frontmatter, excludes=excludes, block_markers=block_markers, no_create_globs=no_create_globs, only=only, allow_target_writes=allow_target_writes, create_readme=create_readme)
     upgrades = [f for f in result.findings if f.kind is Kind.ROBUSTIFY]
+    created_readmes = [f for f in result.findings if f.kind is Kind.CREATE_README]
     skipped = [f for f in result.findings if f.kind is Kind.NO_FRONTMATTER]
     denied = [f for f in result.findings if f.kind is Kind.DENY_LISTED]
     out_of_scope = [f for f in result.findings if f.kind is Kind.OUT_OF_SCOPE]
@@ -119,6 +120,8 @@ def _run_robustify(root: Path, write: bool, create_frontmatter: bool, excludes: 
         print(f"  plain links to robustify: {len(upgrades)} | skipped (no frontmatter): {len(skipped)} | out of scanned root: {len(out_of_scope)} | deny-listed: {len(denied)} | ignored files: {len(result.ignored)} | link-ignored: {len(result.link_ignored)} | invalid frontmatter: {len(result.invalid)}")
         for f in upgrades:
             print(f"  [robustify] {f.file}: {f.detail}")
+        for f in created_readmes:
+            print(f"  [create-readme] {f.file}: {f.detail}")
         for f in skipped:
             print(f"  [no-frontmatter] {f.file}: {f.detail} (use --create-frontmatter to allow)")
         for f in out_of_scope:
@@ -285,6 +288,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--write", action="store_true", help="apply changes (default: dry-run report)")
     parser.add_argument("--robustify", action="store_true", help="upgrade plain links to robust (default op: repair)")
     parser.add_argument("--create-frontmatter", action="store_true", help="(robustify) allow creating frontmatter where missing")
+    parser.add_argument("--create-readme", action="store_true", help="(robustify, feature 012) for a link to a directory that has no README.md, create one (with a uuid) so the link can be anchored. Implies --create-frontmatter. darnlink never creates the directory, only a README inside an existing one.")
     parser.add_argument(
         "--no-create-frontmatter-for",
         action="append",
@@ -354,9 +358,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     block_markers = tuple(args.ignore_block)
     if args.robustify:
         return _run_robustify(
-            root, args.write, args.create_frontmatter, excludes, args.json, block_markers,
+            root, args.write,
+            args.create_frontmatter or args.create_readme,  # --create-readme implies --create-frontmatter
+            excludes, args.json, block_markers,
             tuple(args.no_create_frontmatter_for), only=only,
             allow_target_writes=not args.no_target_writes,
+            create_readme=args.create_readme,
         )
     return _run_repair(root, args.write, excludes, args.json, block_markers, only=only)
 

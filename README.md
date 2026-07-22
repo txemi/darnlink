@@ -96,6 +96,8 @@ See [the design doc](docs/design.md) <!-- uuid: 7f3a1e2c-... -->
 
 Links to **directories** work too: a link to `docs/guide/` is anchored to the uuid of that folder's
 `README.md`, so it heals when the folder moves — same guarantee, for the hubs you link to by folder.
+If a linked folder has no `README.md`, `--create-readme` makes one (with a uuid) so the link can be
+anchored; it is opt-in and only ever creates a README inside a directory that already exists.
 
 Format spec: [FORMAT.md](FORMAT.md) <!-- uuid: 9052d864-2a45-4ed4-8725-d8a394e7a7ef -->.
 
