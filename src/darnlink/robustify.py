@@ -22,7 +22,7 @@ from .frontmatter_edit import (
     read_text_keep_newlines,
     write_text_keep_newlines,
 )
-from .frontmatter_index import DEFAULT_EXCLUDES, iter_markdown_files, read_frontmatter_uuid
+from .frontmatter_index import DEFAULT_EXCLUDES, _dir_excluded, iter_markdown_files, read_frontmatter_uuid
 from .links import (code_spans, emit_robust_link, file_ignores_links, file_is_ignored,
                     find_plain_links, ignored_spans)
 from .paths import DIR_ANCHOR, is_local_relative, names_md, resolve_href
@@ -87,6 +87,20 @@ def _dir_link_missing_readme(href: str, linking_file: Path) -> Path | None:
 def _basename_denied(target: Path, no_create_globs: Tuple[str, ...]) -> bool:
     """True if the target's basename matches any deny-list glob (FR-029/FR-032)."""
     return any(fnmatch(target.name, g) for g in no_create_globs)
+
+
+def _within_excluded(directory: Path, root: Path, excludes) -> bool:
+    """True if `directory` lies inside a subtree whose directory name is excluded from the scan.
+
+    Feature 012: `--create-readme` must never write a README into a subtree darnlink was told to skip
+    (a `mirror/`, a vendored `clones/`). `--exclude` prunes those dirs from the scan, but a link from
+    an *included* file can still point at a directory *inside* an excluded one — this closes that path.
+    """
+    try:
+        rel = directory.resolve().relative_to(root)
+    except ValueError:
+        return False  # outside root is handled by the caller's own root check
+    return any(_dir_excluded(part, excludes) for part in rel.parts)
 
 
 def plan_robustify(
@@ -170,6 +184,8 @@ def plan_robustify(
                     continue  # one README per directory, however many links point at it
                 if not readme.is_relative_to(root_resolved):
                     continue  # a `../`-escaping link must never make us write outside the scanned root
+                if _within_excluded(d, root_resolved, excludes):
+                    continue  # never create inside an --exclude'd subtree (a mirror, a vendored clone)
                 if not in_scope(readme, only):
                     continue  # respect --only: never create outside the write scope
                 if _basename_denied(readme, no_create_globs):
