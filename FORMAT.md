@@ -54,9 +54,36 @@ UUID        := 36 chars matching [0-9a-fA-F-] (canonically 8-4-4-4-12 lowercase 
 - **Robustify**: a plain link `[text](path.md)` is upgraded by ensuring the target has a `uuid`
   (creating one only because a link now references it) and appending the comment.
 
-Scope: relative links to local `.md` files. URLs, non-`.md` targets and bare `#anchors` are ignored.
-Links inside **code** — fenced blocks (```` ``` ````/`~~~`) or inline code (`` ` ``) — are also
-ignored: they are examples, not navigational links, and rewriting them would corrupt the docs.
+Scope: relative links to local `.md` files and to **local directories** (§4.1). URLs, other non-`.md`
+targets and bare `#anchors` are ignored. Links inside **code** — fenced blocks (```` ``` ````/`~~~`)
+or inline code (`` ` ``) — are also ignored: they are examples, not navigational links, and rewriting
+them would corrupt the docs.
+
+### 4.1 Directory links
+
+A robust link may point at a **directory** instead of a `.md` file. A directory has no frontmatter of
+its own, so its identity is the `uuid` of its **`README.md`**:
+
+```markdown
+See the [deployment guide](ops/deploy/) <!-- uuid: 7f3a1e2c-… -->
+```
+
+where `ops/deploy/README.md` declares `uuid: 7f3a1e2c-…`.
+
+- **Disambiguation is by the path alone**: a path ending in `.md` is a *file* link (points at that
+  file); any other path is a *directory* link (points at the directory whose `README.md` holds the
+  uuid). No disk access is needed to classify a link. A trailing slash is optional on input; repair
+  emits one.
+- **Resolve**: find the `README.md` whose `uuid` matches, then the link's target is its **containing
+  directory**.
+- **Repair**: when the directory moves, rewrite the path to the directory's new location (found via
+  the README's uuid), keeping it a directory path.
+- **Robustify**: a plain link to a directory that has a `README.md` is anchored to that README's
+  `uuid` (created only with `--create-frontmatter`, and only in an existing `README.md` — darnlink
+  never creates a README). A directory without a `README.md` is not anchorable and is left plain.
+
+A directory link and a file link to the same `README.md` share its uuid; the path's shape (`…/` vs
+`…/README.md`) is what keeps them pointing where their author intended.
 
 ## 5. Opting a file out
 

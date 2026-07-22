@@ -6,6 +6,11 @@ from pathlib import Path
 from typing import Tuple
 
 
+# Feature 011: a link to a directory is anchored to the uuid of this file inside it. A folder has no
+# frontmatter of its own, so its README.md carries the folder's stable identity.
+DIR_ANCHOR = "README.md"
+
+
 def split_fragment(href: str) -> Tuple[str, str]:
     """Split `path#frag` into (`path`, `frag`); frag is '' if none."""
     if "#" in href:
@@ -33,12 +38,26 @@ def relative_link(target: Path, linking_file: Path, fragment: str = "") -> str:
     return f"{rel_posix}#{fragment}" if fragment else rel_posix
 
 
-def is_local_md(href: str) -> bool:
-    """True if href is a relative link to a local .md file (not a URL, not an anchor-only link)."""
+def is_local_relative(href: str) -> bool:
+    """True if href is a relative link into the local tree (not a URL, mailto, absolute or bare
+    `#anchor`). Says nothing about what the path names — a `.md` file, a directory, anything."""
     path_part, _ = split_fragment(href)
     if not path_part:
         return False  # bare #fragment
     low = path_part.lower()
     if "://" in low or low.startswith(("http:", "https:", "mailto:", "ftp:", "/")):
         return False
-    return low.endswith(".md")
+    return True
+
+
+def is_local_md(href: str) -> bool:
+    """True if href is a relative link to a local .md file (not a URL, not an anchor-only link)."""
+    path_part, _ = split_fragment(href)
+    return is_local_relative(href) and path_part.lower().endswith(".md")
+
+
+def names_md(href: str) -> bool:
+    """True if the href's path part names a `.md` file (by suffix). Used to tell a link that points
+    at a file (`foo/README.md`) from one that points at a directory (`foo/`), independent of disk."""
+    path_part, _ = split_fragment(href)
+    return path_part.lower().endswith(".md")
