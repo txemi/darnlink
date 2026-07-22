@@ -79,7 +79,7 @@ def plan_repairs(
         cursor = 0
         changed = False
         for link in links:
-            # Feature 010: a robust link whose href is a web URL is a CROSS-REPO link; its uuid may
+            # Feature 011: a robust link whose href is a web URL is a CROSS-REPO link; its uuid may
             # live in another repository the core never scans. The core stays local (P-III/P-IV) and
             # leaves it alone — `darnlink web-check` handles it. Without this guard the core wrongly
             # reports it `unresolvable`, which would fail an existing gate the moment a web link appears.

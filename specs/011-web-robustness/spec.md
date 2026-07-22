@@ -1,6 +1,6 @@
 # Feature Specification: web-link robustness (cross-repo URL links anchored to a target's `uuid`)
 
-**Feature Branch**: `feature/web-robustness` (spike / **experimental** — never merges to `main` as-is)
+**Feature Branch**: `darnlink-web` (long-lived product line — integrates `main`, **never merges back to `main` as-is**)
 
 **Created**: 2026-07-17
 

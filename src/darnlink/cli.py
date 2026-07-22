@@ -272,7 +272,7 @@ def _run_check_cli(argv: List[str]) -> int:
 
 
 def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
-    """Feature 010 (EXPERIMENTAL spike): `darnlink web-check PATH --online [--write] [--json]`.
+    """Feature 011 (EXPERIMENTAL spike): `darnlink web-check PATH --online [--write] [--json]`.
 
     Cross-repo web links (GitHub URLs anchored to the destination file's frontmatter `uuid`). OFF by
     default: without `--online` this makes NO network call and only lists the web links it sees (the
@@ -396,7 +396,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     raw = list(sys.argv[1:] if argv is None else argv)
     if raw and raw[0] == "check":  # feature 007: report-only gate subcommand
         return _run_check_cli(raw[1:])
-    if raw and raw[0] == "web-check":  # feature 010 (EXPERIMENTAL): cross-repo web-link resolver
+    if raw and raw[0] == "web-check":  # feature 011 (EXPERIMENTAL): cross-repo web-link resolver
         return _run_web_check_cli(raw[1:])
 
     parser = argparse.ArgumentParser(
