@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# EXAMPLE pre-push hook — darnlink link gate, WHOLE-REPO scope (piece 3 of the wall).
+#
+# `git push` is deliberate and infrequent, so judging the whole tree here does NOT deadlock parallel
+# sessions (unlike a whole-repo pre-commit — don't do that). This is the LOCAL wall: it stops anything
+# broken from leaving your machine, even if CI is down.
+#
+# INSTALL: copy to `.git/hooks/pre-push`. Make it executable: `chmod +x .git/hooks/pre-push`.
+# SCOPE:   whole-repo is the recipe default (scope=repo from darnlink-gate.json), so nothing to set.
+# STRICT?: this stays fail-OPEN (a genuinely offline push isn't bricked). If you want the local wall
+#          to also fail closed, uncomment the export below — then a uvx/network hiccup blocks the push.
+# export DARNLINK_GATE_FAIL_CLOSED=1
+set -euo pipefail
+exec darnlink-gate

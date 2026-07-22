@@ -191,6 +191,11 @@ When the gap reads **0**, switch your gate command to the maximum:
 
 Re-verify 0, and you're fail-closed: from now on, a link to any file without a `uuid` fails.
 
+> **Using the [`darnlink-gate`](../recipes/README.md) recipe?** This flip is **one line** — set
+> `"mode": "max"` in `darnlink-gate.json`; the hooks and CI don't change. `mode=max` runs exactly the
+> command above (dry-run) at the whole-repo wall, and stays at strict in the staged pre-commit by
+> design (§7). Copy-paste hook/CI files: [`recipes/examples/`](../recipes/examples/).
+
 ## 7. Lock it in — the wall architecture
 
 A gate only guarantees anything at the layers where it actually runs and blocks. Use more than one,
@@ -206,6 +211,14 @@ The pre-commit and pre-push checks both call the same fail-closed command; flipp
 `--create-frontmatter` in one place raises them together. The scope split (staged locally, whole-repo
 in the wall) is the same recommendation the README makes for multi-contributor repos — here it's the
 load-bearing reason the maximum is livable.
+
+**Complete, copy-paste files for all three layers** are in
+[`recipes/examples/`](../recipes/examples/) — [`pre-commit`](../recipes/examples/pre-commit) (staged) ·
+[`pre-push`](../recipes/examples/pre-push) (whole repo) ·
+[`github-actions-darnlink-gate.yml`](../recipes/examples/github-actions-darnlink-gate.yml) and
+[`Jenkinsfile-stage.groovy`](../recipes/examples/Jenkinsfile-stage.groovy) (the server wall,
+fail-closed). They're whole working artifacts, not snippets to assemble — assembling the CI one wrong
+is how you get a wall that fails *open*.
 
 ## Checklist
 

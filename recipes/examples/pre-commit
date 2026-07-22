@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# EXAMPLE pre-commit hook — darnlink link gate, STAGED scope (piece 2 of the wall).
+#
+# Fast and per-file: it judges only the files you're committing, so a teammate's in-flight plain
+# link never blocks YOUR clean commit. The whole-repo guarantee lives in pre-push + CI (pieces 3-4).
+#
+# INSTALL: copy to `.git/hooks/pre-commit` (or version it under `hooks/` and point
+#          `git config core.hooksPath hooks`). Make it executable: `chmod +x .git/hooks/pre-commit`.
+# ASSUMES: `darnlink-gate` (recipes/darnlink-gate) is on PATH — e.g. dropped in ~/.local/bin.
+set -euo pipefail
+exec env DARNLINK_GATE_SCOPE=staged darnlink-gate

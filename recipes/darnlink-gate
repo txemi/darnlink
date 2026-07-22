@@ -10,33 +10,43 @@
 # WHAT IT DOES (all read-only — it never writes):
 #   • runs darnlink at a PINNED ref (deterministic); fails OPEN if uv/uvx is missing (never
 #     bootstraps) — unless fail-closed is on, see below;
-#   • ALWAYS runs `darnlink check` (stable 0/2/3 contract); MODE only picks which axes gate:
-#     mode=check  → integrity + strict both gate (exit 0/2/3);
+#   • MODE picks which axes gate — three rungs of a one-way ratchet (each is a superset of the one
+#     above, so raising MODE can only tighten the gate, never loosen it):
 #     mode=repair → integrity only — a strict-only failure (3) is treated as clean (for repos that
 #                   don't robustify their links yet);
+#     mode=check  → integrity + strict (the default). Runs `darnlink check` (stable 0/2/3 contract);
+#     mode=max    → integrity + strict + create-frontmatter = FAIL-CLOSED links: a link to a file
+#                   that has no `uuid` fails the gate (see docs/elevating-your-link-gate.md). `check`
+#                   has no create-frontmatter axis and the bare `--robustify --create-frontmatter` has
+#                   no integrity axis, so max runs BOTH dry-run passes (check UNION create-frontmatter)
+#                   and fails if either does — a true superset of check. WHOLE-REPO ONLY — the staged
+#                   pre-commit stays at strict on purpose (fast, "is what I commit clean?"); the
+#                   whole-repo wall (pre-push / CI) is where max is enforced.
 #   • scope=repo  → judge the whole tree (the wall — use in CI);
 #     scope=staged→ judge only the files you're committing (use in a multi-session pre-commit, so a
 #                   teammate's in-flight plain link doesn't block your commit). The repo-wide wall
 #                   stays in CI. [Option B of darnlink spec 008: git lives HERE, not in darnlink.]
 #   • fails OPEN on a network/uvx error (offline commit isn't bricked) — UNLESS fail-closed is on.
-#     ⚠️ FAIL-CLOSED (`DARNLINK_GATE_FAIL_CLOSED=1`, o `"fail_closed": true` en el json): en CI el gate
-#     ES el muro, y fallar abierto ahi significa BUILD VERDE CON CERO FICHEROS VALIDADOS ante un
-#     fallo transitorio de red/PyPI. Actívalo SIEMPRE en CI. Sale con codigo 4 (distinguible de los
-#     hallazgos: 2 integridad / 3 strict).
+#     ⚠️ FAIL-CLOSED (`DARNLINK_GATE_FAIL_CLOSED=1`, or `"fail_closed": true` in the json): in CI the
+#     gate IS the wall, and failing open there means a GREEN BUILD WITH ZERO FILES VALIDATED on a
+#     transient network/PyPI hiccup. Turn it ON in CI. It exits with code 4 (distinguishable from the
+#     findings: 2 integrity / 3 strict).
 #
 # CONFIG. Reads `darnlink-gate.json` at the repo root (all keys optional):
 #   { "ref": "git+https://github.com/txemi/darnlink@v0.7.0",
 #     "excludes": ["secrets","external_repos"], "ignore_blocks": ["txmd-autogrid"],
 #     "mode": "check", "scope": "repo", "fail_closed": true }
+#   mode ∈ { repair | check | max } — see WHAT IT DOES. Raising it is a one-way ratchet: only up.
 # ⚠️ In CI prefer the ENV VAR over the json key: reading the json needs python3, so if python3 is
 #    missing the key is silently lost — and "python3 missing" is one of the very cases fail-closed
 #    exists to catch. `DARNLINK_GATE_FAIL_CLOSED=1` is read by the shell and always applies.
 # Env overrides (so one config serves both surfaces): DARNLINK_REF, DARNLINK_GATE_MODE,
-# DARNLINK_GATE_SCOPE, DARNLINK_GATE_FAIL_CLOSED. Typical wiring: config says scope=repo; el hook de
-# pre-commit exporta DARNLINK_GATE_SCOPE=staged; el CI deja repo y pone FAIL_CLOSED=1.
+# DARNLINK_GATE_SCOPE, DARNLINK_GATE_FAIL_CLOSED. Typical wiring: config says scope=repo; the
+# pre-commit hook exports DARNLINK_GATE_SCOPE=staged; CI leaves it repo and sets FAIL_CLOSED=1.
 #
-# EXIT: 0 clean · 2 integrity failure · 3 strict-only failure · 1 usage · 4 no se pudo gatear
-#       (con fail-closed) · 0 + aviso a stderr si se salta (fail-open, el default).
+# EXIT: 0 clean · 2 integrity failure · 3 strict-only failure · 1 usage / max-mode findings ·
+#       4 could-not-gate (fail-closed only) · 0 + a stderr warning if it skips (fail-open, the default).
+#       (mode=max reports findings via the dry-run's own non-zero exit — any non-zero fails the gate.)
 set -euo pipefail
 
 root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
@@ -109,10 +119,19 @@ if [ "$SCOPE" != "staged" ]; then
   # set +e around the run: darnlink exits 0/1/2/3 (findings ARE non-zero) — set -e must not kill us
   # before we read rc and run the rc>3 fail-open.
   set +e
-  run check . "${DL_ARGS[@]}"        # always `check` → stable 0/2/3 contract, regardless of MODE
-  rc=$?
+  if [ "$MODE" = "max" ]; then
+    # LEVEL 3 = `check` (integrity + strict) UNION the create-frontmatter axis. Neither half alone is
+    # a superset of check: `check` runs plan_repairs+plan_robustify but has no create-frontmatter axis;
+    # the bare `--robustify --create-frontmatter` ADDS create-frontmatter but DROPS integrity (it never
+    # runs plan_repairs — a broken/moved robust link sails through). So run BOTH dry-run passes and
+    # fail if either does. This makes max a TRUE superset of check (the ratchet holds). Both read-only.
+    run check . "${DL_ARGS[@]}"; rc=$?
+    if [ "$rc" -eq 0 ]; then run . --robustify --create-frontmatter "${DL_ARGS[@]}"; rc=$?; fi
+  else
+    run check . "${DL_ARGS[@]}"; rc=$?   # `darnlink check` → stable 0/2/3 contract (mode=check|repair)
+  fi
   set -e
-  # rc>3 (e.g. 127 network) → fail open + warn; darnlink's own 0/2/3 pass through.
+  # rc>3 (e.g. 127 network) → fail open + warn; darnlink's own low exit codes pass through.
   if [ "$rc" -gt 3 ]; then bail "darnlink unreachable (rc=$rc)"; fi
   # mode=repair gates on integrity only: a strict-only failure (3) is clean.
   if [ "$MODE" = "repair" ] && [ "$rc" -eq 3 ]; then exit 0; fi
@@ -121,6 +140,9 @@ fi
 
 # ---- staged scope (Option B): darnlink judges the whole tree; WE filter findings to staged files.
 #      darnlink stays git-agnostic; the git lives here. Only fail on findings in files you're committing.
+#      NOTE mode=max here behaves as strict (level 2), by design: the create-frontmatter axis needs
+#      whole-tree reasoning, and per the wall architecture the staged pre-commit stays fast — max is
+#      enforced at the whole-repo wall (pre-push / CI). See docs/elevating-your-link-gate.md §7.
 # python3 does the filtering — fail OPEN if it's missing (don't brick a commit; CI covers the wall).
 if ! command -v python3 >/dev/null 2>&1; then
   bail "(staged) python3 not found"
