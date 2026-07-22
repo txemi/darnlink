@@ -79,8 +79,10 @@ where `ops/deploy/README.md` declares `uuid: 7f3a1e2c-…`.
 - **Repair**: when the directory moves, rewrite the path to the directory's new location (found via
   the README's uuid), keeping it a directory path.
 - **Robustify**: a plain link to a directory that has a `README.md` is anchored to that README's
-  `uuid` (created only with `--create-frontmatter`, and only in an existing `README.md` — darnlink
-  never creates a README). A directory without a `README.md` is not anchorable and is left plain.
+  `uuid` (created only with `--create-frontmatter`, in the existing `README.md`). A directory without
+  a `README.md` is not anchorable and is left plain — unless the tool is explicitly asked to create
+  one (darnlink's opt-in `--create-readme`, spec 012), which writes a normal `README.md` with a uuid;
+  the format itself is unchanged (a created README is just an ordinary anchor file).
 
 A directory link and a file link to the same `README.md` share its uuid; the path's shape (`…/` vs
 `…/README.md`) is what keeps them pointing where their author intended.

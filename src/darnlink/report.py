@@ -13,6 +13,7 @@ class Kind(str, Enum):
     UNRESOLVABLE = "unresolvable"  # robust link whose uuid is in no file
     AMBIGUOUS = "ambiguous"        # robust link whose uuid is in more than one file
     NO_FRONTMATTER = "no_frontmatter"  # robustify target has no frontmatter (needs --create-frontmatter)
+    CREATE_README = "create_readme"    # (--create-readme) a README.md was created to anchor a directory link that pointed at a folder with none
     DENY_LISTED = "deny_listed"        # robustify target matches --no-create-frontmatter-for: never given a uuid
     IGNORED_LINKS = "ignored_links"    # source carries <!-- darnlink-ignore-links -->: its own links are left alone (it stays a target)
     INVALID_FRONTMATTER = "invalid_frontmatter"  # frontmatter present but not valid YAML; reported, never touched
