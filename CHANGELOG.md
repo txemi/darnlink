@@ -6,6 +6,30 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-07-22
+
+First release with **directory links** — a robust link can now target a folder, not just a `.md` file.
+
+### Added
+- **Directory links** (feature 011). A robust link may point at a **directory**; the folder's identity
+  is the `uuid` of its `README.md`. Disambiguation is by the href alone — a path ending in `.md` is a
+  *file* link, any other path a *directory* link — so it is deterministic and needs no disk access to
+  classify. Robustify anchors a directory link to its README's uuid; repair heals it to the folder's
+  new location when it moves (kept a directory path, trailing slash). See `FORMAT.md` §4.1 and
+  `specs/011-directory-links/`.
+- **`--create-readme`** (feature 012). Opt-in: for a plain link to a directory that has **no**
+  `README.md`, create one (a fresh uuid + a `# <dirname>` heading) so the link can be anchored. It
+  never creates the directory itself, only a README inside an existing one; creates at most one README
+  per directory; is dry-run by default; **respects `--exclude`** (never writes into an excluded
+  subtree such as a mirror or vendored clone), `--only` and `--no-create-frontmatter-for`; and implies
+  `--create-frontmatter`. Off by default, so the "never creates files" guarantee holds unless asked.
+  See `specs/012-create-readme/`.
+
+### Fixed
+- The strict self-check (`darnlink . --robustify`) was failing on `main`: a prior commit gave
+  `docs/elevating-your-link-gate.md` a `uuid` without robustifying its inbound links, so every branch
+  inherited a red gate. Its 5 links are now anchored (#18).
+
 ## [0.7.1] — 2026-07-22
 
 Recipe & docs only — **the CLI/package is byte-for-byte identical to 0.7.0**. This release exists so

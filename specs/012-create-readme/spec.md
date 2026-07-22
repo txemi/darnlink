@@ -65,6 +65,10 @@ creates `docs/hub/README.md` — with a fresh uuid and a `# hub` heading — and
   `--write`, like every other darnlink write.
 - **FR-012f**: `--create-readme` implies `--create-frontmatter` (a run willing to create a README is
   willing to add a uuid to an existing one).
+- **FR-012g**: A README is never created inside an `--exclude`'d subtree. `--exclude` prunes those
+  directories from the scan, but a link from an *included* file can point at a directory *inside* an
+  excluded one (a mirror, a vendored clone); creation must honor the exclusion for the write target,
+  not only for the scan.
 
 ## Out of Scope
 
