@@ -6,6 +6,28 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-07-22
+
+Cross-repo **web-link** robustness lands as an opt-in adjunct, and the core becomes **web-aware**.
+
+### Added
+- **`web-check` subcommand (EXPERIMENTAL, opt-in, off by default)** (feature 013). Anchors and
+  verifies **cross-repo web links** — a Markdown link to a `https://github.com/owner/repo/blob/…` file
+  in *another* repository — against the destination's frontmatter `uuid`. `web-check PATH --online`
+  fetches each destination (GitHub Contents API, stdlib `urllib`, no new dependency), reading the uuid
+  to **anchor** a plain link (`--write`) or **verify** an anchored one (exit 4 on mismatch/404). Works
+  **tokenless for public destinations**; a private destination without `$GITHUB_TOKEN` is reported
+  `web_unverifiable` and never fails the build. Nothing runs without `web-check` *and* `--online`. See
+  `specs/013-web-robustness/` and `docs/elevating-your-link-gate.md` §8.
+
+### Changed
+- **Core is now web-aware (strict improvement).** The core's repair/check ignore web links entirely
+  (`is_web_href` guard): before, an anchored web link was wrongly reported `unresolvable`. Web anchors
+  use a distinct `<!-- web-uuid: X -->` marker (never the core's `<!-- uuid: X -->`), so a core gate in
+  any repo stays green next to a cross-repo web link.
+- **Constitution v1.1.0**: Principle IV gains a single sanctioned network carve-out for the opt-in
+  `web-check --online`; the default path and core stay offline and deterministic.
+
 ## [0.8.0] — 2026-07-22
 
 First release with **directory links** — a robust link can now target a folder, not just a `.md` file.
