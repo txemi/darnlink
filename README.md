@@ -287,7 +287,7 @@ To adopt it on an existing repo: anchor what's already anchorable once with
 > **📘 Going all the way — elevate a whole repo to fail-closed.** The strictest setting
 > (`--robustify --create-frontmatter`: *every link's target must carry a `uuid`*) is reachable even
 > on a large repo with a big generated mirror. The end-to-end playbook — the two-bucket strategy,
-> how generators cooperate (stable `uuid` + the `ignore-links` marker), bulk-adopting a mirror from
+> how generators cooperate (stable `uuid` + the `darnlink-ignore-links` marker), bulk-adopting a mirror from
 > its stored raw, the traps, and the pre-commit/pre-push/CI wall architecture — is in
 > **[docs/elevating-your-link-gate.md](docs/elevating-your-link-gate.md)**.
 

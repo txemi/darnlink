@@ -32,7 +32,7 @@ the files something actually links to.
 
 ## 1. Read the gap
 
-Point the strictest check at the repo and count what it flags:
+Point the strictest check at the repo and list what it flags:
 
 ```bash
 # Everything a fail-closed --create-frontmatter gate would flag today (dry-run — writes nothing):
@@ -47,8 +47,7 @@ its target would get that `uuid`." Group them to plan the work:
   cross-links).
 
 Two exclusions matter from the start: **always `--exclude` any nested git clones** (never write into
-a foreign repo you vendored), and typically exclude any archive/`historico` tree you don't intend to
-touch. Excluding your *mirror* while you scope the "your content" number is useful too — see §3.
+a foreign repo you vendored), and typically `--exclude` any `archive` tree you don't intend to touch. Excluding your *mirror* while you scope the "your content" number is useful too — see §3.
 
 ## 2. Two buckets
 
@@ -70,7 +69,7 @@ feed it to `--no-create-frontmatter-for` so the mass robustify never touches Buc
 
 ```bash
 darnlink . --robustify --create-frontmatter --write \
-  --exclude clones --exclude mirrors --exclude historico \
+  --exclude clones --exclude mirrors --exclude archive \
   --no-create-frontmatter-for INDEX.md --no-create-frontmatter-for _index.md \
   --no-create-frontmatter-for report.md   # …one per generated basename
 ```
