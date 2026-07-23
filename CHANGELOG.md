@@ -6,6 +6,23 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-07-23
+
+### Changed
+- **`--create-readme` skips folders holding downloaded/external content** (feature 014). A directory
+  that directly contains a `.md` carrying `<!-- darnlink-ignore-file -->` (a downloaded mirror capture —
+  a transcript, an extract) is the mirror's, not ours, so `--create-readme` no longer writes a README
+  there. This is the surgical, provenance-based alternative to `--exclude`-ing a whole mirror tree:
+  authored files inside the mirror stay robustifiable, and only the actual captures are skipped. It is a
+  *positive* signal — an empty hub, or one holding only authored `.md`, still gets its README; an
+  unreadable `.md` is itself a skip signal (never risk writing into content we couldn't inspect). See
+  `specs/014-create-readme-skip-external/`.
+
+### Docs
+- The `elevating-your-link-gate` recipe now covers **directory links** and the gate-version coupling:
+  an older `darnlink` treats a robust directory link as *broken* and repairs it into `README.md`, so a
+  gate that touches directory links must be **≥ 0.8.0** (#21).
+
 ## [0.9.1] — 2026-07-22
 
 ### Fixed
