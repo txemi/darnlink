@@ -236,7 +236,7 @@ def test_online_respects_excludes(tmp_path):
 
 
 def test_online_404_in_unreachable_repo_is_unverifiable(tmp_path):
-    # a 404 whose repo root is ALSO unreachable (private repo we can't read, or a deleted branch) must
+    # a 404 whose repo root is ALSO unreachable (private repo we can't read, or a ref that no longer exists) must
     # be web_unverifiable (a warning), not web_not_found (which fails a gate) — a broken link in a repo
     # we can't even see is not ours to assert.
     URL = "https://github.com/o/r/blob/main/gone.md"
