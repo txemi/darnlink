@@ -144,7 +144,7 @@ def _classify(link: WebLink, gu: Optional[GithubUrl], status: int, dest_uuid: Op
     if status == 404:
         if not repo_reachable:
             # The repo root at this ref is unreachable too: a private repo we can't read (GitHub 404s to
-            # hide it) or a deleted branch. We can't tell "moved" from "no access", so we do NOT fail the
+            # hide it) or a ref that no longer exists. We can't tell "moved" from "no access", so we do NOT fail the
             # gate on it — a broken link in a repo we can't even see is not ours to assert.
             return WebFinding("web_unverifiable", f, link.href,
                               "destination repo/ref not reachable (no access, or the ref no longer exists) — cannot verify")
@@ -216,7 +216,7 @@ def check_web_links_online(
                 cache[link.href] = fetcher(gu, token)
             status, text = cache[link.href]
             # A 404 is ambiguous: the file moved in an ACCESSIBLE repo, or the repo/ref itself is not
-            # reachable (a private repo we can't read — GitHub 404s to hide it — or a deleted branch).
+            # reachable (a private repo we can't read — GitHub 404s to hide it — or a ref that no longer exists).
             # Probe the repo root at the same ref to tell them apart: if THAT is unreachable, we cannot
             # verify (so `web_unverifiable`, a warning), rather than assert the file moved (`web_not_found`).
             reachable = True
