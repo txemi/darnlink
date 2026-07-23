@@ -135,6 +135,16 @@ def test_create_readme_skips_folder_holding_downloaded_content(tmp_path):
     assert not (tmp_path / "capture" / "README.md").exists()
 
 
+def test_create_readme_skips_folder_with_an_unreadable_md(tmp_path):
+    # an undecodable .md in the folder is a positive signal to skip: we can't confirm it isn't
+    # downloaded/external, and must never risk writing a README into the mirror. (Copilot #20.)
+    (tmp_path / "capture").mkdir()
+    (tmp_path / "capture" / "raw.md").write_bytes(b"\xff\xfe\x80\x81 not valid utf-8 \xfa")
+    _w(tmp_path / "A.md", "[cap](capture/)\n")
+    result = plan_robustify(tmp_path, create_readme=True)
+    assert result.new_content == {}
+
+
 def test_create_readme_still_creates_in_a_folder_with_only_authored_content(tmp_path):
     # a folder holding only authored .md (no ignore-file marker) is ours → it still gets a README
     (tmp_path / "hub").mkdir()

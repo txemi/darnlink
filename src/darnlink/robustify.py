@@ -122,7 +122,10 @@ def _holds_downloaded_content(directory: Path) -> bool:
                 if file_is_ignored(read_text_keep_newlines(p)):
                     return True
             except Exception:
-                continue
+                # An unreadable/undecodable `.md` here is itself a reason NOT to create a README: we
+                # can't confirm it isn't a downloaded/external file, and the whole point is to never
+                # write into the mirror. Treat the failure as a positive signal (skip), never a crash.
+                return True
     return False
 
 
