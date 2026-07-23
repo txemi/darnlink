@@ -6,18 +6,21 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
-## [0.11.0] — 2026-07-23
-
-Fleet-facing gate release: the recipe gains opt-in `web` and `create_readme` gate keys, and the CLI
-gains `web-check --exclude` (the two go together — a web gate in a repo that vendors clones needs to
-skip them).
+## [0.12.0] — 2026-07-23
 
 ### Added
 - **`web-check --exclude PATTERN`** — `web-check` scanned the whole tree with no way to skip
   directories, so in a repo that vendors clones of foreign repos it would fetch and (with `--write`)
   anchor web links *inside* those clones, injecting `web-uuid` markers into someone else's checkout.
-  `--exclude` (same dir-name-glob semantics as the other commands) skips them. Needed to turn the new
-  recipe `web` key on in any repo with a `clones/` tree (#23).
+  `--exclude` (same dir-name-glob semantics as the other commands) skips them — needed to turn the
+  `web` recipe key (0.11.0) on in any repo with a `clones/` tree (#23).
+
+## [0.11.0] — 2026-07-23
+
+Recipe & docs only — **the CLI/package is byte-for-byte identical to 0.10.0**. This release exists so
+the `recipes/` changes below live at a pinned tag that a fleet's CI and hooks can fetch deterministically.
+
+### Added
 - **Recipe `darnlink-gate` gains two opt-in `darnlink-gate.json` keys** (both `mode=max` only), so a
   fleet can turn them on by config instead of hand-wiring each repo:
   - **`"web": true`** — adds a `web-check --online` pass: cross-repo Markdown links to other GitHub
