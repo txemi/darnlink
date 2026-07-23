@@ -35,8 +35,15 @@
 # CONFIG. Reads `darnlink-gate.json` at the repo root (all keys optional):
 #   { "ref": "git+https://github.com/txemi/darnlink@v0.7.0",
 #     "excludes": ["secrets","external_repos"], "ignore_blocks": ["txmd-autogrid"],
-#     "mode": "check", "scope": "repo", "fail_closed": true }
+#     "mode": "check", "scope": "repo", "fail_closed": true,
+#     "web": true, "create_readme": true }
 #   mode ∈ { repair | check | max } — see WHAT IT DOES. Raising it is a one-way ratchet: only up.
+#   web (mode=max only): add a `web-check --online` pass — cross-repo links to OTHER GitHub repos must
+#     resolve to the destination's uuid (read online). Public targets need no token; private ones send
+#     $GITHUB_TOKEN if set, else `web_unverifiable` (a warning, never a failure). Fail-closed on a broken
+#     public web link.
+#   create_readme (mode=max only): also run `--create-readme` — a directory link whose target folder has
+#     no README (no uuid to anchor to) FAILS the gate (dry-run detects it; fix with `--create-readme --write`).
 # ⚠️ In CI prefer the ENV VAR over the json key: reading the json needs python3, so if python3 is
 #    missing the key is silently lost — and "python3 missing" is one of the very cases fail-closed
 #    exists to catch. `DARNLINK_GATE_FAIL_CLOSED=1` is read by the shell and always applies.
@@ -76,6 +83,18 @@ SCOPE="${DARNLINK_GATE_SCOPE:-$(read_cfg scope repo)}"
 # turn it OFF. Accept the obvious spellings on both sides.
 FAIL_CLOSED="${DARNLINK_GATE_FAIL_CLOSED:-$(read_cfg fail_closed "")}"
 case "${FAIL_CLOSED,,}" in ""|0|false|no|off) FAIL_CLOSED="" ;; *) FAIL_CLOSED=1 ;; esac
+# WEB (opt-in): when on, mode=max adds a 3rd whole-repo pass — `web-check --online` — that verifies
+# cross-repo Markdown links to OTHER GitHub repos still resolve to the destination file's uuid (read
+# online, anchored with `<!-- web-uuid: X -->`). Public destinations need NO token; private ones send
+# $GITHUB_TOKEN if set, else are reported `web_unverifiable` (a warning, NOT a failure — never a crash).
+# Fail-closed only on a genuinely broken/moved public web link. Same normalise-the-string dance as above.
+WEB="${DARNLINK_GATE_WEB:-$(read_cfg web "")}"
+case "${WEB,,}" in ""|0|false|no|off) WEB="" ;; *) WEB=1 ;; esac
+# CREATE_README (opt-in): when on, mode=max also runs `--create-readme` — a directory link whose target
+# folder has no README (so no uuid to anchor to) FAILS the gate (dry-run: it's DETECTED, not written).
+# Robustify it by hand with `--create-readme --write`. Raises the max ceiling from "files" to "folders".
+CREATE_README="${DARNLINK_GATE_CREATE_README:-$(read_cfg create_readme "")}"
+case "${CREATE_README,,}" in ""|0|false|no|off) CREATE_README="" ;; *) CREATE_README=1 ;; esac
 mapfile -t EXCLUDES < <(read_cfg excludes "")
 mapfile -t IGNORE_BLOCKS < <(read_cfg ignore_blocks "")
 
@@ -125,8 +144,27 @@ if [ "$SCOPE" != "staged" ]; then
     # the bare `--robustify --create-frontmatter` ADDS create-frontmatter but DROPS integrity (it never
     # runs plan_repairs — a broken/moved robust link sails through). So run BOTH dry-run passes and
     # fail if either does. This makes max a TRUE superset of check (the ratchet holds). Both read-only.
+    # create_readme raises the ceiling: directory targets must have a README too (dry-run = detect it).
+    MAX_ROBUSTIFY=(--robustify --create-frontmatter)
+    [ -n "$CREATE_README" ] && MAX_ROBUSTIFY+=(--create-readme)
     run check . "${DL_ARGS[@]}"; rc=$?
-    if [ "$rc" -eq 0 ]; then run . --robustify --create-frontmatter "${DL_ARGS[@]}"; rc=$?; fi
+    if [ "$rc" -eq 0 ]; then run . "${MAX_ROBUSTIFY[@]}" "${DL_ARGS[@]}"; rc=$?; fi
+    # WEB pass (opt-in, mode=max only): cross-repo web-link robustness, only if the core passed (so a
+    # core failure surfaces first). web-check has no --exclude (it only walks web hrefs) but takes
+    # --ignore-block. Fail-closed on a broken public web link; web_unverifiable (private w/o token, or
+    # offline) is exit 0. Needs a ref with the web-check subcommand (v0.9.0+) — the fleet pins >= that.
+    if [ "$rc" -eq 0 ] && [ -n "$WEB" ]; then
+      WEB_ARGS=(); for b in "${IGNORE_BLOCKS[@]}"; do [ -n "$b" ] && WEB_ARGS+=(--ignore-block "$b"); done
+      run web-check . --online "${WEB_ARGS[@]}"; rc=$?
+      set -e
+      # web-check's contract (all in 0..4, none of them "unreachable"): 0 = clean (a network/token
+      # failure is reported web_unverifiable, still exit 0 — it NEVER exits high); 3 = a plain web link
+      # not yet anchored (dry-run: it COULD be robustified) — a real gate failure, which is the point
+      # (detect un-robustified web links); 4 = a broken/moved/mismatched public web link. So EVERY
+      # non-zero is fail-closed, NOT the core's rc>3 "unreachable" case — exit it DIRECTLY, bypassing the
+      # bail heuristic below (which would swallow a genuine 4 as "network hiccup" and go green).
+      exit "$rc"
+    fi
   else
     run check . "${DL_ARGS[@]}"; rc=$?   # `darnlink check` → stable 0/2/3 contract (mode=check|repair)
   fi
