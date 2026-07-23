@@ -169,7 +169,7 @@ def check_web_links_online(
     token: Optional[str] = None,
     fetcher: Fetcher = default_fetcher,
     block_markers: tuple = (),
-    excludes: Optional[set] = None,
+    excludes: Optional[set[str]] = None,
 ) -> Tuple[List[WebFinding], Dict[Path, str]]:
     """Fetch each web link's destination (once, cached per URL) and classify it. Returns the findings
     and the per-file rewritten content for any `web_anchor` (the caller writes it only under --write).
