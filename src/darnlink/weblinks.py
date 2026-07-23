@@ -147,7 +147,7 @@ def _classify(link: WebLink, gu: Optional[GithubUrl], status: int, dest_uuid: Op
             # hide it) or a deleted branch. We can't tell "moved" from "no access", so we do NOT fail the
             # gate on it — a broken link in a repo we can't even see is not ours to assert.
             return WebFinding("web_unverifiable", f, link.href,
-                              "destination repo/ref not reachable (no access, or a deleted branch) — cannot verify")
+                              "destination repo/ref not reachable (no access, or the ref no longer exists) — cannot verify")
         return WebFinding("web_not_found", f, link.href,
                           "destination URL 404s; darnlink does not search where it moved (LLM layer's job)")
     if status != 200:
