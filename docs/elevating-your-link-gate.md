@@ -52,6 +52,10 @@ its target would get that `uuid`." Group them to plan the work:
 Two exclusions matter from the start: **always `--exclude` any nested git clones** (never write into
 a foreign repo you vendored), and typically `--exclude` any `archive` tree you don't intend to touch. Excluding your *mirror* while you scope the "your content" number is useful too — see §3.
 
+> Since 0.8.0 the gap also includes **directory links** — a plain link to a *folder* that has a
+> `README.md`. They robustify and heal exactly like file links, but they pin the gate to a minimum
+> version; see the note in §6 before you close them.
+
 ## 2. Two buckets
 
 Every flagged link falls into one of two buckets, and only one is safe to do immediately:
@@ -198,6 +202,18 @@ Re-verify 0, and you're fail-closed: from now on, a link to any file without a `
 > `"mode": "max"` in `darnlink-gate.json`; the hooks and CI don't change. `mode=max` runs exactly the
 > command above (dry-run) at the whole-repo wall, and stays at strict in the staged pre-commit by
 > design (§7). Copy-paste hook/CI files: [`recipes/examples/`](../recipes/examples/).
+
+> **⚠️ Directory links pin your gate to ≥ 0.8.0.** Since 0.8.0 a robust link can target a *folder*
+> (anchored to its `README.md`'s uuid — [FORMAT.md §4.1](../FORMAT.md#41-directory-links) <!-- uuid: 9052d864-2a45-4ed4-8725-d8a394e7a7ef -->). Two consequences for the wall:
+> **(1)** `--robustify` now flags plain **directory** links too, so they are part of the gap you close
+> above; **(2)** the gate binary **itself** must be ≥ 0.8.0 — an older `darnlink` doesn't understand a
+> directory link, so its `repair` pass treats a robust `[x](foo/) <!-- uuid -->` as *broken* and
+> rewrites it to `foo/README.md` (the file), silently destroying the folder link. **Require
+> `darnlink >= 0.8.0` in your gate before you robustify the first directory link** (pin it to a
+> concrete `0.8.0`-or-newer release) — bumping an already-live gate from an older pin, and robustifying
+> the directory links, is one atomic step. A folder with no
+> `README.md` isn't anchorable until it has one; the opt-in `--create-readme` writes it (respecting
+> `--exclude`/`--only`, and never creating the folder itself).
 
 ## 7. Lock it in — the wall architecture
 
