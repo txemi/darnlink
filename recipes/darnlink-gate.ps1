@@ -54,6 +54,17 @@ function Invoke-Bail([string]$reason) {
 }
 $excludes     = @(CfgOr 'excludes' @())
 $ignoreBlocks = @(CfgOr 'ignore_blocks' @())
+# WEB (opt-in, mode=max): add a `web-check --online` pass — cross-repo links to OTHER GitHub repos must
+# resolve to the destination's uuid (read online). Public needs no token; private sends $GITHUB_TOKEN if
+# set, else web_unverifiable (a warning). Fail-closed on a broken public web link. Same normalise dance.
+$rawWeb = if ($null -ne $env:DARNLINK_GATE_WEB) { $env:DARNLINK_GATE_WEB } else { CfgOr 'web' '' }
+$web = -not ([string]::IsNullOrWhiteSpace([string]$rawWeb) -or
+             ([string]$rawWeb).Trim().ToLower() -in @('0','false','no','off'))
+# CREATE_README (opt-in, mode=max): also run --create-readme — a directory link whose target folder has
+# no README (no uuid) FAILS the gate (dry-run detects it; fix with --create-readme --write).
+$rawCR = if ($null -ne $env:DARNLINK_GATE_CREATE_README) { $env:DARNLINK_GATE_CREATE_README } else { CfgOr 'create_readme' '' }
+$createReadme = -not ([string]::IsNullOrWhiteSpace([string]$rawCR) -or
+                      ([string]$rawCR).Trim().ToLower() -in @('0','false','no','off'))
 
 # --- guard: read-only. Never pass --write through. ---
 if ($args -contains '--write') {
@@ -87,8 +98,18 @@ if ($scope -ne 'staged') {
     & uvx --from $ref darnlink check . @dlArgs @args
     $rc = $LASTEXITCODE
     if ($rc -eq 0) {
-      & uvx --from $ref darnlink . --robustify --create-frontmatter @dlArgs @args
+      $maxArgs = @('--robustify','--create-frontmatter')
+      if ($createReadme) { $maxArgs += '--create-readme' }   # directory targets need a README too
+      & uvx --from $ref darnlink . @maxArgs @dlArgs @args
       $rc = $LASTEXITCODE
+    }
+    # WEB pass (opt-in, max only): web-check's non-zero is fail-closed (0 = clean incl web_unverifiable/
+    # offline; 4 = real broken public web link) — NOT the core's rc>3 "unreachable", so exit it directly,
+    # bypassing the bail below. web-check has no --exclude but takes --ignore-block.
+    if ($rc -eq 0 -and $web) {
+      $webArgs = @(); foreach ($b in $ignoreBlocks) { if ($b) { $webArgs += @('--ignore-block', $b) } }
+      & uvx --from $ref darnlink web-check . --online @webArgs
+      exit $LASTEXITCODE
     }
   } else {
     & uvx --from $ref darnlink check . @dlArgs @args   # `darnlink check` → 0/2/3 (mode=check|repair)

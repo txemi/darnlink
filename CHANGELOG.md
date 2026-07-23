@@ -6,6 +6,19 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- **Recipe `darnlink-gate` gains two opt-in `darnlink-gate.json` keys** (both `mode=max` only), so a
+  fleet can turn them on by config instead of hand-wiring each repo:
+  - **`"web": true`** — adds a `web-check --online` pass: cross-repo Markdown links to other GitHub
+    repos must resolve to the destination file's `uuid`. Public targets are tokenless; private ones
+    send `$GITHUB_TOKEN` if set, else report `web_unverifiable` (a warning, never a failure). Fail-closed
+    on a broken public web link. The recipe exits web-check's code directly (its `4` is a real broken
+    link, not the core's `rc>3` "unreachable" — which would otherwise swallow it and go green).
+  - **`"create_readme": true`** — the `max` robustify pass also runs `--create-readme`, so a directory
+    link whose target folder has no README (no `uuid` to anchor) fails the gate (dry-run detects it).
+  Both wired in the bash and PowerShell recipes. `DARNLINK_GATE_WEB` / `DARNLINK_GATE_CREATE_README`
+  env overrides mirror the existing ones.
+
 ## [0.10.0] — 2026-07-23
 
 ### Changed
