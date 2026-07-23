@@ -308,8 +308,9 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
     parser.add_argument("--ignore-block", action="append", default=[], metavar="NAME",
                         help="ignore links inside <!-- NAME-start --> … <!-- NAME-end --> blocks (repeatable)")
     parser.add_argument("--exclude", action="append", default=[], metavar="PATTERN",
-                        help="directory-name glob to skip (fnmatch; repeatable). Exclude vendored clones "
-                             "of foreign repos so their internal web links aren't fetched/anchored.")
+                        help="directory-name glob to skip (fnmatch, case-sensitive; a plain name matches "
+                             "exactly) (repeatable). Exclude vendored clones of foreign repos so their "
+                             "internal web links aren't fetched/anchored.")
     parser.add_argument("--json", action="store_true", help="machine-readable output")
     args = parser.parse_args(argv)
 
