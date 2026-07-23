@@ -103,9 +103,10 @@ if ($scope -ne 'staged') {
       & uvx --from $ref darnlink . @maxArgs @dlArgs @args
       $rc = $LASTEXITCODE
     }
-    # WEB pass (opt-in, max only): web-check's non-zero is fail-closed (0 = clean incl web_unverifiable/
-    # offline; 4 = real broken public web link) — NOT the core's rc>3 "unreachable", so exit it directly,
-    # bypassing the bail below. web-check has no --exclude but takes --ignore-block.
+    # WEB pass (opt-in, max only): EVERY web-check non-zero is fail-closed (0 = clean incl web_unverifiable/
+    # offline; 3 = a plain web link not yet anchored — dry-run, could be robustified; 4 = broken public web
+    # link) — none is the core's rc>3 "unreachable", so exit it directly, bypassing the bail below.
+    # web-check has no --exclude but takes --ignore-block.
     if ($rc -eq 0 -and $web) {
       $webArgs = @(); foreach ($b in $ignoreBlocks) { if ($b) { $webArgs += @('--ignore-block', $b) } }
       & uvx --from $ref darnlink web-check . --online @webArgs

@@ -157,11 +157,12 @@ if [ "$SCOPE" != "staged" ]; then
       WEB_ARGS=(); for b in "${IGNORE_BLOCKS[@]}"; do [ -n "$b" ] && WEB_ARGS+=(--ignore-block "$b"); done
       run web-check . --online "${WEB_ARGS[@]}"; rc=$?
       set -e
-      # web-check's contract differs from core: 0 = clean (a network/token failure is reported
-      # web_unverifiable, still exit 0 — it NEVER exits high for unreachability), and 4 = a REAL broken/
-      # moved/mismatched public web link. So its non-zero is fail-closed, NOT the core's rc>3
-      # "unreachable" case — exit it DIRECTLY, bypassing the bail heuristic below (which would swallow
-      # a genuine broken link as "network hiccup" and go green).
+      # web-check's contract (all in 0..4, none of them "unreachable"): 0 = clean (a network/token
+      # failure is reported web_unverifiable, still exit 0 — it NEVER exits high); 3 = a plain web link
+      # not yet anchored (dry-run: it COULD be robustified) — a real gate failure, which is the point
+      # (detect un-robustified web links); 4 = a broken/moved/mismatched public web link. So EVERY
+      # non-zero is fail-closed, NOT the core's rc>3 "unreachable" case — exit it DIRECTLY, bypassing the
+      # bail heuristic below (which would swallow a genuine 4 as "network hiccup" and go green).
       exit "$rc"
     fi
   else
