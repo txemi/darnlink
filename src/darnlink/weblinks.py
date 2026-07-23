@@ -169,19 +169,26 @@ def check_web_links_online(
     token: Optional[str] = None,
     fetcher: Fetcher = default_fetcher,
     block_markers: tuple = (),
+    excludes: Optional[set] = None,
 ) -> Tuple[List[WebFinding], Dict[Path, str]]:
     """Fetch each web link's destination (once, cached per URL) and classify it. Returns the findings
     and the per-file rewritten content for any `web_anchor` (the caller writes it only under --write).
-    Deterministic given (tree + fetcher responses). Network happens only inside `fetcher`."""
-    from .frontmatter_index import iter_markdown_files
+    Deterministic given (tree + fetcher responses). Network happens only inside `fetcher`.
+
+    `excludes` is a set of directory-name globs to skip (same semantics as the other commands); a
+    repo with vendored `clones/` of foreign repos MUST exclude them so their internal web links aren't
+    fetched/anchored. Defaults to the shared `DEFAULT_EXCLUDES`."""
+    from .frontmatter_index import iter_markdown_files, DEFAULT_EXCLUDES
     from .frontmatter_edit import read_text_keep_newlines
 
+    if excludes is None:
+        excludes = DEFAULT_EXCLUDES
     have_token = bool(token)
     cache: Dict[str, Tuple[int, Optional[str]]] = {}  # href -> (status, text)
     findings: List[WebFinding] = []
     edits: Dict[Path, str] = {}
 
-    for f in iter_markdown_files(root):
+    for f in iter_markdown_files(root, excludes):
         try:
             content = read_text_keep_newlines(f)
         except Exception:

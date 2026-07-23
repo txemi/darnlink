@@ -219,3 +219,15 @@ def test_bad_flag_exits_1(tmp_path):
     with pytest.raises(SystemExit) as e:
         _run_web_check_cli([str(tmp_path), "--nonexistent"])
     assert e.value.code == 1
+
+
+def test_online_respects_excludes(tmp_path):
+    # a web link inside an --exclude'd directory (a vendored clone of a foreign repo) must not be
+    # fetched or anchored — otherwise web-check would inject uuids into someone else's checkout.
+    URL = "https://github.com/o/r/blob/main/dest.md"
+    (tmp_path / "clones" / "foreign").mkdir(parents=True)
+    (tmp_path / "clones" / "foreign" / "A.md").write_text(f"See [x]({URL})\n", encoding="utf-8")
+    fetch = _fetcher({URL: (200, "---\nuuid: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\n---\n")})
+    findings, edits = check_web_links_online(tmp_path, None, fetch, excludes={"clones"})
+    assert findings == []
+    assert edits == {}

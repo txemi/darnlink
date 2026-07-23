@@ -307,6 +307,9 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
     parser.add_argument("--write", action="store_true", help="apply anchors to plain web links (needs --online)")
     parser.add_argument("--ignore-block", action="append", default=[], metavar="NAME",
                         help="ignore links inside <!-- NAME-start --> … <!-- NAME-end --> blocks (repeatable)")
+    parser.add_argument("--exclude", action="append", default=[], metavar="PATTERN",
+                        help="directory-name glob to skip (fnmatch; repeatable). Exclude vendored clones "
+                             "of foreign repos so their internal web links aren't fetched/anchored.")
     parser.add_argument("--json", action="store_true", help="machine-readable output")
     args = parser.parse_args(argv)
 
@@ -319,6 +322,7 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
         return 1
 
     block_markers = tuple(args.ignore_block)
+    excludes = set(DEFAULT_EXCLUDES) | set(args.exclude)
 
     if not args.online:
         # Off-by-default: no network, no new behaviour. Just surface which web links exist so the user
@@ -329,7 +333,7 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
         from .frontmatter_edit import read_text_keep_newlines
         seen = 0
         listing = []
-        for f in iter_markdown_files(root):
+        for f in iter_markdown_files(root, excludes):
             try:
                 content = read_text_keep_newlines(f)
             except Exception:
@@ -350,7 +354,7 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
         return 0
 
     token = os.environ.get("GITHUB_TOKEN") or None
-    findings, edits = check_web_links_online(root, token, fetcher or default_fetcher, block_markers)
+    findings, edits = check_web_links_online(root, token, fetcher or default_fetcher, block_markers, excludes)
     ok = [x for x in findings if x.kind == "web_ok"]
     anchors = [x for x in findings if x.kind == "web_anchor"]
     mismatch = [x for x in findings if x.kind == "web_mismatch"]
