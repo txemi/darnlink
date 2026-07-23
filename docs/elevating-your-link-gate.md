@@ -208,9 +208,10 @@ Re-verify 0, and you're fail-closed: from now on, a link to any file without a `
 > **(1)** `--robustify` now flags plain **directory** links too, so they are part of the gap you close
 > above; **(2)** the gate binary **itself** must be ≥ 0.8.0 — an older `darnlink` doesn't understand a
 > directory link, so its `repair` pass treats a robust `[x](foo/) <!-- uuid -->` as *broken* and
-> rewrites it to `foo/README.md` (the file), silently destroying the folder link. **Pin your gate to
-> `darnlink==0.8.0` (or later) before you robustify the first directory link** — bumping an already-live
-> gate from an older pin, and robustifying the directory links, is one atomic step. A folder with no
+> rewrites it to `foo/README.md` (the file), silently destroying the folder link. **Require
+> `darnlink >= 0.8.0` in your gate before you robustify the first directory link** (pin it to a
+> concrete `0.8.0`-or-newer release) — bumping an already-live gate from an older pin, and robustifying
+> the directory links, is one atomic step. A folder with no
 > `README.md` isn't anchorable until it has one; the opt-in `--create-readme` writes it (respecting
 > `--exclude`/`--only`, and never creating the folder itself).
 
