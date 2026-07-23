@@ -103,6 +103,32 @@ def _within_excluded(directory: Path, root: Path, excludes) -> bool:
     return any(dir_excluded(part, excludes) for part in rel.parts)
 
 
+def _holds_downloaded_content(directory: Path) -> bool:
+    """True if `directory` directly contains a `.md` carrying `<!-- darnlink-ignore-file -->`.
+
+    Feature 014: that marker flags a **downloaded / external** file (a mirror capture — a transcript,
+    an extract), so the folder is external, not ours. `--create-readme` must not create a README there:
+    a folder is authored-by-us only if we put content in it, and a folder holding a downloaded file is
+    the mirror's, not ours. It is a *positive* signal — a folder with no such marker (an empty hub, or
+    one holding only authored `.md`) is unaffected and still gets its README.
+    """
+    try:
+        entries = list(directory.iterdir())
+    except OSError:
+        return False
+    for p in entries:
+        if p.is_file() and p.suffix.lower() == ".md":
+            try:
+                if file_is_ignored(read_text_keep_newlines(p)):
+                    return True
+            except Exception:
+                # An unreadable/undecodable `.md` here is itself a reason NOT to create a README: we
+                # can't confirm it isn't a downloaded/external file, and the whole point is to never
+                # write into the mirror. Treat the failure as a positive signal (skip), never a crash.
+                return True
+    return False
+
+
 def plan_robustify(
     root: Path,
     create_frontmatter: bool = False,
@@ -186,6 +212,8 @@ def plan_robustify(
                     continue  # a `../`-escaping link must never make us write outside the scanned root
                 if _within_excluded(d, root_resolved, excludes):
                     continue  # never create inside an --exclude'd subtree (a mirror, a vendored clone)
+                if _holds_downloaded_content(d):
+                    continue  # a folder holding a darnlink-ignore-file'd file is external/downloaded
                 if not in_scope(readme, only):
                     continue  # respect --only: never create outside the write scope
                 if _basename_denied(readme, no_create_globs):
