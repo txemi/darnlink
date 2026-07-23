@@ -132,7 +132,9 @@ def test_online_dest_has_no_uuid_is_mismatch(tmp_path):
 
 def test_online_404_is_web_not_found_exits_4(tmp_path):
     _w(tmp_path / "conta.md", f"see [topo]({URL}) <!-- web-uuid: {UUID} -->\n")
-    fetch = _fetcher({})  # every URL -> 404
+    # file 404s but the repo ROOT is reachable (200) -> the file genuinely moved in a repo we can see
+    # -> web_not_found (exit 4). (An unreachable repo would instead be web_unverifiable — separate test.)
+    fetch = _fetcher({"https://github.com/txemi/txnet1/blob/main/": (200, "[]")})
     findings, _ = check_web_links_online(tmp_path, None, fetch)
     assert findings[0].kind == "web_not_found"
     assert _run_web_check_cli([str(tmp_path), "--online"], fetcher=fetch) == 4
@@ -231,3 +233,24 @@ def test_online_respects_excludes(tmp_path):
     findings, edits = check_web_links_online(tmp_path, None, fetch, excludes={"clones"})
     assert findings == []
     assert edits == {}
+
+
+def test_online_404_in_unreachable_repo_is_unverifiable(tmp_path):
+    # a 404 whose repo root is ALSO unreachable (private repo we can't read, or a ref that no longer exists) must
+    # be web_unverifiable (a warning), not web_not_found (which fails a gate) — a broken link in a repo
+    # we can't even see is not ours to assert.
+    URL = "https://github.com/o/r/blob/main/gone.md"
+    (tmp_path / "A.md").write_text(f"[x]({URL})\n", encoding="utf-8")
+    fetch = _fetcher({})  # everything (file AND repo root) 404
+    findings, _ = check_web_links_online(tmp_path, "tok", fetch)
+    assert [x.kind for x in findings] == ["web_unverifiable"]
+
+
+def test_online_404_in_reachable_repo_is_not_found(tmp_path):
+    # a 404 whose repo root IS reachable means the file genuinely moved in a repo we can see -> web_not_found
+    FILE = "https://github.com/o/r/blob/main/gone.md"
+    ROOT = "https://github.com/o/r/blob/main/"
+    (tmp_path / "A.md").write_text(f"[x]({FILE})\n", encoding="utf-8")
+    fetch = _fetcher({ROOT: (200, "[]")})  # file 404 (default), repo root 200
+    findings, _ = check_web_links_online(tmp_path, "tok", fetch)
+    assert [x.kind for x in findings] == ["web_not_found"]

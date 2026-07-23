@@ -135,13 +135,19 @@ class WebFinding:
 
 
 def _classify(link: WebLink, gu: Optional[GithubUrl], status: int, dest_uuid: Optional[str],
-              have_token: bool, f: Path) -> WebFinding:
+              have_token: bool, f: Path, repo_reachable: bool = True) -> WebFinding:
     if gu is None:
         return WebFinding("web_unverifiable", f, link.href, "not a recognised GitHub blob/raw URL")
     if status in (401, 403):
         why = "private repo and no GITHUB_TOKEN in env" if not have_token else "token rejected (403/401)"
         return WebFinding("web_unverifiable", f, link.href, f"cannot read destination: {why}")
     if status == 404:
+        if not repo_reachable:
+            # The repo root at this ref is unreachable too: a private repo we can't read (GitHub 404s to
+            # hide it) or a ref that no longer exists. We can't tell "moved" from "no access", so we do NOT fail the
+            # gate on it — a broken link in a repo we can't even see is not ours to assert.
+            return WebFinding("web_unverifiable", f, link.href,
+                              "destination repo/ref not reachable (no access, or the ref no longer exists) — cannot verify")
         return WebFinding("web_not_found", f, link.href,
                           "destination URL 404s; darnlink does not search where it moved (LLM layer's job)")
     if status != 200:
@@ -185,6 +191,7 @@ def check_web_links_online(
         excludes = DEFAULT_EXCLUDES
     have_token = bool(token)
     cache: Dict[str, Tuple[int, Optional[str]]] = {}  # href -> (status, text)
+    repo_reachable: Dict[Tuple[str, str, str], bool] = {}  # (owner, repo, ref) -> root fetch was 200
     findings: List[WebFinding] = []
     edits: Dict[Path, str] = {}
 
@@ -208,8 +215,18 @@ def check_web_links_online(
             if link.href not in cache:
                 cache[link.href] = fetcher(gu, token)
             status, text = cache[link.href]
+            # A 404 is ambiguous: the file moved in an ACCESSIBLE repo, or the repo/ref itself is not
+            # reachable (a private repo we can't read — GitHub 404s to hide it — or a ref that no longer exists).
+            # Probe the repo root at the same ref to tell them apart: if THAT is unreachable, we cannot
+            # verify (so `web_unverifiable`, a warning), rather than assert the file moved (`web_not_found`).
+            reachable = True
+            if status == 404:
+                key = (gu.owner, gu.repo, gu.ref)
+                if key not in repo_reachable:
+                    repo_reachable[key] = fetcher(GithubUrl(gu.owner, gu.repo, gu.ref, ""), token)[0] == 200
+                reachable = repo_reachable[key]
             dest_uuid = read_frontmatter_uuid(text)[1] if (status == 200 and text is not None) else None
-            fnd = _classify(link, gu, status, dest_uuid, have_token, f)
+            fnd = _classify(link, gu, status, dest_uuid, have_token, f, repo_reachable=reachable)
             findings.append(fnd)
             if fnd.kind == "web_anchor" and fnd.anchored_uuid:
                 pieces.append(content[cursor:link.start])
