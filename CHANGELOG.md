@@ -6,6 +6,11 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-07-23
+
+Recipe & docs only — **the CLI/package is byte-for-byte identical to 0.10.0**. This release exists so
+the `recipes/` changes below live at a pinned tag that a fleet's CI and hooks can fetch deterministically.
+
 ### Added
 - **Recipe `darnlink-gate` gains two opt-in `darnlink-gate.json` keys** (both `mode=max` only), so a
   fleet can turn them on by config instead of hand-wiring each repo:
