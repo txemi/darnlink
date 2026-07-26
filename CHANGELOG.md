@@ -6,6 +6,21 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-07-26
+
+First **code** change since 0.12.0 (0.13/0.14 were recipe-only).
+
+### Fixed
+- **`web-check --online`: transient GitHub responses no longer produce a false `web_not_found`.**
+  `default_fetcher` now RETRIES transient statuses with short backoff (0.5s → 1.0s → …, capped 4s,
+  3 attempts by default). The transient set includes **404** on purpose: the Contents API returns 404
+  under secondary-rate-limit and for a file requested right after its push (CDN not yet warm) — a false
+  break that would fail a **blocking** gate (pre-commit / pre-push) for a link that is actually fine.
+  429/5xx/network-error are the usual throttle/outage cases. A **genuinely** dead link still 404s on
+  every attempt, so it is reported exactly as before — retry removes only the flake, never hides a real
+  break. Tune with `DARNLINK_WEB_ATTEMPTS` (default 3; 1 disables retry). This makes `web: true` safe to
+  run in blocking local gates, not just CI/manual.
+
 ## [0.14.0] — 2026-07-23
 
 Recipe & docs only — **package byte-for-byte identical to 0.12.0**.

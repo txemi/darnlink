@@ -18,7 +18,9 @@ here. No new dependencies: `urllib` (stdlib). The fetcher is injected so tests n
 """
 from __future__ import annotations
 
+import os
 import re
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -104,10 +106,18 @@ def find_web_links(content: str, ignore: Sequence[Span] = ()) -> List[WebLink]:
 Fetcher = Callable[[GithubUrl, Optional[str]], Tuple[int, Optional[str]]]
 
 
-def default_fetcher(gu: GithubUrl, token: Optional[str]) -> Tuple[int, Optional[str]]:
-    """Fetch the single destination file via the GitHub Contents API (stdlib urllib). Sends the token
-    when present (needed for private repos, harmless/higher-rate for public). Never raises: maps HTTP
-    and network errors to a status code."""
+# Statuses that may be a TRANSIENT GitHub blip, not the destination's true state, so a retry can clear
+# them. Crucially this includes 404: the Contents API returns 404 under secondary-rate-limit and for a
+# file requested milliseconds after its push (CDN not yet warm) — a false `web_not_found` that would
+# fail a BLOCKING gate for a link that is actually fine. 429/5xx are the usual throttle/outage codes;
+# -1 is our network-error sentinel. A GENUINELY dead link stays 404 across every retry, so it is still
+# reported — retry only removes the flake, never hides a real break.
+_TRANSIENT_STATUSES = frozenset({404, 429, 500, 502, 503, 504, -1})
+
+
+def _fetch_once(gu: GithubUrl, token: Optional[str]) -> Tuple[int, Optional[str]]:
+    """One GitHub Contents API request (stdlib urllib). Sends the token when present (needed for private
+    repos, harmless/higher-rate for public). Never raises: maps HTTP and network errors to a status."""
     req = urllib.request.Request(gu.contents_api_url(), headers={
         "Accept": "application/vnd.github.raw",
         "User-Agent": "darnlink-web-check",
@@ -121,6 +131,27 @@ def default_fetcher(gu: GithubUrl, token: Optional[str]) -> Tuple[int, Optional[
         return (e.code, None)
     except (urllib.error.URLError, TimeoutError, OSError):
         return (-1, None)
+
+
+def default_fetcher(gu: GithubUrl, token: Optional[str], *,
+                    attempts: Optional[int] = None, sleep=time.sleep) -> Tuple[int, Optional[str]]:
+    """Fetch the destination file, RETRYING transient statuses with short backoff so a flaky GitHub
+    response (rate-limit 404, 5xx, network blip) doesn't produce a false `web_not_found` in a blocking
+    gate. A non-transient status (200/401/403, or a 404 that persists) returns immediately / after the
+    last try. `attempts` (default env DARNLINK_WEB_ATTEMPTS or 3) counts the FIRST try; `sleep` is
+    injectable so tests don't wait. Never raises."""
+    if attempts is None:
+        try:
+            attempts = max(1, int(os.environ.get("DARNLINK_WEB_ATTEMPTS", "3")))
+        except ValueError:
+            attempts = 3
+    status, text = _fetch_once(gu, token)
+    for i in range(1, attempts):
+        if status not in _TRANSIENT_STATUSES:
+            break
+        sleep(min(0.5 * (2 ** (i - 1)), 4.0))  # 0.5s, 1.0s, 2.0s, … capped at 4s
+        status, text = _fetch_once(gu, token)
+    return (status, text)
 
 
 # --- Findings (a view over the single-URL fetch; not a new core model) ---
