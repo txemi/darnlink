@@ -6,6 +6,20 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-07-26
+
+### Fixed
+- **`web-check --online`: a 404 without a token is now `web_unverifiable`, not `web_not_found`.**
+  GitHub returns **404** (not 403) for a **private** repo the caller can't see — indistinguishable from a
+  genuinely moved/deleted file. Classifying every 404 as a break made a **tokenless** run (a dev machine,
+  a CI job or a git hook without the PAT) **false-fail on every private cross-repo link** — the real-world
+  "false breaks" that blocked pushes across sessions. Now the 404 verdict is gated on token presence:
+  - **with a token** → `web_not_found` (a 404 is trustworthy → **fail-closed**, exit 4);
+  - **without a token** → `web_unverifiable` (ambiguous → **does not fail**, exit 0).
+  This is the "fail-closed **only when there is a token**" contract: a tokened gate (CI/Jenkins with a RO
+  PAT) catches real breaks; a tokenless clone never false-reds. Public-repo breaks are still caught by any
+  tokened surface. Pairs with the recipe reading `$GITHUB_TOKEN` from `~/.config/github_token_ro` (0.14.0).
+
 ## [0.15.0] — 2026-07-26
 
 First **code** change since 0.12.0 (0.13/0.14 were recipe-only).

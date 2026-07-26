@@ -170,9 +170,19 @@ def _classify(link: WebLink, gu: Optional[GithubUrl], status: int, dest_uuid: Op
     if gu is None:
         return WebFinding("web_unverifiable", f, link.href, "not a recognised GitHub blob/raw URL")
     if status in (401, 403):
-        why = "private repo and no GITHUB_TOKEN in env" if not have_token else "token rejected (403/401)"
+        why = "private repo and no token provided" if not have_token else "token rejected (403/401)"
         return WebFinding("web_unverifiable", f, link.href, f"cannot read destination: {why}")
     if status == 404:
+        if not have_token:
+            # A 404 WITHOUT a token is ambiguous: GitHub returns 404 (not 403) for a PRIVATE repo we
+            # cannot see, exactly as it does for a genuinely moved/deleted file — the two are
+            # indistinguishable without credentials. So a tokenless run must NOT fail on it, or every
+            # dev machine / clone lacking the PAT would false-break on each private cross-repo link
+            # (the real-world "35 false breaks" that block pushes). Only a TOKENED read can call a 404
+            # a real break (below). This is the "fail-closed ONLY when there is a token" contract.
+            return WebFinding("web_unverifiable", f, link.href,
+                              "destination 404s but no token — ambiguous (could be a private repo we "
+                              "cannot see, not necessarily moved); a token is needed to call it broken")
         return WebFinding("web_not_found", f, link.href,
                           "destination URL 404s; darnlink does not search where it moved (LLM layer's job)")
     if status != 200:
