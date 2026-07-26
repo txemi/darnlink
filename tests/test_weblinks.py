@@ -231,3 +231,42 @@ def test_online_respects_excludes(tmp_path):
     findings, edits = check_web_links_online(tmp_path, None, fetch, excludes={"clones"})
     assert findings == []
     assert edits == {}
+
+
+# --- transient-retry in default_fetcher (v0.15.0): a flaky 404/5xx must not become web_not_found ---
+
+def test_default_fetcher_retries_transient_404_then_succeeds(monkeypatch):
+    """A transient 404 (rate-limit / CDN-cold-right-after-push) clears on retry -> final 200, no false
+    web_not_found. `sleep` is injected as a no-op so the test never waits."""
+    import darnlink.weblinks as wl
+    gu = wl.GithubUrl("o", "r", "main", "a.md")
+    seq = iter([(404, None), (200, "---\nuuid: x\n---\n")])
+    monkeypatch.setattr(wl, "_fetch_once", lambda g, t: next(seq))
+    status, text = wl.default_fetcher(gu, None, attempts=3, sleep=lambda _s: None)
+    assert status == 200 and text is not None
+
+
+def test_default_fetcher_persistent_404_stays_404(monkeypatch):
+    """A genuinely dead link 404s on EVERY attempt -> still reported 404 (retry hides no real break)."""
+    import darnlink.weblinks as wl
+    gu = wl.GithubUrl("o", "r", "main", "gone.md")
+    calls = {"n": 0}
+    def _once(g, t):
+        calls["n"] += 1
+        return (404, None)
+    monkeypatch.setattr(wl, "_fetch_once", _once)
+    status, _ = wl.default_fetcher(gu, None, attempts=3, sleep=lambda _s: None)
+    assert status == 404 and calls["n"] == 3  # exhausted all attempts
+
+
+def test_default_fetcher_no_retry_on_200(monkeypatch):
+    """A clean first response returns immediately — no wasted retries on the happy path."""
+    import darnlink.weblinks as wl
+    gu = wl.GithubUrl("o", "r", "main", "a.md")
+    calls = {"n": 0}
+    def _once(g, t):
+        calls["n"] += 1
+        return (200, "---\nuuid: x\n---\n")
+    monkeypatch.setattr(wl, "_fetch_once", _once)
+    status, _ = wl.default_fetcher(gu, None, attempts=3, sleep=lambda _s: None)
+    assert status == 200 and calls["n"] == 1
