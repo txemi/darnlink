@@ -6,6 +6,12 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+- **Recipe `darnlink-gate`: the `web` pass now passes the repo's `excludes` to `web-check`** (not only
+  `ignore_blocks`). `web-check` gained `--exclude` in 0.12.0; without wiring it, turning `web` on in a repo
+  that vendors clones/mirrors made `web-check` fetch (and with `--write` anchor) web links *inside* someone
+  else's checkout. Now it skips them, exactly like the core does. Wired in the bash and PowerShell recipes.
+
 ## [0.12.0] — 2026-07-23
 
 ### Added
