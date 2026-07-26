@@ -159,7 +159,7 @@ def test_online_private_no_token_is_unverifiable(tmp_path):
     fetch = _fetcher({URL: (403, None)})  # private repo, no token -> 403
     findings, _ = check_web_links_online(tmp_path, token=None, fetcher=fetch)
     assert findings[0].kind == "web_unverifiable"
-    assert "no GITHUB_TOKEN" in findings[0].detail
+    assert "no token provided" in findings[0].detail
     # unverifiable does not fail the exit (not a broken link, just unconfirmed)
     assert _run_web_check_cli([str(tmp_path), "--online"], fetcher=fetch) == 0
 

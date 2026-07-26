@@ -170,7 +170,7 @@ def _classify(link: WebLink, gu: Optional[GithubUrl], status: int, dest_uuid: Op
     if gu is None:
         return WebFinding("web_unverifiable", f, link.href, "not a recognised GitHub blob/raw URL")
     if status in (401, 403):
-        why = "private repo and no GITHUB_TOKEN in env" if not have_token else "token rejected (403/401)"
+        why = "private repo and no token provided" if not have_token else "token rejected (403/401)"
         return WebFinding("web_unverifiable", f, link.href, f"cannot read destination: {why}")
     if status == 404:
         if not have_token:
