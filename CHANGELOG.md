@@ -6,6 +6,10 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-07-23
+
+Recipe & docs only — **the CLI/package is byte-for-byte identical to 0.12.0**.
+
 ### Changed
 - **Recipe `darnlink-gate`: the `web` pass now passes the repo's `excludes` to `web-check`** (not only
   `ignore_blocks`). `web-check` gained `--exclude` in 0.12.0; without wiring it, turning `web` on in a repo
