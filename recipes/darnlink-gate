@@ -150,11 +150,14 @@ if [ "$SCOPE" != "staged" ]; then
     run check . "${DL_ARGS[@]}"; rc=$?
     if [ "$rc" -eq 0 ]; then run . "${MAX_ROBUSTIFY[@]}" "${DL_ARGS[@]}"; rc=$?; fi
     # WEB pass (opt-in, mode=max only): cross-repo web-link robustness, only if the core passed (so a
-    # core failure surfaces first). web-check has no --exclude (it only walks web hrefs) but takes
-    # --ignore-block. Fail-closed on a broken public web link; web_unverifiable (private w/o token, or
-    # offline) is exit 0. Needs a ref with the web-check subcommand (v0.9.0+) — the fleet pins >= that.
+    # core failure surfaces first). web-check takes the SAME `--exclude` and `--ignore-block` as the core
+    # (since 0.12.0) — pass both so it skips vendored clones / mirrors instead of fetching and anchoring
+    # web links INSIDE someone else's checkout. Fail-closed on a broken public web link; web_unverifiable
+    # (private w/o token, or offline) is exit 0. Needs a ref with web-check + its --exclude (v0.12.0+).
     if [ "$rc" -eq 0 ] && [ -n "$WEB" ]; then
-      WEB_ARGS=(); for b in "${IGNORE_BLOCKS[@]}"; do [ -n "$b" ] && WEB_ARGS+=(--ignore-block "$b"); done
+      WEB_ARGS=()
+      for e in "${EXCLUDES[@]}";      do [ -n "$e" ] && WEB_ARGS+=(--exclude "$e"); done
+      for b in "${IGNORE_BLOCKS[@]}"; do [ -n "$b" ] && WEB_ARGS+=(--ignore-block "$b"); done
       run web-check . --online "${WEB_ARGS[@]}"; rc=$?
       set -e
       # web-check's contract (all in 0..4, none of them "unreachable"): 0 = clean (a network/token
