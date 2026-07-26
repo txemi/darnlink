@@ -109,6 +109,12 @@ if ($scope -ne 'staged') {
     # web-check takes the SAME --exclude + --ignore-block as the core (since 0.12.0) -> pass both so it
     # skips vendored clones / mirrors instead of fetching+anchoring web links inside them.
     if ($rc -eq 0 -and $web) {
+      # web-check needs $GITHUB_TOKEN for PRIVATE destinations; if not already set, read it from a
+      # read-only PAT file (default ~/.config/github_token_ro; override DARNLINK_GATE_TOKEN_FILE).
+      if ([string]::IsNullOrWhiteSpace($env:GITHUB_TOKEN)) {
+        $tf = if ($env:DARNLINK_GATE_TOKEN_FILE) { $env:DARNLINK_GATE_TOKEN_FILE } else { Join-Path $env:USERPROFILE ".config/github_token_ro" }
+        if (Test-Path $tf) { $env:GITHUB_TOKEN = (Get-Content $tf -Raw).Trim() }
+      }
       $webArgs = @()
       foreach ($e in $excludes)     { if ($e) { $webArgs += @('--exclude', $e) } }
       foreach ($b in $ignoreBlocks) { if ($b) { $webArgs += @('--ignore-block', $b) } }
