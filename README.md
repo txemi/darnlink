@@ -216,10 +216,10 @@ runs it for you.
 darnlink **exits non-zero** when a robust link is broken, so any gate that runs it will block the
 breakage before it lands. Pick the one that fits your workflow — near copy-paste:
 
-> **Want a ready-made wrapper instead of wiring it yourself?** [`recipes/darnlink-gate`](recipes/README.md)
+> **Want a ready-made wrapper instead of wiring it yourself?** [`recipes/darnlink-gate`](recipes/README.md) <!-- uuid: b4e6058b-4af0-4d23-a826-975a8fc78e6f -->
 > does all of the below (both checks, staged-in-pre-commit vs whole-repo-in-CI, pinned ref, fail-open)
 > from a tiny `darnlink-gate.json`. It's a reference recipe, fetchable in CI without a token — with
-> complete copy-paste hook & CI files in [`recipes/examples/`](recipes/examples/).
+> complete copy-paste hook & CI files in [`recipes/examples/`](recipes/examples/) <!-- uuid: f8da8344-8293-4c05-b154-8bdb088adddf -->.
 
 **1. pre-commit** (recommended — darnlink ships a hook):
 

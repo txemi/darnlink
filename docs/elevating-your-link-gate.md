@@ -198,10 +198,10 @@ When the gap reads **0**, switch your gate command to the maximum:
 
 Re-verify 0, and you're fail-closed: from now on, a link to any file without a `uuid` fails.
 
-> **Using the [`darnlink-gate`](../recipes/README.md) recipe?** This flip is **one line** — set
+> **Using the [`darnlink-gate`](../recipes/README.md) <!-- uuid: b4e6058b-4af0-4d23-a826-975a8fc78e6f --> recipe?** This flip is **one line** — set
 > `"mode": "max"` in `darnlink-gate.json`; the hooks and CI don't change. `mode=max` runs exactly the
 > command above (dry-run) at the whole-repo wall, and stays at strict in the staged pre-commit by
-> design (§7). Copy-paste hook/CI files: [`recipes/examples/`](../recipes/examples/).
+> design (§7). Copy-paste hook/CI files: [`recipes/examples/`](../recipes/examples/) <!-- uuid: f8da8344-8293-4c05-b154-8bdb088adddf -->.
 
 > **⚠️ Directory links pin your gate to ≥ 0.8.0.** Since 0.8.0 a robust link can target a *folder*
 > (anchored to its `README.md`'s uuid — [FORMAT.md §4.1](../FORMAT.md#41-directory-links) <!-- uuid: 9052d864-2a45-4ed4-8725-d8a394e7a7ef -->). Two consequences for the wall:
@@ -232,7 +232,7 @@ in the wall) is the same recommendation the README makes for multi-contributor r
 load-bearing reason the maximum is livable.
 
 **Complete, copy-paste files for all three layers** are in
-[`recipes/examples/`](../recipes/examples/) — [`pre-commit`](../recipes/examples/pre-commit) (staged) ·
+[`recipes/examples/`](../recipes/examples/) <!-- uuid: f8da8344-8293-4c05-b154-8bdb088adddf --> — [`pre-commit`](../recipes/examples/pre-commit) (staged) ·
 [`pre-push`](../recipes/examples/pre-push) (whole repo) ·
 [`github-actions-darnlink-gate.yml`](../recipes/examples/github-actions-darnlink-gate.yml) and
 [`Jenkinsfile-stage.groovy`](../recipes/examples/Jenkinsfile-stage.groovy) (the server wall,

@@ -1,6 +1,10 @@
+---
+uuid: f8da8344-8293-4c05-b154-8bdb088adddf
+---
+
 # darnlink-gate — complete, copy-paste examples
 
-Runnable versions of the four pieces from [`../README.md`](../README.md#adopt-it-in-a-repo-the-wall-in-4-pieces).
+Runnable versions of the four pieces from [`../README.md`](../README.md#adopt-it-in-a-repo-the-wall-in-4-pieces) <!-- uuid: b4e6058b-4af0-4d23-a826-975a8fc78e6f -->.
 Each file is a whole, working artifact — not a snippet to assemble — because assembling the CI one
 wrong yields a wall that fails **open** (green build, nothing validated). They wire the same generic
 recipe ([`../darnlink-gate`](../darnlink-gate)) at the scope that fits each layer.

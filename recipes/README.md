@@ -1,3 +1,7 @@
+---
+uuid: b4e6058b-4af0-4d23-a826-975a8fc78e6f
+---
+
 # darnlink-gate — the one generic darnlink quality-gate recipe
 
 The **`darnlink-gate`** script here (+ `.ps1` for Windows) is the **single** orchestration around
@@ -85,7 +89,7 @@ exec darnlink-gate            # scope=repo from config
 > On a private repo where hosted CI minutes are billed or branch protection is unavailable, a
 > **self-hosted runner** (e.g. a home CI box) is the natural home for piece 4 — same check, no billing.
 
-**Complete, copy-paste versions of all four** live in [`examples/`](examples/) — whole working files,
+**Complete, copy-paste versions of all four** live in [`examples/`](examples/) <!-- uuid: f8da8344-8293-4c05-b154-8bdb088adddf --> — whole working files,
 not snippets to assemble (assembling the CI one wrong yields a wall that fails *open*).
 
 **Getting the script.** It lives here — `recipes/darnlink-gate` in the **public** darnlink repo — so
