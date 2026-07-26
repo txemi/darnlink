@@ -6,6 +6,13 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- **Recipe `darnlink-gate`: the `web` pass reads `$GITHUB_TOKEN` from a read-only PAT file** when it is
+  not already in the environment (default `~/.config/github_token_ro`, override `DARNLINK_GATE_TOKEN_FILE`).
+  A git hook's environment usually lacks `GITHUB_TOKEN`, so without this, turning `web` on in a repo with
+  **private** cross-repo destinations would 404 them and read them as broken. Missing file → private
+  destinations stay `web_unverifiable` (non-fatal), exactly as before. Bash + PowerShell.
+
 ## [0.13.0] — 2026-07-23
 
 Recipe & docs only — **the CLI/package is byte-for-byte identical to 0.12.0**.

@@ -155,6 +155,15 @@ if [ "$SCOPE" != "staged" ]; then
     # web links INSIDE someone else's checkout. Fail-closed on a broken public web link; web_unverifiable
     # (private w/o token, or offline) is exit 0. Needs a ref with web-check + its --exclude (v0.12.0+).
     if [ "$rc" -eq 0 ] && [ -n "$WEB" ]; then
+      # web-check needs $GITHUB_TOKEN for PRIVATE destinations (public are tokenless). If it's not
+      # already exported, read it from a read-only PAT FILE (default ~/.config/github_token_ro; override
+      # with DARNLINK_GATE_TOKEN_FILE) — a git hook's env usually lacks it. Without a token a private
+      # destination 404s and reads as broken; with it, it verifies. Missing file → stays unverifiable.
+      if [ -z "${GITHUB_TOKEN:-}" ]; then
+        _tf="${DARNLINK_GATE_TOKEN_FILE:-$HOME/.config/github_token_ro}"
+        # -f: a REGULAR file (not a directory — `-r` alone passes on a dir, then `< dir` fails).
+        [ -f "$_tf" ] && [ -r "$_tf" ] && { GITHUB_TOKEN="$(tr -d '\r\n' < "$_tf")"; export GITHUB_TOKEN; }
+      fi
       WEB_ARGS=()
       for e in "${EXCLUDES[@]}";      do [ -n "$e" ] && WEB_ARGS+=(--exclude "$e"); done
       for b in "${IGNORE_BLOCKS[@]}"; do [ -n "$b" ] && WEB_ARGS+=(--ignore-block "$b"); done
