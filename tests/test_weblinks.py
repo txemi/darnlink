@@ -130,12 +130,28 @@ def test_online_dest_has_no_uuid_is_mismatch(tmp_path):
 
 # --- failure cases: 404, private-no-token, unparseable, network error ---
 
-def test_online_404_is_web_not_found_exits_4(tmp_path):
+def test_online_404_WITH_token_is_web_not_found_exits_4(tmp_path, monkeypatch):
+    """WITH a token, a 404 is a real break: the token distinguishes 'moved/deleted' from
+    'private repo we cannot see', so a 404 can be trusted as broken -> fail-closed (exit 4)."""
     _w(tmp_path / "conta.md", f"see [topo]({URL}) <!-- web-uuid: {UUID} -->\n")
     fetch = _fetcher({})  # every URL -> 404
-    findings, _ = check_web_links_online(tmp_path, None, fetch)
+    findings, _ = check_web_links_online(tmp_path, token="tok", fetcher=fetch)
     assert findings[0].kind == "web_not_found"
+    monkeypatch.setenv("GITHUB_TOKEN", "tok")
     assert _run_web_check_cli([str(tmp_path), "--online"], fetcher=fetch) == 4
+
+
+def test_online_404_WITHOUT_token_is_unverifiable_exits_0(tmp_path, monkeypatch):
+    """WITHOUT a token, a 404 is AMBIGUOUS — GitHub 404s a private repo we can't see exactly like a
+    genuinely moved file — so it must NOT fail the gate, or every tokenless clone false-reds on each
+    private cross-repo link (the real 'false breaks' that blocked pushes). -> web_unverifiable, exit 0."""
+    _w(tmp_path / "conta.md", f"see [topo]({URL}) <!-- web-uuid: {UUID} -->\n")
+    fetch = _fetcher({})  # every URL -> 404
+    findings, _ = check_web_links_online(tmp_path, token=None, fetcher=fetch)
+    assert findings[0].kind == "web_unverifiable"
+    assert "no token" in findings[0].detail
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    assert _run_web_check_cli([str(tmp_path), "--online"], fetcher=fetch) == 0
 
 
 def test_online_private_no_token_is_unverifiable(tmp_path):
