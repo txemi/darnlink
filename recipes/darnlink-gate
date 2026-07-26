@@ -161,7 +161,8 @@ if [ "$SCOPE" != "staged" ]; then
       # destination 404s and reads as broken; with it, it verifies. Missing file → stays unverifiable.
       if [ -z "${GITHUB_TOKEN:-}" ]; then
         _tf="${DARNLINK_GATE_TOKEN_FILE:-$HOME/.config/github_token_ro}"
-        [ -r "$_tf" ] && { GITHUB_TOKEN="$(tr -d '\r\n' < "$_tf")"; export GITHUB_TOKEN; }
+        # -f: a REGULAR file (not a directory — `-r` alone passes on a dir, then `< dir` fails).
+        [ -f "$_tf" ] && [ -r "$_tf" ] && { GITHUB_TOKEN="$(tr -d '\r\n' < "$_tf")"; export GITHUB_TOKEN; }
       fi
       WEB_ARGS=()
       for e in "${EXCLUDES[@]}";      do [ -n "$e" ] && WEB_ARGS+=(--exclude "$e"); done

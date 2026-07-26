@@ -113,7 +113,11 @@ if ($scope -ne 'staged') {
       # read-only PAT file (default ~/.config/github_token_ro; override DARNLINK_GATE_TOKEN_FILE).
       if ([string]::IsNullOrWhiteSpace($env:GITHUB_TOKEN)) {
         $tf = if ($env:DARNLINK_GATE_TOKEN_FILE) { $env:DARNLINK_GATE_TOKEN_FILE } else { Join-Path $env:USERPROFILE ".config/github_token_ro" }
-        if (Test-Path $tf) { $env:GITHUB_TOKEN = (Get-Content $tf -Raw).Trim() }
+        # PathType Leaf = a file, not a dir. try/catch so a read error can't terminate the gate under
+        # $ErrorActionPreference='Stop' (missing token just leaves private destinations web_unverifiable).
+        if (Test-Path $tf -PathType Leaf) {
+          try { $env:GITHUB_TOKEN = (Get-Content $tf -Raw -ErrorAction Stop).Trim() } catch { }
+        }
       }
       $webArgs = @()
       foreach ($e in $excludes)     { if ($e) { $webArgs += @('--exclude', $e) } }
