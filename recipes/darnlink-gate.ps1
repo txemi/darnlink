@@ -106,8 +106,8 @@ if ($scope -ne 'staged') {
     # WEB pass (opt-in, max only): EVERY web-check non-zero is fail-closed (0 = clean incl web_unverifiable/
     # offline; 3 = a plain web link not yet anchored — dry-run, could be robustified; 4 = broken public web
     # link) — none is the core's rc>3 "unreachable", so exit it directly, bypassing the bail below.
-    # web-check takes the SAME --exclude + --ignore-block as the core (since 0.12.0) -> se los pasamos para
-    # que no escanee clones vendados / mirrors.
+    # web-check takes the SAME --exclude + --ignore-block as the core (since 0.12.0) -> pass both so it
+    # skips vendored clones / mirrors instead of fetching+anchoring web links inside them.
     if ($rc -eq 0 -and $web) {
       $webArgs = @()
       foreach ($e in $excludes)     { if ($e) { $webArgs += @('--exclude', $e) } }
