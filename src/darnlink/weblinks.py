@@ -151,8 +151,10 @@ def _repo_accessible(owner: str, repo: str, token: Optional[str]) -> bool:
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             return resp.status == 200
-    except urllib.error.HTTPError:
-        return False  # 404/403 on the repo itself -> not readable with this token
+    except urllib.error.HTTPError as e:
+        if e.code in (403, 404):
+            return False  # genuinely not readable with this token (private cross-org repo)
+        return True       # 5xx/429/other: an outage/throttle, NOT inaccessible -> fall back to 404-is-broken
     except (urllib.error.URLError, TimeoutError, OSError):
         return True   # network blip: don't downgrade a persistent 404 to unverifiable on a transient error
 
