@@ -6,6 +6,21 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.17.0] — 2026-07-27
+
+### Fixed
+- **`web-check --online`: a 404 in a repo the token CANNOT access is now `web_unverifiable`, not
+  `web_not_found`.** With a token, 0.16.0 called every 404 a real break — but a link to a **private
+  cross-org repo** (e.g. a client org our read-only PAT has no access to) 404s because we cannot see it,
+  not because the file moved. Now, on a 404 with a token, `default_fetcher` does one extra probe — `GET
+  /repos/{owner}/{repo}` — and only calls the 404 a break if the destination **repo is readable**;
+  otherwise it returns the sentinel `-2` → `web_unverifiable`. The repo probe is cached per
+  `(owner, repo, token)` (a repo linked N times is checked once) and falls back to the plain
+  404-is-broken behaviour on a network blip. This lets `web: true` run on repos that link to
+  client/third-party orgs (project_map's ~1383 `mapfre-tech` links, etc.) without a wall of false breaks.
+  Pairs with the token-gated 404 (0.16.0) and the transient-retry (0.15.0).
+
+
 ## [0.16.0] — 2026-07-26
 
 ### Fixed
