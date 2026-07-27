@@ -286,3 +286,43 @@ def test_default_fetcher_no_retry_on_200(monkeypatch):
     monkeypatch.setattr(wl, "_fetch_once", _once)
     status, _ = wl.default_fetcher(gu, None, attempts=3, sleep=lambda _s: None)
     assert status == 200 and calls["n"] == 1
+
+
+# --- v0.17.0: 404 in a repo we cannot read -> unverifiable, not a break (cross-org private repos) ---
+
+def test_classify_status_minus2_is_unverifiable():
+    """The -2 sentinel (404 whose destination repo is not readable with the token) classifies as
+    web_unverifiable — a private cross-org repo's 404 is ambiguous, not a break."""
+    from darnlink.weblinks import _classify, WebLink
+    from pathlib import Path
+    gu = GithubUrl("mapfre-tech", "some-repo", "main", "a.md")
+    link = WebLink(href="https://github.com/mapfre-tech/some-repo/blob/main/a.md", text="x",
+                   start=0, end=0, uuid="1111")
+    fnd = _classify(link, gu, -2, None, True, Path("f.md"))
+    assert fnd.kind == "web_unverifiable"
+    assert "not readable" in fnd.detail
+
+
+def test_default_fetcher_404_inaccessible_repo_returns_minus2(monkeypatch):
+    """WITH a token, a 404 whose repo is NOT accessible -> sentinel -2 (so _classify -> unverifiable).
+    A 404 whose repo IS accessible stays 404 (a real break)."""
+    import darnlink.weblinks as wl
+    wl._repo_accessible.cache_clear()
+    gu = wl.GithubUrl("otherorg", "priv", "main", "gone.md")
+    monkeypatch.setattr(wl, "_fetch_once", lambda g, t: (404, None))
+    monkeypatch.setattr(wl, "_repo_accessible", lambda o, r, t: False)  # repo not readable
+    assert wl.default_fetcher(gu, "tok", attempts=1, sleep=lambda _s: None) == (-2, None)
+    monkeypatch.setattr(wl, "_repo_accessible", lambda o, r, t: True)   # repo readable
+    assert wl.default_fetcher(gu, "tok", attempts=1, sleep=lambda _s: None) == (404, None)
+
+
+def test_default_fetcher_404_no_token_skips_repo_check(monkeypatch):
+    """WITHOUT a token, the repo-accessibility refinement is not attempted -> plain 404 (unverifiable
+    handling stays in _classify)."""
+    import darnlink.weblinks as wl
+    gu = wl.GithubUrl("o", "r", "main", "gone.md")
+    monkeypatch.setattr(wl, "_fetch_once", lambda g, t: (404, None))
+    called = {"n": 0}
+    monkeypatch.setattr(wl, "_repo_accessible", lambda o, r, t: called.__setitem__("n", called["n"]+1) or False)
+    assert wl.default_fetcher(gu, None, attempts=1, sleep=lambda _s: None) == (404, None)
+    assert called["n"] == 0  # no token -> no repo check

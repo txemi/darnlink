@@ -24,6 +24,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -102,7 +103,8 @@ def find_web_links(content: str, ignore: Sequence[Span] = ()) -> List[WebLink]:
 # --- Fetch layer (network ONLY here; injected in tests) ---
 
 # A fetcher maps (GithubUrl, token) -> (http_status, text_or_None).
-# status: 200 ok · 404 not found · 401/403 auth-required · -1 network error · other = error.
+# status: 200 ok · 404 not found · 401/403 auth-required · -1 network error · -2 repo-not-readable
+# (v0.17.0: 404 whose destination repo the token cannot access -> unverifiable) · other = error.
 Fetcher = Callable[[GithubUrl, Optional[str]], Tuple[int, Optional[str]]]
 
 
@@ -133,13 +135,43 @@ def _fetch_once(gu: GithubUrl, token: Optional[str]) -> Tuple[int, Optional[str]
         return (-1, None)
 
 
+@lru_cache(maxsize=4096)
+def _repo_accessible(owner: str, repo: str, token: Optional[str]) -> bool:
+    """Is the destination REPO readable with this token? A GET on /repos/{owner}/{repo}: 200 = we can see
+    it (so a 404 on a FILE inside it is a REAL break), 404/403 = we can't (a private cross-org repo, e.g.
+    a client org our RO PAT has no access to) — there a file 404 is ambiguous, not a break. Cached per
+    (owner, repo, token) so a repo linked N times is probed once. On a network blip, returns True
+    (fall back to the plain 404=broken behaviour rather than hide a real break). Never raises."""
+    req = urllib.request.Request(f"https://api.github.com/repos/{owner}/{repo}", headers={
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "darnlink-web-check",
+    })
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return resp.status == 200
+    except urllib.error.HTTPError as e:
+        if e.code in (403, 404):
+            return False  # genuinely not readable with this token (private cross-org repo)
+        return True       # 5xx/429/other: an outage/throttle, NOT inaccessible -> fall back to 404-is-broken
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return True   # network blip: don't downgrade a persistent 404 to unverifiable on a transient error
+
+
 def default_fetcher(gu: GithubUrl, token: Optional[str], *,
                     attempts: Optional[int] = None, sleep=time.sleep) -> Tuple[int, Optional[str]]:
     """Fetch the destination file, RETRYING transient statuses with short backoff so a flaky GitHub
     response (rate-limit 404, 5xx, network blip) doesn't produce a false `web_not_found` in a blocking
     gate. A non-transient status (200/401/403, or a 404 that persists) returns immediately / after the
     last try. `attempts` (default env DARNLINK_WEB_ATTEMPTS or 3) counts the FIRST try; `sleep` is
-    injectable so tests don't wait. Never raises."""
+    injectable so tests don't wait. Never raises.
+
+    A 404 WITH a token gets one more refinement (v0.17.0): if the destination REPO is not readable with
+    the token (a private cross-org repo — a client org our PAT can't see), the 404 is ambiguous, not a
+    real break, so it returns the sentinel `-2` (-> `web_unverifiable`). Only a 404 in a repo we CAN read
+    is called broken. This lets `web:true` run on repos that link to client/third-party orgs without a
+    wall of false breaks."""
     if attempts is None:
         try:
             attempts = max(1, int(os.environ.get("DARNLINK_WEB_ATTEMPTS", "3")))
@@ -151,6 +183,8 @@ def default_fetcher(gu: GithubUrl, token: Optional[str], *,
             break
         sleep(min(0.5 * (2 ** (i - 1)), 4.0))  # 0.5s, 1.0s, 2.0s, … capped at 4s
         status, text = _fetch_once(gu, token)
+    if status == 404 and token and not _repo_accessible(gu.owner, gu.repo, token):
+        return (-2, None)  # 404 in a repo we cannot read -> ambiguous, let _classify mark unverifiable
     return (status, text)
 
 
@@ -172,6 +206,13 @@ def _classify(link: WebLink, gu: Optional[GithubUrl], status: int, dest_uuid: Op
     if status in (401, 403):
         why = "private repo and no token provided" if not have_token else "token rejected (403/401)"
         return WebFinding("web_unverifiable", f, link.href, f"cannot read destination: {why}")
+    if status == -2:
+        # v0.17.0: the file 404s AND the destination repo is not readable with this token (a private
+        # cross-org repo — a client org our PAT can't see). A 404 there is ambiguous (could be moved, or
+        # just invisible to us), so it is NOT a break. Lets web:true run on repos linking to client orgs.
+        return WebFinding("web_unverifiable", f, link.href,
+                          "destination repo not readable with this token (private cross-org repo?) — its "
+                          "404 is ambiguous, not necessarily moved")
     if status == 404:
         if not have_token:
             # A 404 WITHOUT a token is ambiguous: GitHub returns 404 (not 403) for a PRIVATE repo we
