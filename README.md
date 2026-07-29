@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/txemi/darnlink/main/assets/logo.png" alt="darnlink" width="120" height="120">
+</p>
+
 # darnlink
 
 > **Never break a Markdown link again.**

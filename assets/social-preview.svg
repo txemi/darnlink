@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640">
+  <rect width="1280" height="640" fill="#ffffff"/>
+  <rect x="0" y="620" width="1280" height="20" fill="#0D6E5C"/>
+  <!-- logo icon (from assets/logo.svg), scaled 0.70 and placed left -->
+  <g transform="translate(120,140) scale(0.70)">
+    <rect x="0" y="0" width="512" height="512" rx="112" fill="#0D6E5C"/>
+    <g transform="translate(96,150) scale(1.5)">
+      <rect x="5" y="5" width="198" height="118" rx="12" fill="none" stroke="#ffffff" stroke-width="12"/>
+      <path d="M30 98V30h20l20 25 20-25h20v68H90V59L70 84 50 59v39zm125 0l-30-33h20V30h20v35h20z" fill="#ffffff"/>
+    </g>
+    <circle cx="398" cy="398" r="86" fill="#F59E0B"/>
+    <g transform="translate(398,398) rotate(45)" fill="none" stroke="#ffffff" stroke-width="17" stroke-linecap="round">
+      <rect x="-52" y="-19" width="52" height="38" rx="19"/>
+      <rect x="0"   y="-19" width="52" height="38" rx="19"/>
+    </g>
+  </g>
+  <!-- wordmark + tagline -->
+  <text x="560" y="300" font-family="DejaVu Sans, sans-serif" font-weight="bold" font-size="130" fill="#0D6E5C">darnlink</text>
+  <text x="562" y="372" font-family="DejaVu Sans, sans-serif" font-size="46" fill="#334155">Never break a Markdown link again.</text>
+  <text x="562" y="430" font-family="DejaVu Sans, sans-serif" font-size="38" fill="#64748B">Deterministic, self-healing links · <tspan font-family="DejaVu Sans Mono, monospace" fill="#0D6E5C">uvx darnlink</tspan></text>
+</svg>
