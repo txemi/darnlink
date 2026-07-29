@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- teal rounded background -->
+  <rect x="0" y="0" width="512" height="512" rx="112" fill="#0D6E5C"/>
+  <!-- Markdown mark (official CC0 shape): rounded-rect border + M-with-down-arrow, white -->
+  <g transform="translate(96,150) scale(1.5)">
+    <rect x="5" y="5" width="198" height="118" rx="12" fill="none" stroke="#ffffff" stroke-width="12"/>
+    <path d="M30 98V30h20l20 25 20-25h20v68H90V59L70 84 50 59v39zm125 0l-30-33h20V30h20v35h20z" fill="#ffffff"/>
+  </g>
+  <!-- link badge (bottom-right): amber circle with a white chain-link -->
+  <circle cx="398" cy="398" r="86" fill="#F59E0B"/>
+  <g transform="translate(398,398) rotate(45)" fill="none" stroke="#ffffff" stroke-width="17" stroke-linecap="round">
+    <rect x="-52" y="-19" width="52" height="38" rx="19"/>
+    <rect x="0"   y="-19" width="52" height="38" rx="19"/>
+  </g>
+</svg>
