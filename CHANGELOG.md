@@ -6,6 +6,17 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.18.0] — 2026-07-29
+
+### Added
+- **Reusable GitHub Action (`action.yml`) — adopt darnlink in CI in one line.** Other repos can now
+  gate their Markdown links with `- uses: txemi/darnlink@v1` instead of hand-writing a `uvx darnlink`
+  step. Composite action: installs `uv`, runs `darnlink` over `path` (default `.`), report-only by
+  default (fails the build if a link needs repair). Inputs: `path`, `args` (passthrough, e.g.
+  `--robustify` for fail-closed strict mode, `--write` to auto-repair), `version` (pin darnlink from
+  PyPI for reproducible CI). Mirrors the existing pre-commit hook so both ecosystems get one-line
+  adoption; also lists darnlink on the GitHub Marketplace. README "quality gate" section updated.
+
 ## [0.17.0] — 2026-07-27
 
 ### Fixed

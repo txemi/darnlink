@@ -237,7 +237,7 @@ repos:
       # - id: darnlink-repair   # …or auto-repair in place instead of failing
 ```
 
-**2. GitHub Actions** (gate every push & PR):
+**2. GitHub Actions** (gate every push & PR) — darnlink ships a reusable action, so it's one line:
 
 ```yaml
 # .github/workflows/darnlink.yml
@@ -248,9 +248,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: txemi/darnlink@v1
+        with:
+          path: docs          # optional (default: .)
+          # args: --robustify  # optional: fail-closed strict mode
+          # version: 0.18.0    # optional: pin darnlink for reproducible CI
+```
+
+<details><summary>Prefer no third-party action? Run the CLI directly:</summary>
+
+```yaml
+      - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - run: uvx darnlink .
 ```
+</details>
 
 **3. Plain git hook** (no framework):
 

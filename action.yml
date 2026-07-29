@@ -1,0 +1,47 @@
+# GitHub Action — run darnlink in any repo's CI so Markdown links don't rot on refactor.
+#
+#   - uses: txemi/darnlink@v1
+#     with:
+#       path: docs            # directory to scan (default: .)
+#       args: --robustify     # extra flags — here: fail-closed strict mode (default: report-only)
+#       version: 0.18.0       # darnlink version from PyPI (pin for reproducible CI)
+#
+# Report-only by default: the build fails if any UUID-anchored link needs repair.
+name: "darnlink — self-healing Markdown links"
+description: "Check (or repair) that UUID-anchored Markdown links still resolve after refactors. Fails the build if a link needs repair."
+author: "txemi"
+branding:
+  icon: "link-2"
+  color: "green"
+inputs:
+  path:
+    description: "Root directory to scan for Markdown files."
+    required: false
+    default: "."
+  args:
+    description: >-
+      Extra flags passed straight to darnlink. Examples: '--robustify' (fail-closed: require every
+      anchorable plain link to be robust), '--exclude node_modules', '--write' (auto-repair in place),
+      '--ignore-block autogrid'.
+    required: false
+    default: ""
+  version:
+    description: "darnlink version to install from PyPI (pin an exact version for reproducible CI). Empty = latest."
+    required: false
+    default: "0.18.0"
+runs:
+  using: "composite"
+  steps:
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+    - name: Run darnlink
+      shell: bash
+      run: |
+        set -euo pipefail
+        spec="darnlink"
+        if [ -n "${{ inputs.version }}" ]; then
+          spec="darnlink==${{ inputs.version }}"
+        fi
+        echo "::group::darnlink ($spec) — scanning '${{ inputs.path }}'"
+        uvx --from "$spec" darnlink "${{ inputs.path }}" ${{ inputs.args }}
+        echo "::endgroup::"
