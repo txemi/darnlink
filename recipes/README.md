@@ -58,6 +58,30 @@ whole-repo where it's the wall.
 }
 ```
 
+**Repos with a big `mirrors/` tree** (a faithful local copy of an external system) usually want a
+fourth shape: enforce robustify + the create-readme axis, but skip README-creation *under the mirror*
+(you don't invent a README for someone else's export) — while still validating links that point INTO
+the mirror. Two keys make that expressible:
+
+```json
+{
+  "ref": "git+https://github.com/txemi/darnlink@v0.18.0",
+  "mode": "check",
+  "create_readme": true,
+  "create_readme_excludes": ["mirrors"],
+  "excludes": [".pytest_cache", "clones", "output"]
+}
+```
+
+- `create_readme` (any mode, since v0.18.x) — a plain link to a folder with no README fails the gate.
+  It runs as its own dry-run pass filtered to the `create_readme` findings, so it now adds the folder
+  axis on top of `mode=check`/`repair`, not only `mode=max`. (In `mode=max` with **no**
+  `create_readme_excludes` it stays folded into the max robustify pass exactly as before.)
+- `create_readme_excludes` (default `[]`) — extra directory globs applied **only** to the create-readme
+  pass, on top of `excludes`. It suppresses README-creation for those paths **without** dropping them
+  from the integrity/robustify axes (inbound links into a mirror must still validate). Absent = old
+  behavior.
+
 **2. Pre-commit** (staged, fast) — so parallel sessions don't block each other; the repo-wide wall is
 pieces 3–4:
 

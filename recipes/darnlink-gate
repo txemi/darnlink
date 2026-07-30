@@ -36,14 +36,24 @@
 #   { "ref": "git+https://github.com/txemi/darnlink@v0.7.0",
 #     "excludes": ["secrets","external_repos"], "ignore_blocks": ["txmd-autogrid"],
 #     "mode": "check", "scope": "repo", "fail_closed": true,
-#     "web": true, "create_readme": true }
+#     "web": true, "create_readme": true, "create_readme_excludes": ["mirrors"] }
 #   mode ∈ { repair | check | max } — see WHAT IT DOES. Raising it is a one-way ratchet: only up.
 #   web (mode=max only): add a `web-check --online` pass — cross-repo links to OTHER GitHub repos must
 #     resolve to the destination's uuid (read online). Public targets need no token; private ones send
 #     $GITHUB_TOKEN if set, else `web_unverifiable` (a warning, never a failure). Fail-closed on a broken
 #     public web link.
-#   create_readme (mode=max only): also run `--create-readme` — a directory link whose target folder has
-#     no README (no uuid to anchor to) FAILS the gate (dry-run detects it; fix with `--create-readme --write`).
+#   create_readme (ANY mode, since the mirror update): also run `--create-readme` — a directory link whose
+#     target folder has no README (no uuid to anchor to) FAILS the gate (dry-run detects it; fix with
+#     `--create-readme --write`). It runs as its OWN dry-run pass, filtered to the `create_readme` findings,
+#     so it adds the folder axis on top of mode=check / mode=repair too — not only mode=max. (In mode=max
+#     with NO create_readme_excludes it stays FOLDED into the max robustify pass, exactly as before — that
+#     path is untouched.) The reason for the own-pass: it lets create_readme_excludes bite only this axis.
+#   create_readme_excludes (default []): extra directory-name globs applied ONLY to the create-readme pass,
+#     LAYERED ON TOP of `excludes`. The point for a repo with a big `mirrors/` tree: skip README-creation
+#     under the mirror (we do not invent a README for an external system's export) WITHOUT excluding it from
+#     the integrity/robustify axes — inbound links INTO the mirror must still validate. Absent = empty =
+#     old behavior. When non-empty in mode=max, create-readme moves out to the separate pass so the excludes
+#     never leak into robustify (folding it in would drop mirror dir-links from robustify too — wrong).
 # ⚠️ In CI prefer the ENV VAR over the json key: reading the json needs python3, so if python3 is
 #    missing the key is silently lost — and "python3 missing" is one of the very cases fail-closed
 #    exists to catch. `DARNLINK_GATE_FAIL_CLOSED=1` is read by the shell and always applies.
@@ -51,9 +61,10 @@
 # DARNLINK_GATE_SCOPE, DARNLINK_GATE_FAIL_CLOSED. Typical wiring: config says scope=repo; the
 # pre-commit hook exports DARNLINK_GATE_SCOPE=staged; CI leaves it repo and sets FAIL_CLOSED=1.
 #
-# EXIT: 0 clean · 2 integrity failure · 3 strict-only failure · 1 usage / max-mode findings ·
-#       4 could-not-gate (fail-closed only) · 0 + a stderr warning if it skips (fail-open, the default).
-#       (mode=max reports findings via the dry-run's own non-zero exit — any non-zero fails the gate.)
+# EXIT: 0 clean · 2 integrity failure · 3 strict-only failure · 1 usage / max-mode or create-readme
+#       findings · 4 could-not-gate (fail-closed only) · 0 + a stderr warning if it skips (fail-open,
+#       the default). (mode=max reports findings via the dry-run's own non-zero exit — any non-zero
+#       fails the gate; the create-readme axis fails with 1 unless a higher code already applies.)
 set -euo pipefail
 
 root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
@@ -97,6 +108,9 @@ CREATE_README="${DARNLINK_GATE_CREATE_README:-$(read_cfg create_readme "")}"
 case "${CREATE_README,,}" in ""|0|false|no|off) CREATE_README="" ;; *) CREATE_README=1 ;; esac
 mapfile -t EXCLUDES < <(read_cfg excludes "")
 mapfile -t IGNORE_BLOCKS < <(read_cfg ignore_blocks "")
+# CREATE_README_EXCLUDES: extra directory globs that apply ONLY to the create-readme pass (see the
+# create_readme_excludes note in CONFIG). Absent = one empty element → treated as empty everywhere.
+mapfile -t CREATE_README_EXCLUDES < <(read_cfg create_readme_excludes "")
 
 # --- guard: this recipe is READ-ONLY. Never let a --write slip through it. ---
 for a in "$@"; do
@@ -133,6 +147,50 @@ run() { uvx --from "$REF" darnlink "$@"; }   # single source of the darnlink inv
 # darnlink is reachable. If it isn't → fail OPEN (don't brick a commit; CI covers the wall).
 if ! run --help >/dev/null 2>&1; then bail "can't run darnlink at $REF (bad ref / no network)"; fi
 
+# --- create-readme axis (opt-in, ANY mode) ---------------------------------------------------------
+# Runs `--create-readme` (a dry-run) and reports ONLY the `create_readme` findings — a directory link
+# whose target folder has no README. It takes its OWN excludes (CREATE_README_EXCLUDES) layered ON TOP
+# of the global ones, so a repo can skip README-creation under `mirrors/` (external export — we don't
+# invent a README for it) WITHOUT dropping the mirror from integrity/robustify (inbound links into the
+# mirror must still validate). This is the SAME JSON-by-kind filter the staged scope uses below, reused
+# here to filter by kind on a whole-repo pass. Prints the offender count on stdout ("ERR" if it could
+# not evaluate); the offending files go to stderr for the human. `--create-readme` implies
+# `--create-frontmatter`, so the JSON also carries `robustify` findings — we deliberately keep only
+# `create_readme`, which is what keeps the mirror's dir-links from flooding in as robustify offenders.
+create_readme_offenders() {
+  command -v python3 >/dev/null 2>&1 || { echo ERR; return 0; }
+  local cr_args=("${DL_ARGS[@]}") e
+  for e in "${CREATE_README_EXCLUDES[@]}"; do [ -n "$e" ] && cr_args+=(--exclude "$e"); done
+  local json jrc tmp
+  set +e
+  # `--create-readme` only fires under `--robustify` (without it, darnlink runs the repair/integrity path
+  # and never plans a README — see cli.py dispatch). `--create-readme` implies `--create-frontmatter`; we
+  # pass it explicitly for clarity. We keep ONLY the `create_readme` findings from the JSON, so carrying
+  # `--robustify` here does NOT add robustify offenders to this axis — the caller's robustify axis is the
+  # separate `check` (or max) pass.
+  json="$(run . --robustify --create-frontmatter --create-readme "${cr_args[@]}" --json 2>/dev/null)"; jrc=$?
+  set -e
+  # rc>3 (e.g. 127 network) or empty output = couldn't run darnlink → let the caller bail, never green.
+  if [ "$jrc" -gt 3 ] || [ -z "$json" ]; then echo ERR; return 0; fi
+  # Pass the JSON via a TEMP FILE, not an env var / argv — a whole-repo create-readme dump carries every
+  # ignore-links finding too and can run to megabytes, well past ARG_MAX (a big mirror is exactly the case
+  # this feature exists for). The path is short; python reads the file.
+  tmp="$(mktemp)"; printf '%s' "$json" > "$tmp"
+  python3 - "$tmp" <<'PY'
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        d = json.load(fh)
+except Exception:
+    print("ERR"); sys.exit(0)
+off = [f for f in d.get("findings", []) if f.get("kind") == "create_readme"]
+for f in off:
+    sys.stderr.write(f"  [create-readme] {f.get('file')}: {f.get('detail')}\n")
+print(len(off))
+PY
+  rm -f "$tmp"
+}
+
 if [ "$SCOPE" != "staged" ]; then
   # ---- whole-repo (the wall). darnlink's own exit code is the gate. ----
   # set +e around the run: darnlink exits 0/1/2/3 (findings ARE non-zero) — set -e must not kill us
@@ -146,7 +204,14 @@ if [ "$SCOPE" != "staged" ]; then
     # fail if either does. This makes max a TRUE superset of check (the ratchet holds). Both read-only.
     # create_readme raises the ceiling: directory targets must have a README too (dry-run = detect it).
     MAX_ROBUSTIFY=(--robustify --create-frontmatter)
-    [ -n "$CREATE_README" ] && MAX_ROBUSTIFY+=(--create-readme)
+    # create_readme FOLDS into the max robustify pass ONLY in the legacy shape (no create_readme_excludes):
+    # keeps existing mode=max behavior byte-for-byte. WITH create_readme_excludes it moves to the separate
+    # create-readme pass below, so those excludes hit README-creation ONLY (never robustify/integrity — a
+    # mirror must still have its inbound links validated). FOLDED_CR marks that the axis is already covered
+    # here, so the fall-through does not run it a second time.
+    if [ -n "$CREATE_README" ] && [ -z "${CREATE_README_EXCLUDES[*]}" ]; then
+      MAX_ROBUSTIFY+=(--create-readme); FOLDED_CR=1
+    fi
     run check . "${DL_ARGS[@]}"; rc=$?
     if [ "$rc" -eq 0 ]; then run . "${MAX_ROBUSTIFY[@]}" "${DL_ARGS[@]}"; rc=$?; fi
     # WEB pass (opt-in, mode=max only): cross-repo web-link robustness, only if the core passed (so a
@@ -183,8 +248,19 @@ if [ "$SCOPE" != "staged" ]; then
   set -e
   # rc>3 (e.g. 127 network) → fail open + warn; darnlink's own low exit codes pass through.
   if [ "$rc" -gt 3 ]; then bail "darnlink unreachable (rc=$rc)"; fi
-  # mode=repair gates on integrity only: a strict-only failure (3) is clean.
-  if [ "$MODE" = "repair" ] && [ "$rc" -eq 3 ]; then exit 0; fi
+  # mode=repair gates on integrity only: a strict-only failure (3) is clean. (Set rc=0 rather than exit
+  # so the create-readme axis below still runs — it is an independent axis, not part of strict.)
+  if [ "$MODE" = "repair" ] && [ "$rc" -eq 3 ]; then rc=0; fi
+  # create-readme axis: works under check/repair too (and mode=max WITH create_readme_excludes). Skipped
+  # when already folded into the max robustify pass above (legacy max, no create_readme_excludes).
+  if [ -n "$CREATE_README" ] && [ -z "${FOLDED_CR:-}" ]; then
+    cr="$(create_readme_offenders)"
+    if [ "$cr" = "ERR" ]; then bail "create-readme pass could not run (darnlink unreachable or python3 missing)"; fi
+    if [ "$cr" -gt 0 ]; then
+      echo "darnlink-gate: $cr directory link(s) point at a folder with no README (create-readme axis; fix: 'uvx --from $REF darnlink . --create-readme --write')." >&2
+      [ "$rc" -eq 0 ] && rc=1
+    fi
+  fi
   exit "$rc"
 fi
 
