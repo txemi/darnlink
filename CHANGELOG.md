@@ -6,6 +6,8 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.19.0] — 2026-07-30
+
 ### Changed
 - **`recipes/darnlink-gate`: the create-readme axis now works under `mode=check`/`repair` (not only
   `mode=max`), and gained a per-axis `create_readme_excludes` key — for repos with a big `mirrors/`
