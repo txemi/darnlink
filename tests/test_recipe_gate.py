@@ -147,3 +147,55 @@ def test_backward_compat_max_with_folded_create_readme_still_fails(sandbox):
     _dir_link_without_readme(repo)
     r = run({"ref": "x", "mode": "max", "create_readme": True})
     assert r.returncode != 0, "max + create_readme must still fail on a README-less dir-link"
+
+
+# --- an unavailable create-readme axis must never mask a failing core gate --------------------------
+
+def test_unavailable_create_readme_axis_does_not_mask_a_failing_core(tmp_path):
+    """The OPTIONAL create-readme pass needs python3 to filter its JSON by kind. If python3 is missing,
+    the pass can't run — but that must NOT turn an ALREADY-failing core gate (integrity/strict) green.
+    We simulate python3-missing with a minimal PATH and assert the core strict failure (exit 3) survives."""
+    needed = {}
+    for t in ("bash", "git", "mktemp", "rm", "tr", "env"):
+        p = shutil.which(t)
+        if p is None:
+            pytest.skip(f"need {t} for this test")
+        needed[t] = p
+    dbin = _darnlink_bin()
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run([needed["git"], "init", "-q"], cwd=repo, check=True)
+    # a plain link to a uuid'd target → a strict/robustify offender → the core `check` exits 3
+    (repo / "T.md").write_text(f"---\nuuid: {U}\n---\n# T\n")
+    (repo / "A.md").write_text("# A\n[t](T.md) plain\n")
+    (repo / "darnlink-gate.json").write_text("{}")
+
+    bindir = tmp_path / "nopybin"  # a PATH with the recipe's tools but NO python3
+    bindir.mkdir()
+    for t, p in needed.items():
+        os.symlink(p, bindir / t)
+    shim = bindir / "uvx"
+    shim.write_text(
+        "#!/usr/bin/env bash\n"
+        'args=("$@")\n'
+        '[ "${args[0]:-}" = "--from" ] && args=("${args[@]:2}")\n'
+        '[ "${args[0]:-}" = "darnlink" ] && args=("${args[@]:1}")\n'
+        'exec "${DARNLINK_BIN:-darnlink}" "${args[@]}"\n'
+    )
+    shim.chmod(0o755)
+
+    env = {k: v for k, v in os.environ.items() if k not in _LEAKY_ENV}
+    env["PATH"] = str(bindir)  # only the minimal bin → python3 is unreachable
+    env["DARNLINK_BIN"] = dbin
+    env["DARNLINK_GATE_MODE"] = "check"
+    env["DARNLINK_GATE_CREATE_README"] = "1"  # request the axis via env (no python3 to read the json)
+    # sanity: python3 really is unreachable through this PATH
+    assert subprocess.run([needed["bash"], "-c", "command -v python3"], env=env,
+                          capture_output=True).returncode != 0
+
+    r = subprocess.run([needed["bash"], str(RECIPE)], cwd=repo, env=env, capture_output=True, text=True)
+    assert r.returncode == 3, (
+        f"core strict failure must survive an unavailable create-readme axis; got {r.returncode}\n"
+        f"STDOUT:\n{r.stdout}\nSTDERR:\n{r.stderr}"
+    )

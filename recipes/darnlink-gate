@@ -255,7 +255,16 @@ if [ "$SCOPE" != "staged" ]; then
   # when already folded into the max robustify pass above (legacy max, no create_readme_excludes).
   if [ -n "$CREATE_README" ] && [ -z "${FOLDED_CR:-}" ]; then
     cr="$(create_readme_offenders)"
-    if [ "$cr" = "ERR" ]; then bail "create-readme pass could not run (darnlink unreachable or python3 missing)"; fi
+    if [ "$cr" = "ERR" ]; then
+      # Couldn't evaluate the OPTIONAL create-readme axis. Never turn an ALREADY-red gate green: if the
+      # core check/max pass already failed (rc!=0 — integrity/strict), keep that failure. Only when the
+      # core was clean do we defer to the could-not-gate policy (bail: fail-open skip / fail-closed 4).
+      if [ "$rc" -ne 0 ]; then
+        echo "darnlink-gate: create-readme axis could not run, but the core gate is already failing (rc=$rc) — keeping it." >&2
+        exit "$rc"
+      fi
+      bail "create-readme pass could not run (darnlink unreachable or python3 missing)"
+    fi
     if [ "$cr" -gt 0 ]; then
       echo "darnlink-gate: $cr directory link(s) point at a folder with no README (create-readme axis; fix: 'uvx --from $REF darnlink . --create-readme --write')." >&2
       [ "$rc" -eq 0 ] && rc=1
