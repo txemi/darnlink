@@ -6,6 +6,19 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+- **`recipes/darnlink-gate`: the create-readme axis now works under `mode=check`/`repair` (not only
+  `mode=max`), and gained a per-axis `create_readme_excludes` key — for repos with a big `mirrors/`
+  tree.** With `create_readme: true`, a plain link to a folder with no README now fails the gate under
+  any mode: it runs as its own dry-run pass filtered to the `create_readme` findings (reusing the
+  staged scope's JSON-by-kind filter). The new `create_readme_excludes` (default `[]`) layers extra
+  directory globs **onto the create-readme pass only**, so a repo can skip README-creation under an
+  external mirror (we don't invent a README for someone else's export) **without** dropping the mirror
+  from the integrity/robustify axes — inbound links into the mirror still validate. Fully backward
+  compatible: `mode=max` with no `create_readme_excludes` keeps the old folded behavior byte-for-byte;
+  the key absent = empty. Recipe-only change — the darnlink CLI is untouched. Tests in
+  `tests/test_recipe_gate.py`.
+
 ## [0.18.0] — 2026-07-29
 
 ### Added
