@@ -28,8 +28,14 @@ def _darnlink_bin() -> str | None:
 
 
 pytestmark = pytest.mark.skipif(
-    shutil.which("bash") is None or _darnlink_bin() is None or shutil.which("git") is None,
-    reason="recipe gate tests need bash + git + the installed darnlink console script",
+    sys.platform.startswith("win")
+    or os.name == "nt"
+    or shutil.which("bash") is None
+    or _darnlink_bin() is None
+    or shutil.which("git") is None,
+    # The recipe under test is the POSIX `recipes/darnlink-gate` bash script; Windows ships the separate
+    # `darnlink-gate.ps1`, which these tests do not exercise.
+    reason="recipe gate tests need a POSIX shell (bash) + git + the installed darnlink console script",
 )
 
 # env keys that would otherwise leak an outer CI/user config into the recipe under test
