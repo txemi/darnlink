@@ -6,6 +6,8 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.19.1] — 2026-08-07
+
 ### Fixed
 - **`web-check`: the text report no longer prints one line per `web_unverifiable` finding.** It lists
   the first `UNVERIFIABLE_PREVIEW` (20) and then a `... and N more` line. `web_unverifiable` is
