@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from darnlink.cli import _run_web_check_cli, main
+from darnlink.cli import UNVERIFIABLE_PREVIEW, _run_web_check_cli, main
 from darnlink.weblinks import (GithubUrl, check_web_links_online, find_web_links,
                                parse_github_url)
 
@@ -185,6 +185,35 @@ def test_online_unparseable_url_is_unverifiable(tmp_path):
     _w(tmp_path / "conta.md", f"see [x](https://example.com/whatever) <!-- web-uuid: {UUID} -->\n")
     findings, _ = check_web_links_online(tmp_path, None, _fetcher({}))
     assert findings[0].kind == "web_unverifiable"
+
+
+def test_many_unverifiable_are_summarised_not_listed_one_by_one(tmp_path, capsys):
+    """web_unverifiable never fails the exit, so listing every one of them on a docs repo full of
+    ordinary external URLs drowns the actionable findings (and floods whoever reads the output).
+    The total stays in the summary line and --json keeps them all, so nothing is silenced."""
+    n = UNVERIFIABLE_PREVIEW + 5
+    for i in range(n):
+        _w(tmp_path / f"doc{i}.md", f"see [x](https://example.com/{i}) <!-- web-uuid: {UUID} -->\n")
+
+    code = _run_web_check_cli([str(tmp_path), "--online"], fetcher=_fetcher({}))
+    out = capsys.readouterr().out
+
+    assert code == 0
+    assert out.count("[web_unverifiable]") == UNVERIFIABLE_PREVIEW
+    assert f"... and {n - UNVERIFIABLE_PREVIEW} more web_unverifiable" in out
+    assert f"unverifiable {n}" in out  # the real total is never hidden
+
+
+def test_json_still_carries_every_unverifiable(tmp_path, capsys):
+    n = UNVERIFIABLE_PREVIEW + 5
+    for i in range(n):
+        _w(tmp_path / f"doc{i}.md", f"see [x](https://example.com/{i}) <!-- web-uuid: {UUID} -->\n")
+
+    _run_web_check_cli([str(tmp_path), "--online", "--json"], fetcher=_fetcher({}))
+    out = json.loads(capsys.readouterr().out)
+
+    assert out["web_unverifiable"] == n
+    assert len([f for f in out["findings"] if f["kind"] == "web_unverifiable"]) == n
 
 
 # --- OFF by default: no --online => no network, no writes, exit 0 ---
