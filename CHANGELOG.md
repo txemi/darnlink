@@ -6,6 +6,23 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.19.1] — 2026-08-07
+
+### Fixed
+- **`web-check`: the text report no longer prints one line per `web_unverifiable` finding.** It lists
+  the first `UNVERIFIABLE_PREVIEW` (20) and then a `... and N more` line. `web_unverifiable` is
+  informational — it never fails the exit — so on a documentation repo whose Markdown holds a few
+  thousand ordinary external links (docs sites, videos, intranet URLs: anything that is not a GitHub
+  blob/raw URL) the old report emitted thousands of lines. Two consequences, both fixed: the
+  actionable `web_mismatch` / `web_not_found` lines were buried in the noise, and a caller reading
+  the output through a pipe could be flooded — in a `pre-push` git hook, whose stdio is a
+  non-blocking pipe, the run died with `BlockingIOError: write could not complete without blocking`,
+  so a phase that had found **nothing wrong** (`exit 0` when run standalone) blocked every push in
+  the repo until `--no-verify` was used. Nothing is silenced (Constitution II): the full total stays
+  in the summary line and `--json` still carries every finding. `web_mismatch`, `web_not_found` and
+  `web_anchor` are still listed in full — they are actionable and they do fail the exit. Tests in
+  `tests/test_weblinks.py`.
+
 ## [0.19.0] — 2026-07-30
 
 ### Changed

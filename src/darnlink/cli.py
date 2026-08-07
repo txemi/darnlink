@@ -277,6 +277,13 @@ def _run_check_cli(argv: List[str]) -> int:
     return _run_check(root, excludes, args.json, tuple(args.ignore_block), only=only)
 
 
+#: How many `web_unverifiable` findings the text report lists individually. They are informational
+#: (they never fail the exit), so on a repo with thousands of non-GitHub URLs the full list buries the
+#: actionable findings and can overwhelm whatever is reading the output. The total always stays in the
+#: summary line (Constitution II — never silent) and `--json` still carries every finding.
+UNVERIFIABLE_PREVIEW = 20
+
+
 def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
     """Feature 013 (EXPERIMENTAL spike): `darnlink web-check PATH --online [--write] [--json]`.
 
@@ -391,8 +398,11 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
             print(f"  [web_not_found] {x.file}: {x.detail} ({x.href})")
         for x in anchors:
             print(f"  [web_anchor] {x.file}: {x.detail}")
-        for x in unverifiable:
+        for x in unverifiable[:UNVERIFIABLE_PREVIEW]:
             print(f"  [web_unverifiable] {x.file}: {x.detail} ({x.href})")
+        if len(unverifiable) > UNVERIFIABLE_PREVIEW:
+            print(f"  ... and {len(unverifiable) - UNVERIFIABLE_PREVIEW} more web_unverifiable "
+                  f"(informational; re-run with --json for the full list)")
         if args.write:
             print(f"  WROTE {wrote} file(s).")
         elif anchors_pending:
