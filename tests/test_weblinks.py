@@ -193,7 +193,7 @@ def test_many_unverifiable_are_summarised_not_listed_one_by_one(tmp_path, capsys
     The total stays in the summary line and --json keeps them all, so nothing is silenced."""
     n = UNVERIFIABLE_PREVIEW + 5
     for i in range(n):
-        _w(tmp_path / f"doc{i}.md", f"see [x](https://example.com/{i}) <!-- web-uuid: {UUID} -->\n")
+        _w(tmp_path / f"doc{i}.md", f"see [x](https://example.com/{i})\n")
 
     code = _run_web_check_cli([str(tmp_path), "--online"], fetcher=_fetcher({}))
     out = capsys.readouterr().out
@@ -207,7 +207,7 @@ def test_many_unverifiable_are_summarised_not_listed_one_by_one(tmp_path, capsys
 def test_json_still_carries_every_unverifiable(tmp_path, capsys):
     n = UNVERIFIABLE_PREVIEW + 5
     for i in range(n):
-        _w(tmp_path / f"doc{i}.md", f"see [x](https://example.com/{i}) <!-- web-uuid: {UUID} -->\n")
+        _w(tmp_path / f"doc{i}.md", f"see [x](https://example.com/{i})\n")
 
     _run_web_check_cli([str(tmp_path), "--online", "--json"], fetcher=_fetcher({}))
     out = json.loads(capsys.readouterr().out)
