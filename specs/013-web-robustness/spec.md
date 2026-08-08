@@ -19,7 +19,7 @@ lives in *another repository*, which darnlink, by design, never looks at. The as
 The motivating link (the real case the prototype exercises):
 
 ```
-Ver la [topología Jenkins](https://github.com/example-org/handbook/blob/main/docs/living/service-topology.md) <!-- web-uuid: 3f9c… -->
+See the [service topology](https://github.com/example-org/handbook/blob/main/docs/living/service-topology.md) <!-- web-uuid: 3f9c… -->
 ```
 
 lives in `ledger/.../service-topology.md` and points at `handbook/.../living/service-topology.md`.
