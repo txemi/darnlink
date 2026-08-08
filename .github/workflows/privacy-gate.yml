@@ -58,6 +58,17 @@ jobs:
             exit 1
           fi
           printf '%s\n' "$DENYLIST" | grep -v '^[[:space:]]*$' > /tmp/denylist.txt
+          # Re-check AFTER stripping blank lines, not only before. A secret holding nothing but
+          # whitespace passes the -z test above and then leaves zero patterns, and GNU grep -f with
+          # an empty pattern file matches NOTHING and exits 1 -> every surface would report "clean"
+          # while checking nothing, which is exactly the failure this job exists to make impossible.
+          # (Worth knowing: ugrep does the opposite on the same input, so a local test can disagree
+          # with the runner. Hence an explicit check instead of relying on either behaviour.)
+          if [ ! -s /tmp/denylist.txt ]; then
+            echo "::error::PRIVACY_DENYLIST contains no usable patterns (blank/whitespace only)."
+            echo "Failing closed rather than scanning with an empty pattern set."
+            exit 1
+          fi
           echo "Patterns loaded: $(wc -l < /tmp/denylist.txt) (contents intentionally not printed)"
 
           fail=0
