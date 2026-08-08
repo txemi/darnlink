@@ -19,6 +19,8 @@ MD_LINK_RE = re.compile(r"\[(?P<text>[^\]]+)\]\((?P<href>[^)]+)\)")
 # A uuid comment that immediately follows a link (used to tell plain from robust).
 # No `^`: it is applied with .match(content, pos), which already anchors at pos.
 _TRAILING_UUID_RE = re.compile(r"\s*<!--\s*uuid:\s*[0-9a-fA-F-]{36}\s*-->")
+# Any uuid comment, wherever it sits. Used to find the ones attached to nothing.
+UUID_COMMENT_RE = re.compile(r"<!--\s*uuid:\s*(?P<uuid>[0-9a-fA-F-]{36})\s*-->")
 
 Span = Tuple[int, int]
 
@@ -198,6 +200,49 @@ def find_plain_links(content: str, ignore: Sequence[Span] = ()) -> List[PlainLin
             continue  # inside a generated block (e.g. autogrid); leave it alone
         out.append(PlainLink(m.group("text"), m.group("href"), m.start(), m.end()))
     return out
+
+
+@dataclass(frozen=True)
+class DetachedAnchor:
+    uuid: str
+    start: int  # span of just the `<!-- uuid: … -->` comment in the source
+    end: int
+
+
+def find_detached_anchors(content: str, ignore: Sequence[Span] = ()) -> List[DetachedAnchor]:
+    """Every `<!-- uuid: … -->` that is NOT the trailing anchor of a Markdown link.
+
+    The grammar only accepts whitespace between the link's `)` and the comment, so one token of
+    inline markup in between -- a closing `**` is the common way to get this wrong -- leaves the
+    comment attached to nothing while *looking* attached to a reader. The link is then still plain,
+    and robustify would append a second comment carrying the same uuid: the file ends up with the
+    uuid twice, one copy anchoring nothing, and every later run reports the tree clean.
+
+    Like `find_plain_links`, this takes the spans to skip rather than computing them: the caller
+    already has them. Passing the code spans matters more here than anywhere else -- a uuid comment
+    shown as an example inside backticks must never be treated as a stray anchor, because acting on
+    it means *deleting* text from someone's code sample.
+    """
+    attached: set[int] = set()
+    for m in MD_LINK_RE.finditer(content):
+        t = _TRAILING_UUID_RE.match(content, m.end())
+        if t is None:
+            continue
+        c = UUID_COMMENT_RE.search(content, m.end(), t.end())
+        if c is not None:
+            attached.add(c.start())
+    return [
+        DetachedAnchor(m.group("uuid").lower(), m.start(), m.end())
+        for m in UUID_COMMENT_RE.finditer(content)
+        if m.start() not in attached and not _in_spans(m.start(), ignore)
+    ]
+
+
+def line_bounds(content: str, pos: int) -> Span:
+    """The `[start, end)` of the line holding `pos`, end-exclusive of the newline."""
+    start = content.rfind("\n", 0, pos) + 1
+    end = content.find("\n", pos)
+    return (start, len(content) if end == -1 else end)
 
 
 def emit_robust_link(text: str, href: str, uuid: str) -> str:

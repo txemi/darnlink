@@ -23,8 +23,9 @@ from .frontmatter_edit import (
     write_text_keep_newlines,
 )
 from .frontmatter_index import DEFAULT_EXCLUDES, dir_excluded, iter_markdown_files, read_frontmatter_uuid
-from .links import (code_spans, emit_robust_link, file_ignores_links, file_is_ignored,
-                    find_plain_links, ignored_spans)
+from .links import (DetachedAnchor, PlainLink, code_spans, emit_robust_link, file_ignores_links,
+                    file_is_ignored, find_detached_anchors, find_plain_links, ignored_spans,
+                    line_bounds)
 from .paths import DIR_ANCHOR, is_local_relative, names_md, resolve_href
 from .report import Finding, Kind
 from .scope import in_scope
@@ -87,6 +88,19 @@ def _dir_link_missing_readme(href: str, linking_file: Path) -> Path | None:
 def _basename_denied(target: Path, no_create_globs: Tuple[str, ...]) -> bool:
     """True if the target's basename matches any deny-list glob (FR-029/FR-032)."""
     return any(fnmatch(target.name, g) for g in no_create_globs)
+
+
+def _hspace_start(content: str, pos: int) -> int:
+    """`pos` walked back over spaces/tabs, never past the start of its line.
+
+    Removing a stray anchor should take the blank that separated it with it, so moving one does not
+    leave a dangling space behind; stopping at the line start keeps the newline (and any indent that
+    is really the line's own) intact.
+    """
+    lo = content.rfind("\n", 0, pos) + 1
+    while pos > lo and content[pos - 1] in " \t":
+        pos -= 1
+    return pos
 
 
 def _within_excluded(directory: Path, root: Path, excludes) -> bool:
@@ -320,6 +334,7 @@ def plan_robustify(
         # Out of the write scope: its links are left alone here too, but it may still RECEIVE its own
         # uuid below — being a target is not a write the caller has to name (FR-006).
         links = () if (f.resolve() in link_ignored or not scoped) else find_plain_links(original, spans.get(f, []))
+        anchorable: List[Tuple[PlainLink, str]] = []  # (plain link, the uuid that will anchor it)
         for link in links:
             t = _anchor_target(link.href, f, planned_readmes)
             if t is None or t.resolve() == f.resolve():
@@ -355,11 +370,50 @@ def plan_robustify(
             u = target_uuid.get(tr)
             if u is None:
                 continue
-            pieces.append(original[cursor:link.start])
-            pieces.append(emit_robust_link(link.text, link.href, u))
-            cursor = link.end
+            anchorable.append((link, u))
+
+        # A `<!-- uuid: … -->` sitting on this link's line but attached to nothing is, in practice,
+        # this link's own anchor pushed out of the grammar by a token of inline markup (a closing
+        # `**` is the usual culprit). Appending a second one would leave the same uuid in the line
+        # twice, one copy anchoring nothing — and since the link is robust afterwards, every later
+        # run reports the tree clean and the litter never surfaces again. So move it instead.
+        #
+        # Only when the file leaves no room for doubt: same line, same uuid, one stray, one claimant.
+        # Anything else would be a guess, and guessing is not what this tool does (Constitution IV).
+        strays = find_detached_anchors(original, spans.get(f, [])) if anchorable else []
+        absorb: Dict[int, DetachedAnchor] = {}
+        ambiguous: Set[int] = set()
+        for i, (link, u) in enumerate(anchorable):
+            lo, hi = line_bounds(original, link.start)
+            here = [d for d in strays if d.uuid == u and lo <= d.start < hi]
+            if not here:
+                continue
+            claimants = sum(1 for l2, u2 in anchorable if u2 == u and lo <= l2.start < hi)
+            if len(here) == 1 and claimants == 1:
+                absorb[i] = here[0]
+            else:
+                ambiguous.add(i)
+
+        edits: List[Tuple[int, int, str]] = []  # (start, end, replacement), disjoint by construction
+        for i, (link, u) in enumerate(anchorable):
+            edits.append((link.start, link.end, emit_robust_link(link.text, link.href, u)))
+            detail = f"{link.href} +uuid {u}"
+            stray = absorb.get(i)
+            if stray is not None:
+                edits.append((_hspace_start(original, stray.start), stray.end, ""))
+                detail += " (moved a detached anchor that was already on this line)"
+            elif i in ambiguous:
+                detail += (" (WARNING: this line carries a detached anchor with the same uuid, but "
+                           "more than one link could own it, so it is left as is — the uuid will "
+                           "appear twice until you remove the stray comment)")
+            result.findings.append(Finding(Kind.ROBUSTIFY, f, detail))
+
+        if edits:
+            for start, end, replacement in sorted(edits):
+                pieces.append(original[cursor:start])
+                pieces.append(replacement)
+                cursor = end
             changed = True
-            result.findings.append(Finding(Kind.ROBUSTIFY, f, f"{link.href} +uuid {u}"))
         content = ("".join(pieces) + original[cursor:]) if changed else original
 
         if f.resolve() in needs_uuid_write:

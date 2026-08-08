@@ -41,6 +41,12 @@ UUID        := 36 chars matching [0-9a-fA-F-] (canonically 8-4-4-4-12 lowercase 
 
 - **Detection is tolerant**: any whitespace (including a newline) is allowed between `)` and the
   comment.
+- **…but only whitespace.** One token of anything else in between and the comment anchors nothing —
+  the link is still plain. The trap is inline markup, because the result *looks* anchored:
+  `**text [B](B.md)** <!-- uuid: … -->` is **not** a robust link (the `**` closes before the
+  comment), whereas `**text** [B](B.md) <!-- uuid: … -->` and `**text [B](B.md) <!-- uuid: … -->**`
+  both are. The rule is not arbitrary: a table row or a sentence may hold several links, and only
+  adjacency says which one a comment belongs to.
 - **Emission is canonical**: a single space — `[text](path) <!-- uuid: <uuid> -->`.
 - `path` may include a `#fragment`; it is preserved across rewrites.
 
