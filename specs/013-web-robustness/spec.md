@@ -10,19 +10,19 @@ it costs the constitution. **Do not merge to `main`.**
 
 **Input**: Today darnlink only heals **local, relative** Markdown links (`is_local_md` rejects any
 `http(s)://`). A downstream setup (a Jenkins pipeline splitting living docs across **two repos**,
-`txnet1` and `txconta`) wires them together with **GitHub URLs**: a file in `txconta` links to a file
-in `txnet1` by its `https://github.com/txemi/txnet1/blob/main/…/jenkins_topologia.md` URL. When the
-target is renamed/moved inside `txnet1`, that URL 404s and darnlink cannot help — the target's `uuid`
+`handbook` and `ledger`) wires them together with **GitHub URLs**: a file in `ledger` links to a file
+in `handbook` by its `https://github.com/example-org/handbook/blob/main/…/service-topology.md` URL. When the
+target is renamed/moved inside `handbook`, that URL 404s and darnlink cannot help — the target's `uuid`
 lives in *another repository*, which darnlink, by design, never looks at. The ask: make those
 **cross-repo web links** robust too, anchored to the destination file's `uuid`.
 
 The motivating link (the real case the prototype exercises):
 
 ```
-Ver la [topología Jenkins](https://github.com/txemi/txnet1/blob/main/projects/software/homelab/docs_vivos/jenkins_topologia.md) <!-- web-uuid: 3f9c… -->
+Ver la [topología Jenkins](https://github.com/example-org/handbook/blob/main/docs/living/service-topology.md) <!-- web-uuid: 3f9c… -->
 ```
 
-lives in `txconta/.../jenkins_topologia.md` and points at `txnet1/.../docs_vivos/jenkins_topologia.md`.
+lives in `ledger/.../service-topology.md` and points at `handbook/.../living/service-topology.md`.
 
 ---
 

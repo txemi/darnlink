@@ -29,7 +29,7 @@ first is not a theoretical loss — it is the failure below.
 
 ## Evidence this gap is real (not hypothetical)
 
-The consumer repo `project_map` (~8.000 `.md`, ~15.000 Markdown links) runs a fail-closed pre-commit
+A large consumer repo (~8.000 `.md`, ~15.000 Markdown links) runs a fail-closed pre-commit
 gate: a commit is refused when a **staged** file carries a robustifiable plain link. Its advice to the
 contributor is `darnlink <your/path> --robustify --write`, and on 2026-07-21 that advice could not be
 followed:

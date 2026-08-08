@@ -2,7 +2,7 @@
 
 Network is never touched: every test injects a fake `fetcher` mapping a GithubUrl -> (status, text),
 so the fetch layer is exercised deterministically. Demonstrates the chosen design on the real case
-(txconta -> txnet1 by GitHub URL anchored to the destination's uuid): anchor a plain web link, verify
+(ledger -> handbook by GitHub URL anchored to the destination's uuid): anchor a plain web link, verify
 an anchored one, fail on mismatch/404, stay honest (web_unverifiable) on a private repo with no token,
 and never fire in the core / offline mode.
 """
@@ -18,7 +18,7 @@ from darnlink.weblinks import (GithubUrl, check_web_links_online, find_web_links
 
 UUID = "3f9c1a2b-4d5e-6f70-8192-a3b4c5d6e7f8"
 OTHER = "11111111-2222-3333-4444-555555555555"
-URL = "https://github.com/txemi/txnet1/blob/main/projects/software/homelab/docs_vivos/jenkins_topologia.md"
+URL = "https://github.com/example-org/handbook/blob/main/docs/living/service-topology.md"
 
 
 def _w(p: Path, text: str) -> None:
@@ -41,8 +41,8 @@ def _fetcher(responses):
 # --- pure URL parser (FR-007) ---
 
 def test_parse_github_blob_url():
-    assert parse_github_url("https://github.com/txemi/txnet1/blob/main/a/b/c.md") == \
-        GithubUrl("txemi", "txnet1", "main", "a/b/c.md")
+    assert parse_github_url("https://github.com/example-org/handbook/blob/main/a/b/c.md") == \
+        GithubUrl("example-org", "handbook", "main", "a/b/c.md")
 
 
 def test_parse_raw_and_www():
@@ -55,9 +55,9 @@ def test_parse_non_github_is_none():
 
 
 def test_contents_api_url():
-    gu = GithubUrl("txemi", "txnet1", "main", "docs/x.md")
+    gu = GithubUrl("example-org", "handbook", "main", "docs/x.md")
     assert gu.contents_api_url() == \
-        "https://api.github.com/repos/txemi/txnet1/contents/docs/x.md?ref=main"
+        "https://api.github.com/repos/example-org/handbook/contents/docs/x.md?ref=main"
 
 
 # --- link finder: robust vs plain web links, code fences ignored ---
@@ -324,8 +324,8 @@ def test_classify_status_minus2_is_unverifiable():
     web_unverifiable — a private cross-org repo's 404 is ambiguous, not a break."""
     from darnlink.weblinks import _classify, WebLink
     from pathlib import Path
-    gu = GithubUrl("mapfre-tech", "some-repo", "main", "a.md")
-    link = WebLink(href="https://github.com/mapfre-tech/some-repo/blob/main/a.md", text="x",
+    gu = GithubUrl("acme-tech", "some-repo", "main", "a.md")
+    link = WebLink(href="https://github.com/acme-tech/some-repo/blob/main/a.md", text="x",
                    start=0, end=0, uuid="1111")
     fnd = _classify(link, gu, -2, None, True, Path("f.md"))
     assert fnd.kind == "web_unverifiable"

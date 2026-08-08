@@ -32,7 +32,7 @@ the moment it moves). There is no way to ask for that combination today.
 
 ## Evidence this gap is real (not hypothetical)
 
-A consumer repository (`project_map`, ~1500 uuids) hit exactly this and **could not adopt the
+A large consumer repository (~1500 uuids) hit exactly this and **could not adopt the
 marker**. Its generated files are heavily-linked targets, so `ignore-file` was not an option. It
 worked around it with an **external allowlist** consumed by its own gate — a list of globs the gate
 refuses to complain about (~675 exempt findings). The workaround is strictly worse than a marker:

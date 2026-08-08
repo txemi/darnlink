@@ -60,7 +60,7 @@ All notable changes to darnlink are documented here. The format is based on
   otherwise it returns the sentinel `-2` → `web_unverifiable`. The repo probe is cached per
   `(owner, repo, token)` (a repo linked N times is checked once) and falls back to the plain
   404-is-broken behaviour on a network blip. This lets `web: true` run on repos that link to
-  client/third-party orgs (project_map's ~1383 `mapfre-tech` links, etc.) without a wall of false breaks.
+  client/third-party orgs (one consumer repo has ~1400 links into an org it cannot read) without a wall of false breaks.
   Pairs with the token-gated 404 (0.16.0) and the transient-retry (0.15.0).
 
 
