@@ -17,10 +17,13 @@ All notable changes to darnlink are documented here. The format is based on
   The file ended up with the uuid twice, one copy anchoring nothing, and because the link was robust
   afterwards every later run reported the tree **clean**: the litter became permanent and silent —
   the exact failure Constitution II exists to prevent. Robustify now **moves** such an anchor into
-  place instead of cloning it, and only when the file leaves no room for doubt: same line, exact
-  same uuid, one stray comment and one link that could claim it. Anything else is left untouched —
-  guessing whose anchor it is would be a heuristic (Constitution IV) — but it is announced in the
-  finding, never silently duplicated. Tests in `tests/test_detached_anchor.py`.
+  place instead of cloning it, and only when the file leaves no room for doubt: same line, exact same
+  uuid, **sitting after the link**, one stray comment and one link that could claim it. The
+  after-the-link condition is the mechanism itself — a comment that fell out of the grammar was by
+  definition trailing the `)`; one placed *before* the link got there by hand, for some other reason.
+  Anything else is left untouched — guessing whose anchor it is would be a heuristic (Constitution
+  IV) — but it is announced in the finding, never silently duplicated. Tests in
+  `tests/test_detached_anchor.py`.
 - **The report now says why an apparently-anchored link is still reported as plain.** The old detail
   read `path/to/target.md +uuid <X>` while `<!-- uuid: X -->` was plainly visible on that same line,
   which reads as a tool bug and sends the reader looking in the wrong place; it cost a repository a

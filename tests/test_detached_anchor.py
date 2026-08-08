@@ -101,6 +101,27 @@ def test_detached_anchor_with_a_different_uuid_is_left_alone(tmp_path):
     assert _anchors(a) == 1                     # the link got its own, correct anchor
 
 
+def test_detached_anchor_before_the_link_is_never_absorbed(tmp_path):
+    """Only a TRAILING stray can be the link's own anchor (Copilot review, PR #35).
+
+    The bug's mechanism is a comment that sat right after the `)` and fell out of the grammar when a
+    closing token slipped in between — that always leaves the stray *after* the link. One placed
+    before it got there some other way, by hand, and moving it would be the guess we refuse to make.
+    """
+    _target(tmp_path)
+    _w(tmp_path / "A.md", f"<!-- uuid: {TARGET} --> see [B](B.md)\n")
+
+    result = plan_robustify(tmp_path)
+    apply_robustify(result)
+
+    a = (tmp_path / "A.md").read_text()
+    assert a.startswith(f"<!-- uuid: {TARGET} --> see ")  # left byte-for-byte where it was
+    assert len(find_robust_links(a)) == 1                 # the link still got its own anchor
+    assert len(find_detached_anchors(a)) == 1             # the stray survives
+    details = " ".join(f.detail for f in result.findings if f.kind is Kind.ROBUSTIFY)
+    assert "detached" in details.lower()                  # and the duplicate is announced, not silent
+
+
 def test_detached_anchor_on_another_line_is_left_alone(tmp_path):
     _target(tmp_path)
     _w(tmp_path / "A.md", f"<!-- uuid: {TARGET} -->\n\n[B](B.md)\n")

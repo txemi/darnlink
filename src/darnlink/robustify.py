@@ -378,21 +378,28 @@ def plan_robustify(
         # twice, one copy anchoring nothing — and since the link is robust afterwards, every later
         # run reports the tree clean and the litter never surfaces again. So move it instead.
         #
-        # Only when the file leaves no room for doubt: same line, same uuid, one stray, one claimant.
-        # Anything else would be a guess, and guessing is not what this tool does (Constitution IV).
+        # Only when the file leaves no room for doubt: same line, same uuid, sitting AFTER the link,
+        # one stray and one claimant. Anything else would be a guess, and guessing is not what this
+        # tool does (Constitution IV).
         strays = find_detached_anchors(original, spans.get(f, [])) if anchorable else []
         absorb: Dict[int, DetachedAnchor] = {}
-        ambiguous: Set[int] = set()
+        leftover: Dict[int, int] = {}  # same-uuid strays on the line that were NOT absorbed
         for i, (link, u) in enumerate(anchorable):
             lo, hi = line_bounds(original, link.start)
             here = [d for d in strays if d.uuid == u and lo <= d.start < hi]
             if not here:
                 continue
+            # Only a stray that TRAILS the link can be that link's own anchor: the mechanism is a
+            # comment that sat right after the `)` and fell out of the grammar when a closing token
+            # slipped in between. One placed BEFORE the link never got there that way — somebody put
+            # it there on purpose, and relocating it would be exactly the guess we refuse to make.
+            trailing = [d for d in here if d.start >= link.end]
             claimants = sum(1 for l2, u2 in anchorable if u2 == u and lo <= l2.start < hi)
-            if len(here) == 1 and claimants == 1:
-                absorb[i] = here[0]
-            else:
-                ambiguous.add(i)
+            if len(trailing) == 1 and claimants == 1:
+                absorb[i] = trailing[0]
+            remaining = len(here) - (1 if i in absorb else 0)
+            if remaining:
+                leftover[i] = remaining
 
         edits: List[Tuple[int, int, str]] = []  # (start, end, replacement), disjoint by construction
         for i, (link, u) in enumerate(anchorable):
@@ -402,10 +409,12 @@ def plan_robustify(
             if stray is not None:
                 edits.append((_hspace_start(original, stray.start), stray.end, ""))
                 detail += " (moved a detached anchor that was already on this line)"
-            elif i in ambiguous:
-                detail += (" (WARNING: this line carries a detached anchor with the same uuid, but "
-                           "more than one link could own it, so it is left as is — the uuid will "
-                           "appear twice until you remove the stray comment)")
+            n = leftover.get(i)
+            if n:
+                detail += (f" (WARNING: {n} detached anchor(s) with this uuid remain on this line — "
+                           "sitting before the link, or claimable by more than one link, so they are "
+                           "left exactly as they are; the uuid will appear more than once until you "
+                           "remove them by hand)")
             result.findings.append(Finding(Kind.ROBUSTIFY, f, detail))
 
         if edits:
