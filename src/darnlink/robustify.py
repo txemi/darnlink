@@ -383,7 +383,7 @@ def plan_robustify(
         # tool does (Constitution IV).
         strays = find_detached_anchors(original, spans.get(f, [])) if anchorable else []
         absorb: Dict[int, DetachedAnchor] = {}
-        leftover: Dict[int, int] = {}  # same-uuid strays on the line that were NOT absorbed
+        leftover: Dict[int, Tuple[int, str]] = {}  # link index -> (how many strays stayed, why)
         for i, (link, u) in enumerate(anchorable):
             lo, hi = line_bounds(original, link.start)
             here = [d for d in strays if d.uuid == u and lo <= d.start < hi]
@@ -399,7 +399,16 @@ def plan_robustify(
                 absorb[i] = trailing[0]
             remaining = len(here) - (1 if i in absorb else 0)
             if remaining:
-                leftover[i] = remaining
+                # Name the reason that actually applies. A vague "it was ambiguous" would be the very
+                # thing this change exists to stop: a message that sends the reader to the wrong place.
+                why: List[str] = []
+                if claimants > 1:
+                    why.append("more than one link on this line could own it")
+                if len(trailing) > 1:
+                    why.append("more than one such anchor trails the link")
+                if len(here) > len(trailing):
+                    why.append("it sits before the link, where the grammar could never have put it")
+                leftover[i] = (remaining, " / ".join(why))
 
         edits: List[Tuple[int, int, str]] = []  # (start, end, replacement), disjoint by construction
         for i, (link, u) in enumerate(anchorable):
@@ -409,12 +418,12 @@ def plan_robustify(
             if stray is not None:
                 edits.append((_hspace_start(original, stray.start), stray.end, ""))
                 detail += " (moved a detached anchor that was already on this line)"
-            n = leftover.get(i)
-            if n:
-                detail += (f" (WARNING: {n} detached anchor(s) with this uuid remain on this line — "
-                           "sitting before the link, or claimable by more than one link, so they are "
-                           "left exactly as they are; the uuid will appear more than once until you "
-                           "remove them by hand)")
+            stayed = leftover.get(i)
+            if stayed is not None:
+                n, why = stayed
+                detail += (f" (WARNING: {n} detached anchor(s) with this uuid remain on this line "
+                           f"because {why}; they are left exactly as they are, so the uuid will "
+                           "appear more than once until you remove them by hand)")
             result.findings.append(Finding(Kind.ROBUSTIFY, f, detail))
 
         if edits:

@@ -101,6 +101,27 @@ def test_detached_anchor_with_a_different_uuid_is_left_alone(tmp_path):
     assert _anchors(a) == 1                     # the link got its own, correct anchor
 
 
+def test_two_trailing_strays_are_left_alone_and_the_reason_is_named(tmp_path):
+    """Two candidates behind one link: which is the anchor? Unknowable, so neither moves.
+
+    Second Copilot review, PR #35: the warning used to blame causes that did not apply here (sitting
+    before the link / several claimants), which is the same wrong-place-to-look failure this whole
+    change is about. It must name the reason that is actually true.
+    """
+    _target(tmp_path)
+    _w(tmp_path / "A.md", f"**[B](B.md)** <!-- uuid: {TARGET} --> x <!-- uuid: {TARGET} -->\n")
+
+    result = plan_robustify(tmp_path)
+    apply_robustify(result)
+
+    a = (tmp_path / "A.md").read_text()
+    assert len(find_detached_anchors(a)) == 2   # both strays survive untouched
+    detail = next(f.detail for f in result.findings if f.kind is Kind.ROBUSTIFY)
+    assert "more than one such anchor trails the link" in detail
+    assert "before the link" not in detail       # the cause that does NOT apply is not claimed
+    assert "could own it" not in detail
+
+
 def test_detached_anchor_before_the_link_is_never_absorbed(tmp_path):
     """Only a TRAILING stray can be the link's own anchor (Copilot review, PR #35).
 
