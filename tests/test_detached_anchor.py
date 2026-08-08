@@ -143,6 +143,30 @@ def test_detached_anchor_before_the_link_is_never_absorbed(tmp_path):
     assert "detached" in details.lower()                  # and the duplicate is announced, not silent
 
 
+def test_a_stray_before_the_link_does_not_block_moving_the_one_behind_it(tmp_path):
+    """One stray each side: the trailing one still moves, the leading one still stays.
+
+    Third Copilot review, PR #35, raised as low confidence: with two strays on the line the move
+    "contradicts the one-stray-one-claimant constraint". The constraint counts TRAILING strays, and
+    that is deliberate — a comment before the link was never a candidate, so its presence adds no
+    doubt about which one is the misplaced anchor. Refusing to move because of it would leave the
+    real bug unfixed on account of an unrelated comment. Pinned here so the choice is not re-litigated.
+    """
+    _target(tmp_path)
+    _w(tmp_path / "A.md", f"<!-- uuid: {TARGET} --> **[B](B.md)** <!-- uuid: {TARGET} -->\n")
+
+    result = plan_robustify(tmp_path)
+    apply_robustify(result)
+
+    a = (tmp_path / "A.md").read_text()
+    assert a.startswith(f"<!-- uuid: {TARGET} --> **[B](B.md) <!-- uuid: {TARGET} -->**")
+    assert len(find_robust_links(a)) == 1        # the trailing stray became the link's anchor
+    assert len(find_detached_anchors(a)) == 1    # the leading one is untouched
+    detail = next(f.detail for f in result.findings if f.kind is Kind.ROBUSTIFY)
+    assert "moved a detached anchor" in detail
+    assert "it sits before the link" in detail   # and the survivor is explained, not hidden
+
+
 def test_detached_anchor_on_another_line_is_left_alone(tmp_path):
     _target(tmp_path)
     _w(tmp_path / "A.md", f"<!-- uuid: {TARGET} -->\n\n[B](B.md)\n")

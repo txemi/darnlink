@@ -378,9 +378,12 @@ def plan_robustify(
         # twice, one copy anchoring nothing — and since the link is robust afterwards, every later
         # run reports the tree clean and the litter never surfaces again. So move it instead.
         #
-        # Only when the file leaves no room for doubt: same line, same uuid, sitting AFTER the link,
-        # one stray and one claimant. Anything else would be a guess, and guessing is not what this
-        # tool does (Constitution IV).
+        # Only when the file leaves no room for doubt: exactly ONE such stray TRAILING the link on
+        # that line, and exactly one link that could claim it. The counting is over TRAILING strays,
+        # not over every uuid comment on the line: one sitting before the link was never a candidate
+        # (see below), so it neither blocks the move nor is touched by it — it stays put and is
+        # reported. Anything past that would be a guess, and guessing is not what this tool does
+        # (Constitution IV).
         strays = find_detached_anchors(original, spans.get(f, [])) if anchorable else []
         absorb: Dict[int, DetachedAnchor] = {}
         leftover: Dict[int, Tuple[int, str]] = {}  # link index -> (how many strays stayed, why)
