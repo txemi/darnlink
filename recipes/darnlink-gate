@@ -394,6 +394,13 @@ DL_ADDED_FILE="$(mktemp)"
 trap 'rm -f "$DL_JSON_FILE" "$DL_STAGED_FILE" "$DL_ADDED_FILE"' EXIT
 export DL_JSON_FILE DL_STAGED_FILE DL_ADDED_FILE
 export DL_ROOT="$root" DL_REF="$REF" DL_MODE="$MODE" DL_DANGLING="$DANGLING"
+
+# The SAME --exclude/--ignore-block this run was configured with, shell-quoted, so the command the
+# error message suggests can carry them. Without this the suggestion applies a DIFFERENT policy
+# than the gate that just failed you -- which is the whole defect the suggestion exists to avoid.
+DL_ARGS_STR=""
+for a in "${DL_ARGS[@]}"; do DL_ARGS_STR+=" $(printf '%q' "$a")"; done
+export DL_ARGS_STR
 # The added-lines ratchet needs the LINES this commit adds, and git lives here, not in darnlink
 # (spec 008, Option B). `-U0` gives hunks with no context, so every `+` line in the header range is
 # genuinely new. Collected per staged file as `path:start,count`.
@@ -476,11 +483,14 @@ if strict:
     # frontmatter yet, reporting `skipped (no frontmatter)` and writing nothing -- a "did nothing"
     # that reads as "nothing to do", and the anchor never appears.
     print("darnlink-gate (staged): un-anchored plain link in a file you're committing.")
-    print("  Anchor ONLY what you are committing:")
+    print("  Anchor the files you are committing (and give their targets a uuid):")
     print("    git diff --cached --name-only -- '*.md' | \\")
-    print(f"      uvx --from {os.environ['DL_REF']} darnlink . --robustify --create-frontmatter --write --only-from -")
+    print(f"      uvx --from {os.environ['DL_REF']} darnlink ."
+          f"{os.environ.get('DL_ARGS_STR', '')} --robustify --create-frontmatter --write --only-from -")
+    print("  It writes the staged files AND creates the missing `uuid` in the files they link to --")
+    print("  an anchor needs a uuid at BOTH ends. Nothing else in the repo is touched.")
     print("  (Do NOT run a bare `darnlink . --robustify --write`: it rewrites the whole repo and")
-    print("   ignores this gate's own --exclude list.)")
+    print("   drops this gate's --exclude/--ignore-block, applying a different policy.)")
     sys.exit(3)
 if dangling and dangling_mode != "warn":
     print(f"darnlink-gate (staged): {len(dangling)} link(s) you are adding point at a path that does "
