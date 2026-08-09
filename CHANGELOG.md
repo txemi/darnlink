@@ -6,6 +6,8 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.20.0] — 2026-08-09
+
 ### Added
 - **The `dangling` axis is now gateable, opt-in, with an added-lines ratchet** (`recipes/darnlink-gate`).
   `dangling` defaults to **`off`**, so upgrading the pin changes no verdict anywhere; `warn` lists
