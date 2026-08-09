@@ -6,6 +6,28 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- **`dangling`: a plain link whose target does not exist is now reported** (feature 015). It was
+  invisible before — not `unresolvable` (that is a *robust* link whose uuid died) and not
+  `robustify` (there is nothing to anchor). `_anchor_target` returned `None` both for "the target is
+  not anchorable" and for "the target is not there", and the caller could not tell them apart, so a
+  link pointing at nothing appeared in no category at all, not even a tolerated one. Measured across
+  nine repositories that all gate on darnlink: **3,212 such links**, none of them named by any mode.
+  The trigger was a documentation reorganisation that moved 78 Markdown files in one commit and left
+  every axis green.
+  - **Report-only.** No mode, including `--write`, acts on it. Determinism is unaffected: a
+    filesystem existence check is exact and offline.
+  - **It does not move any exit code.** `check` reports it on its own axis (and in `--json` under
+    `dangling`), deliberately outside `exit_code`: folding it in would turn every consumer's gate red
+    on upgrade, whose only escape would be *lowering* its mode — a relaxation, in a ladder designed
+    to only tighten. Which findings gate stays the caller's policy.
+  - The target's **extension is irrelevant**; only its existence. A target that *exists* but is not
+    anchorable (a `.png`, a README-less directory) is still not reported, and anchoring remains
+    `.md`-only. Image embeds count (FR-050).
+  - Composes with everything that already silences a link: code spans and fences, `--ignore-block`
+    regions, `darnlink-ignore-links` and `darnlink-ignore-file`. Percent-encoded paths are accepted
+    in their decoded spelling, so `my%20file.md` next to `my file.md` is not a false alarm.
+
 ## [0.19.2] — 2026-08-08
 
 ### Fixed

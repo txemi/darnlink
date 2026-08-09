@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from fnmatch import fnmatch
 from pathlib import Path
+from urllib.parse import unquote
 from typing import AbstractSet, Dict, List, Optional, Set, Tuple
 
 from .frontmatter_edit import (
@@ -26,7 +27,7 @@ from .frontmatter_index import DEFAULT_EXCLUDES, dir_excluded, iter_markdown_fil
 from .links import (DetachedAnchor, PlainLink, code_spans, emit_robust_link, file_ignores_links,
                     file_is_ignored, find_detached_anchors, find_plain_links, ignored_spans,
                     line_bounds)
-from .paths import DIR_ANCHOR, is_local_relative, names_md, resolve_href
+from .paths import DIR_ANCHOR, is_local_relative, names_md, resolve_href, split_fragment
 from .report import Finding, Kind
 from .scope import in_scope
 
@@ -65,6 +66,33 @@ def _anchor_target(href: str, linking_file: Path, extra_targets: AbstractSet[Pat
         if readme.is_file() or readme.resolve() in extra_targets:  # a dir named `README.md` is not an anchor
             return readme
     return None
+
+
+def _dangling_target(href: str, linking_file: Path) -> Path | None:
+    """The resolved path of a local link that points at **nothing**, or None (feature 015).
+
+    `_anchor_target` returns None for two situations its caller cannot tell apart: the target is
+    merely *not anchorable* (a `.png`, a README-less directory) or it is *not there*. Only the
+    second is a dead link, and only it is reported (FR-041/FR-044).
+
+    The target's extension is irrelevant — existence is the whole question (FR-043). darnlink still
+    never opens, indexes or writes the target; it only asks the filesystem a yes/no question about a
+    path a Markdown link already names.
+    """
+    if not is_local_relative(href):
+        return None                       # FR-046: scheme, protocol-relative, absolute, bare #frag
+    t = resolve_href(href, linking_file)  # drops the fragment
+    if t.exists():
+        return None
+    # FR-047: `resolve_href` does not percent-decode, so `my%20file.md` resolves to a path that
+    # never exists. Judging that literally would report every percent-encoded link in a tree — the
+    # kind of false positive that gets a gate switched off rather than fixed. Accept the decoded
+    # spelling as proof of existence; anchoring such links stays out of scope.
+    path_part, _ = split_fragment(href)
+    decoded = unquote(path_part)
+    if decoded != path_part and (linking_file.parent / decoded).resolve().exists():
+        return None
+    return t
 
 
 def _dir_link_missing_readme(href: str, linking_file: Path) -> Path | None:
@@ -338,6 +366,14 @@ def plan_robustify(
         for link in links:
             t = _anchor_target(link.href, f, planned_readmes)
             if t is None or t.resolve() == f.resolve():
+                # 015: this `None` used to be the end of the road for a link to a path that is
+                # simply not there — no category, not even a tolerated one. Name it before dropping
+                # it. A self-link (t is not None) is not a candidate.
+                dead = _dangling_target(link.href, f) if t is None else None
+                if dead is not None:
+                    result.findings.append(Finding(
+                        Kind.DANGLING, f,
+                        f"{link.href}: target does not exist (resolves to {dead})"))
                 continue  # skip non-md/external and self-links
             tr = t.resolve()
             if tr in ignored_targets or tr in invalid_fm:

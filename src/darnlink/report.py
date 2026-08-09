@@ -17,6 +17,7 @@ class Kind(str, Enum):
     DENY_LISTED = "deny_listed"        # robustify target matches --no-create-frontmatter-for: never given a uuid
     IGNORED_LINKS = "ignored_links"    # source carries <!-- darnlink-ignore-links -->: its own links are left alone (it stays a target)
     INVALID_FRONTMATTER = "invalid_frontmatter"  # frontmatter present but not valid YAML; reported, never touched
+    DANGLING = "dangling"              # (015) a plain link whose target does not exist at all — not `unresolvable` (that is a robust link whose uuid died) and not `robustify` (there is nothing to anchor); reported, never touched
     OUT_OF_SCOPE = "out_of_scope"      # robustify target exists but was never scanned (outside the root, or excluded): its uuid is unknown, so the link is left plain — NOT the same as having no frontmatter (FR-009)
     TARGET_UUID_WRITE = "target_uuid_write"      # (--only) a uuid was written into a target outside the write scope, so the link could be anchored (FR-006)
     TARGET_WRITE_REFUSED = "target_write_refused"  # (--only --no-target-writes) target outside the write scope needs a uuid; refused, link left plain (FR-006)
