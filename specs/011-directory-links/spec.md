@@ -13,7 +13,7 @@ directory be a first-class link target, identified by the `uuid` of its `README.
 ## Motivation
 
 darnlink heals `.md`→`.md` links, but real doc trees link to **directories** too — "see the
-[deployment guide](ops/deploy/)", a hub folder, a country's report folder. Those links are outside
+deployment guide (`ops/deploy/`)", a hub folder, a country's report folder. Those links are outside
 the tool: move or rename the folder and they die with no warning, and no `--robustify`/gate can
 protect them. A directory already tends to carry a `README.md` hub with a `uuid`; that uuid is a
 perfectly good stable identity for the directory. This feature uses it.

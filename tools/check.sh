@@ -24,3 +24,9 @@ uv run darnlink .              # repair check: robust links must not be broken
 # OUTBOUND links are still anchored with invisible <!-- uuid --> comments; only a frontmatter uuid would
 # show on the package page, which we don't want). See docs/elevating-your-link-gate.md.
 uv run darnlink . --robustify --create-frontmatter --no-create-frontmatter-for README.md
+
+# Dangling axis (dogfood `dangling: repo`, the strictest rung the recipe offers). Runs LAST
+# because it shells out to darnlink again; see tools/dangling_gate.py for why it lives in its own
+# file and why it is fail-closed at zero.
+python3 tools/dangling_gate.py
+

@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Versioned git pre-push hook — the WHOLE-REPO wall, and the surface this repo was missing.
+#
+# Activate ONCE per clone (git will not auto-run versioned hooks, by design — security):
+#   git config core.hooksPath hooks
+# (Or let the toolbelt's global dispatcher do it: it runs hooks/<name> and hooks/<name>.d/*.)
+#
+# Why a pre-push when pre-commit already runs the same gate.
+# `git commit --no-verify` is one keystroke, and a machine that has never activated hooks runs no
+# gate at all — in both cases the first wall the work meets is CI, which is remote, slower, and
+# occasionally down (billing, outage). `git push` is deliberate and infrequent, so a whole-repo
+# judgment here is affordable, and it is the last place something broken can be stopped before it
+# leaves the machine.
+#
+# darnlink was the only repo in its own consuming fleet without this surface: it gates its Markdown
+# on pre-commit and in Actions, and had nothing in between. Fixed here, so the tool runs the same
+# four-surface wall it asks its consumers to run.
+#
+# Runs tools/check.sh — the same gate as pre-commit and CI, so there is no drift between surfaces
+# (lang gate, tests, darnlink self-check at mode=max, dangling at zero).
+#
+# Bypass (discouraged, and it skips the wall for EVERY commit in the push): git push --no-verify
+set -euo pipefail
+exec bash "$(git rev-parse --show-toplevel)/tools/check.sh"
