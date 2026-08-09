@@ -185,7 +185,10 @@ def test_unavailable_create_readme_axis_does_not_mask_a_failing_core(tmp_path):
 
     repo = tmp_path / "repo"
     repo.mkdir()
-    subprocess.run([needed["git"], "init", "-q"], cwd=repo, check=True)
+    # `env=_clean_env()`, like every other git call here: run from the repo's own pre-commit hook,
+    # an inherited GIT_DIR would make this init/operate on the OUTER repository. The absolute path
+    # is kept because this test deliberately builds a minimal PATH later.
+    subprocess.run([needed["git"], "init", "-q"], cwd=repo, env=_clean_env(), check=True)
     # a plain link to a uuid'd target → a strict/robustify offender → the core `check` exits 3
     (repo / "T.md").write_text(f"---\nuuid: {U}\n---\n# T\n")
     (repo / "A.md").write_text("# A\n[t](T.md) plain\n")
@@ -205,7 +208,7 @@ def test_unavailable_create_readme_axis_does_not_mask_a_failing_core(tmp_path):
     )
     shim.chmod(0o755)
 
-    env = {k: v for k, v in os.environ.items() if k not in _LEAKY_ENV}
+    env = _clean_env()
     env["PATH"] = str(bindir)  # only the minimal bin → python3 is unreachable
     env["DARNLINK_BIN"] = dbin
     env["DARNLINK_GATE_MODE"] = "check"

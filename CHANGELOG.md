@@ -18,18 +18,7 @@ All notable changes to darnlink are documented here. The format is based on
   `check --json`. It exists because a *consumer* needs it as data: the ratchet intersects findings with
   the lines a commit adds, and scraping that out of `detail` would couple the gate to prose.
 
-### Changed
-- **`check` no longer enumerates dangling findings in its text output** — it states the count on one
-  line and carries the details in `--json`. On the trees this axis lands on (thousands of dead links in
-  the repos it was measured on) one line each buried the findings that actually gate the build. The
-  count keeps it honest; the gate recipe prints them when its axis is switched on.
 
-### Known gaps
-- `darnlink-gate.ps1` ignores the `dangling` key, so a Windows-only gating surface does not enforce
-  this axis yet.
-
-
-### Added
 - **`dangling`: a plain link whose target does not exist is now reported** (feature 015). It was
   invisible before — not `unresolvable` (that is a *robust* link whose uuid died) and not
   `robustify` (there is nothing to anchor). `_anchor_target` returned `None` both for "the target is
@@ -50,6 +39,16 @@ All notable changes to darnlink are documented here. The format is based on
   - Composes with everything that already silences a link: code spans and fences, `--ignore-block`
     regions, `darnlink-ignore-links` and `darnlink-ignore-file`. Percent-encoded paths are accepted
     in their decoded spelling, so `my%20file.md` next to `my file.md` is not a false alarm.
+
+### Changed
+- **`check` no longer enumerates dangling findings in its text output** — it states the count on one
+  line and carries the details in `--json`. On the trees this axis lands on (thousands of dead links in
+  the repos it was measured on) one line each buried the findings that actually gate the build. The
+  count keeps it honest; the gate recipe prints them when its axis is switched on.
+
+### Known gaps
+- `darnlink-gate.ps1` ignores the `dangling` key, so a Windows-only gating surface does not enforce
+  this axis yet.
 
 ## [0.19.2] — 2026-08-08
 

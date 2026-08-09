@@ -189,7 +189,12 @@ dangling_findings() {
   if [ "$jrc" -gt 3 ] || [ -z "$json" ]; then echo ERR; return 0; fi
   # Temp file, not env/argv: a whole-repo dump on a large consumer runs to megabytes (see above).
   tmp="$(mktemp)"; printf '%s' "$json" > "$tmp"
-  python3 - "$tmp" <<'PY'
+  # Capture, THEN clean up, THEN speak. Cleaning up only after a successful run leaks the file on any
+  # python failure, because `set -e` leaves the function before the `rm` (a gate that runs on every
+  # commit leaks once per commit).
+  local out prc
+  set +e
+  out="$(python3 - "$tmp" <<'PY'
 import json, sys
 try:
     with open(sys.argv[1], encoding="utf-8") as fh:
@@ -199,7 +204,11 @@ except Exception:
 for f in data.get("dangling", {}).get("findings", []):
     print(f"{f.get('file','')}\t{f.get('line') or ''}\t{f.get('detail','')}")
 PY
+)"; prc=$?
+  set -e
   rm -f "$tmp"
+  [ "$prc" -ne 0 ] && { echo ERR; return 0; }
+  printf '%s\n' "$out"
 }
 
 create_readme_offenders() {
@@ -221,7 +230,12 @@ create_readme_offenders() {
   # ignore-links finding too and can run to megabytes, well past ARG_MAX (a big mirror is exactly the case
   # this feature exists for). The path is short; python reads the file.
   tmp="$(mktemp)"; printf '%s' "$json" > "$tmp"
-  python3 - "$tmp" <<'PY'
+  # Same capture-then-clean-then-speak order as dangling_findings(): cleaning up only on the success
+  # path leaks the temp file whenever python fails, because `set -e` leaves before the `rm`.
+  # (stderr is NOT captured — the per-offender lines are meant to reach the user as they are printed.)
+  local out prc
+  set +e
+  out="$(python3 - "$tmp" <<'PY'
 import json, sys
 try:
     with open(sys.argv[1], encoding="utf-8") as fh:
@@ -233,7 +247,11 @@ for f in off:
     sys.stderr.write(f"  [create-readme] {f.get('file')}: {f.get('detail')}\n")
 print(len(off))
 PY
+)"; prc=$?
+  set -e
   rm -f "$tmp"
+  [ "$prc" -ne 0 ] && { echo ERR; return 0; }
+  printf '%s\n' "$out"
 }
 
 if [ "$SCOPE" != "staged" ]; then
