@@ -6,6 +6,38 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.20.2] — 2026-08-09
+
+### Fixed
+- **`darnlink-gate`: the command the failure message tells you to paste no longer rewrites the whole
+  repo under a different policy** (#40). The staged gate used to suggest a bare
+  `darnlink . --robustify --write`: correct as a capability, a trap as advice. It touches every file
+  in the tree, and it does **not** carry the `--exclude` list the gate that just failed you was
+  configured with — so it applies a different policy than the one that produced the error. Measured
+  in a consuming monorepo: **110 links anchored across 26 files when one was asked for**, pasted by
+  someone who trusted the message, on a tree shared by several concurrent sessions. The suggestion is
+  now the piped `--only-from -` form (scan the repo, write only the staged files), carries the run's
+  own `--exclude`/`--ignore-block` shell-quoted, spells out `--create-frontmatter` (without it the
+  target keeps no uuid and the anchor silently never appears), and says explicitly not to run the
+  bare form.
+
+### Changed
+- **The example config in `recipes/darnlink-gate` is the strict target, not a stale minimum** (#42).
+  It had sat at `v0.7.0` for thirteen releases while recommending `mode: check` with no `dangling`
+  key — an axis this very file implements. It now shows every axis at its strictest, plus a six-rung
+  **adoption path** (pasting the target into a never-gated repo fails on contact, and a gate that
+  fails on arrival gets deleted rather than climbed) and a sub-ladder for `dangling`.
+  The `ref` is deliberately a **`vX.Y.Z` placeholder** with the command that resolves it: any
+  concrete pin written into a comment ages the moment it is committed, which is exactly how this
+  example drifted. Documented too: `dangling: added-lines` needs a staged diff, so it only bites
+  under `scope=staged` — on a whole-repo surface it degrades to `warn`, and `repo` is the only rung
+  with server-side enforcement.
+
+### Added
+- **English-only ratchet gate for this repo's own sources** (`tools/lang_gate.py`, wired into CI and
+  `tools/check.sh`). New and modified lines must be English; legacy lines live in a per-file baseline
+  whose counts can only decrease. Escape hatch for a false positive: `# lang-ok`.
+
 ## [0.20.1] — 2026-08-09
 
 ### Fixed
@@ -68,6 +100,10 @@ All notable changes to darnlink are documented here. The format is based on
   this axis yet.
 
 ## [0.19.2] — 2026-08-08
+
+> **Never tagged.** No `v0.19.2` release exists: the next release commit went straight to
+> `0.20.0`, so this fix shipped inside **v0.20.0**. The section is kept because the change is
+> real and dated; the version number is not. Its link below points at the commit, not a tag.
 
 ### Fixed
 - **`--robustify --write` no longer duplicates a uuid comment that is already on the line, just
@@ -453,10 +489,31 @@ First public release.
 - Ships a [pre-commit](https://pre-commit.com/) hook (`darnlink`, `darnlink-repair`).
 - Format specification: [FORMAT.md](FORMAT.md) <!-- uuid: 9052d864-2a45-4ed4-8725-d8a394e7a7ef -->.
 
-[Unreleased]: https://github.com/txemi/darnlink/compare/v0.5.0...HEAD
-[0.5.0]: https://github.com/txemi/darnlink/releases/tag/v0.5.0
-[0.4.0]: https://github.com/txemi/darnlink/releases/tag/v0.4.0
-[0.3.0]: https://github.com/txemi/darnlink/releases/tag/v0.3.0
-[0.2.0]: https://github.com/txemi/darnlink/releases/tag/v0.2.0
-[0.1.1]: https://github.com/txemi/darnlink/releases/tag/v0.1.1
+[Unreleased]: https://github.com/txemi/darnlink/compare/v0.20.2...HEAD
+[0.20.2]: https://github.com/txemi/darnlink/compare/v0.20.1...v0.20.2
+[0.20.1]: https://github.com/txemi/darnlink/compare/v0.20.0...v0.20.1
+[0.20.0]: https://github.com/txemi/darnlink/compare/v0.19.1...v0.20.0
+[0.19.1]: https://github.com/txemi/darnlink/compare/v0.19.0...v0.19.1
+[0.19.0]: https://github.com/txemi/darnlink/compare/v0.18.0...v0.19.0
+[0.18.0]: https://github.com/txemi/darnlink/compare/v0.17.0...v0.18.0
+[0.17.0]: https://github.com/txemi/darnlink/compare/v0.16.0...v0.17.0
+[0.16.0]: https://github.com/txemi/darnlink/compare/v0.15.0...v0.16.0
+[0.15.0]: https://github.com/txemi/darnlink/compare/v0.14.0...v0.15.0
+[0.14.0]: https://github.com/txemi/darnlink/compare/v0.13.0...v0.14.0
+[0.13.0]: https://github.com/txemi/darnlink/compare/v0.12.0...v0.13.0
+[0.12.0]: https://github.com/txemi/darnlink/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/txemi/darnlink/compare/v0.10.0...v0.11.0
+[0.10.0]: https://github.com/txemi/darnlink/compare/v0.9.1...v0.10.0
+[0.9.1]: https://github.com/txemi/darnlink/compare/v0.9.0...v0.9.1
+[0.9.0]: https://github.com/txemi/darnlink/compare/v0.8.0...v0.9.0
+[0.8.0]: https://github.com/txemi/darnlink/compare/v0.7.1...v0.8.0
+[0.7.1]: https://github.com/txemi/darnlink/compare/v0.7.0...v0.7.1
+[0.7.0]: https://github.com/txemi/darnlink/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/txemi/darnlink/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/txemi/darnlink/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/txemi/darnlink/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/txemi/darnlink/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/txemi/darnlink/compare/v0.1.1...v0.2.0
+[0.1.1]: https://github.com/txemi/darnlink/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/txemi/darnlink/releases/tag/v0.1.0
+[0.19.2]: https://github.com/txemi/darnlink/commit/f0cf814
