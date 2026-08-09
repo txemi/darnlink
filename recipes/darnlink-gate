@@ -380,30 +380,49 @@ set -e
 if [ "$rc" -gt 3 ] || [ -z "$DL_JSON" ]; then
   bail "(staged) darnlink unreachable (rc=$rc)"
 fi
-export DL_JSON DL_ROOT="$root" DL_REF="$REF" DL_MODE="$MODE" DL_DANGLING="$DANGLING"
-export DL_STAGED="$(printf '%s\n' "${STAGED[@]}")"
+# ⚠️ The payloads go through TEMP FILES, never through the environment. Linux caps a SINGLE env var
+# (or argv entry) at MAX_ARG_STRLEN = 32 pages = 128 KiB — a per-string limit, quite separate from the
+# ~2 MB ARG_MAX total, and exceeding it makes the next `exec` fail with E2BIG. A whole-repo
+# `check --json` on a large consumer is ~200 KB, so exporting it broke the staged path outright:
+# `sed: Argument list too long`, and a gate that cannot run is a gate that gates nothing.
+# (`create_readme_offenders` already used a temp file for exactly this reason; the staged path did
+# not, and only tipped over once the JSON grew.)
+DL_JSON_FILE="$(mktemp)"; printf '%s' "$DL_JSON" > "$DL_JSON_FILE"
+DL_STAGED_FILE="$(mktemp)"; printf '%s\n' "${STAGED[@]}" > "$DL_STAGED_FILE"
+DL_ADDED_FILE="$(mktemp)"
+# Best-effort cleanup on every exit path, including the failure ones (`set -e`, a signal).
+trap 'rm -f "$DL_JSON_FILE" "$DL_STAGED_FILE" "$DL_ADDED_FILE"' EXIT
+export DL_JSON_FILE DL_STAGED_FILE DL_ADDED_FILE
+export DL_ROOT="$root" DL_REF="$REF" DL_MODE="$MODE" DL_DANGLING="$DANGLING"
 # The added-lines ratchet needs the LINES this commit adds, and git lives here, not in darnlink
 # (spec 008, Option B). `-U0` gives hunks with no context, so every `+` line in the header range is
 # genuinely new. Collected per staged file as `path:start,count`.
 if [ "$DANGLING" = added-lines ]; then
-  DL_ADDED=""
   for p in "${STAGED[@]}"; do
     [ -n "$p" ] || continue
-    hunks="$(git diff --cached -U0 -- "$p" 2>/dev/null | sed -n 's/^@@ -[^ ]* +\([0-9]*\)\(,\([0-9]*\)\)\{0,1\} @@.*/\1,\3/p' || true)"
-    [ -n "$hunks" ] && DL_ADDED="$DL_ADDED$(printf '%s' "$hunks" | sed "s#^#$p:#")
-"
+    git diff --cached -U0 -- "$p" 2>/dev/null \
+      | sed -n 's/^@@ -[^ ]* +\([0-9]*\)\(,\([0-9]*\)\)\{0,1\} @@.*/\1,\3/p' \
+      | sed "s#^#$p:#" >> "$DL_ADDED_FILE" || true
   done
-  export DL_ADDED
 fi
 
-# Pass everything via env (no interpolation into the script → no injection from finding text).
+# Paths via env, PAYLOADS via files (see the MAX_ARG_STRLEN note above). No interpolation into the
+# script either way → no injection from finding text.
 python3 <<'PY'
 import json, os, sys
 root = os.environ["DL_ROOT"]
 mode = os.environ.get("DL_MODE", "check")
+
+def _read(var):
+    path = os.environ.get(var)
+    if not path or not os.path.exists(path):
+        return ""
+    with open(path, encoding="utf-8") as fh:
+        return fh.read()
+
 # realpath both sides: darnlink emits resolved absolute paths, so resolve symlinks here too to match.
-staged = {os.path.realpath(os.path.join(root, p)) for p in os.environ["DL_STAGED"].split("\n") if p.strip()}
-data = json.loads(os.environ["DL_JSON"])
+staged = {os.path.realpath(os.path.join(root, p)) for p in _read("DL_STAGED_FILE").split("\n") if p.strip()}
+data = json.loads(_read("DL_JSON_FILE"))
 def hits(axis):
     return [f for f in data.get(axis, {}).get("findings", []) if os.path.realpath(f["file"]) in staged]
 integ = hits("integrity")
@@ -420,7 +439,7 @@ if dangling_mode != "off":
     found = hits("dangling")
     if dangling_mode == "added-lines":
         added = {}   # realpath -> set of added line numbers
-        for row in os.environ.get("DL_ADDED", "").split("\n"):
+        for row in _read("DL_ADDED_FILE").split("\n"):
             if not row.strip():
                 continue
             path, _, span = row.rpartition(":")
