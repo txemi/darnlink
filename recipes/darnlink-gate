@@ -394,6 +394,13 @@ DL_ADDED_FILE="$(mktemp)"
 trap 'rm -f "$DL_JSON_FILE" "$DL_STAGED_FILE" "$DL_ADDED_FILE"' EXIT
 export DL_JSON_FILE DL_STAGED_FILE DL_ADDED_FILE
 export DL_ROOT="$root" DL_REF="$REF" DL_MODE="$MODE" DL_DANGLING="$DANGLING"
+
+# The SAME --exclude/--ignore-block this run was configured with, shell-quoted, so the command the
+# error message suggests can carry them. Without this the suggestion applies a DIFFERENT policy
+# than the gate that just failed you -- which is the whole defect the suggestion exists to avoid.
+DL_ARGS_STR=""
+for a in "${DL_ARGS[@]}"; do DL_ARGS_STR+=" $(printf '%q' "$a")"; done
+export DL_ARGS_STR
 # The added-lines ratchet needs the LINES this commit adds, and git lives here, not in darnlink
 # (spec 008, Option B). `-U0` gives hunks with no context, so every `+` line in the header range is
 # genuinely new. Collected per staged file as `path:start,count`.
@@ -462,8 +469,29 @@ for f in strict: print(f"  [strict/{f['kind']}] {f['file']}: {f['detail']}")
 for f in dangling: print(f"  [dangling] {f['file']}: {f['detail']}")
 
 if integ:  print("darnlink-gate (staged): integrity failure in a file you're committing."); sys.exit(2)
-if strict: print("darnlink-gate (staged): un-anchored plain link in a file you're committing "
-                 f"(anchor it: uvx --from {os.environ['DL_REF']} darnlink . --robustify --write)."); sys.exit(3)
+if strict:
+    # The suggested command MUST be safe to paste. It used to be a bare
+    # `darnlink . --robustify --write`, which is correct as a capability and a trap as advice: it
+    # rewrites the WHOLE repo and, worse, it does NOT carry the `--exclude` list this very gate was
+    # configured with, so it applies a different policy than the one that just failed you. Measured
+    # in a consuming monorepo: 110 links anchored across 26 files when ONE was asked for -- pasted
+    # by someone who trusted the message, on a tree shared by several concurrent sessions.
+    #
+    # The piped `--only-from -` form is the one this project's own CLI help recommends: it scans
+    # the repo (needed, the link's TARGET must be seen) but writes only the staged files.
+    # `--create-frontmatter` is spelled out because without it darnlink skips a target that has no
+    # frontmatter yet, reporting `skipped (no frontmatter)` and writing nothing -- a "did nothing"
+    # that reads as "nothing to do", and the anchor never appears.
+    print("darnlink-gate (staged): un-anchored plain link in a file you're committing.")
+    print("  Anchor the files you are committing (and give their targets a uuid):")
+    print("    git diff --cached --name-only -- '*.md' | \\")
+    print(f"      uvx --from {os.environ['DL_REF']} darnlink ."
+          f"{os.environ.get('DL_ARGS_STR', '')} --robustify --create-frontmatter --write --only-from -")
+    print("  It writes the staged files AND creates the missing `uuid` in the files they link to --")
+    print("  an anchor needs a uuid at BOTH ends. Nothing else in the repo is touched.")
+    print("  (Do NOT run a bare `darnlink . --robustify --write`: it rewrites the whole repo and")
+    print("   drops this gate's --exclude/--ignore-block, applying a different policy.)")
+    sys.exit(3)
 if dangling and dangling_mode != "warn":
     print(f"darnlink-gate (staged): {len(dangling)} link(s) you are adding point at a path that does "
           "not exist. Fix the path, or drop the link if the target is gone.")
