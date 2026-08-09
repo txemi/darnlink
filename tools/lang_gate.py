@@ -11,7 +11,8 @@ WHY A RATCHET AND NOT FAIL-CLOSED. A repo that adopts the rule late already carr
 lines -- the first one to do so had ~1300 across 172 files, accumulated because the rule had never
 been written down. Demanding they all be translated before the next commit would simply get the
 gate deleted. So, following the owner's standing norm ("a repo's strictness only ever goes up,
-never down") and the mechanism txnet1's `entity-structure` gate already uses: legacy lines sit in
+never down") and the mechanism the consumer monorepo's `entity-structure` gate already
+uses: legacy lines sit in
 a baseline whose count can only DECREASE, while new or modified lines must be English from now on.
 A repo that starts clean pins its baseline at 0, which is fail-closed with no extra machinery.
 
