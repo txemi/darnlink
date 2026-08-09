@@ -6,6 +6,8 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.20.1] — 2026-08-09
+
 ### Fixed
 - **`darnlink-gate`: the staged scope crashed on any repo whose `check --json` exceeded 128 KiB.**
   Linux caps a *single* environment variable at `MAX_ARG_STRLEN` = 32 pages = **128 KiB** — a
