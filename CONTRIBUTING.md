@@ -35,6 +35,12 @@ uv run pytest
 CI (`.github/workflows/ci.yml`) runs on every PR; please make sure it's green. A local
 `hooks/pre-commit` is available — activate it with `bash setup.sh` (sets `core.hooksPath`).
 
+**Everything in this repo is written in English** — code, comments, docstrings, docs, spec files,
+commit messages and PR titles/descriptions. A gate enforces it (`tools/lang_gate.py`, run by
+`tools/check.sh` and by the `lang` CI job), so a comment in another language fails the build. The
+detector is a heuristic and can be wrong; silence a genuine false positive with a trailing
+`# lang-ok` on that line.
+
 ## Pull requests
 
 - Branch off `main`, keep PRs focused, and add a test for any behavior change (the project is

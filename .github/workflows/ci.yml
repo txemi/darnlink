@@ -31,6 +31,18 @@ jobs:
         # README.md deny-listed: it's the PyPI/GitHub landing page, kept frontmatter-free.
         run: uv run darnlink . --robustify --create-frontmatter --no-create-frontmatter-for README.md
 
+  # English-only. The rule is stated in CLAUDE.md and CONTRIBUTING.md; this is what enforces it.
+  # Its own job, not a step inside `test`: the check is tree-wide and OS/Python independent, so
+  # running it once beats running it eight times across the matrix.
+  lang:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # No setup step on purpose: the gate is pure stdlib, so it cannot fail for reasons
+      # unrelated to what it guards — which is how a gate keeps its credibility.
+      - name: English-only gate (fail-closed — baseline pinned at 0)
+        run: python3 tools/lang_gate.py --baseline
+
   # Exercises the commands users actually run (packaging + entry point + the literal README
   # one-liner) on Linux AND Windows — so the copy-paste one-liner is proven on both.
   smoke:
