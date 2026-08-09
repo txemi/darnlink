@@ -6,6 +6,38 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.20.2] — 2026-08-09
+
+### Fixed
+- **`darnlink-gate`: the command the failure message tells you to paste no longer rewrites the whole
+  repo under a different policy** (#40). The staged gate used to suggest a bare
+  `darnlink . --robustify --write`: correct as a capability, a trap as advice. It touches every file
+  in the tree, and it does **not** carry the `--exclude` list the gate that just failed you was
+  configured with — so it applies a different policy than the one that produced the error. Measured
+  in a consuming monorepo: **110 links anchored across 26 files when one was asked for**, pasted by
+  someone who trusted the message, on a tree shared by several concurrent sessions. The suggestion is
+  now the piped `--only-from -` form (scan the repo, write only the staged files), carries the run's
+  own `--exclude`/`--ignore-block` shell-quoted, spells out `--create-frontmatter` (without it the
+  target keeps no uuid and the anchor silently never appears), and says explicitly not to run the
+  bare form.
+
+### Changed
+- **The example config in `recipes/darnlink-gate` is the strict target, not a stale minimum** (#42).
+  It had sat at `v0.7.0` for thirteen releases while recommending `mode: check` with no `dangling`
+  key — an axis this very file implements. It now shows every axis at its strictest, plus a six-rung
+  **adoption path** (pasting the target into a never-gated repo fails on contact, and a gate that
+  fails on arrival gets deleted rather than climbed) and a sub-ladder for `dangling`.
+  The `ref` is deliberately a **`vX.Y.Z` placeholder** with the command that resolves it: any
+  concrete pin written into a comment ages the moment it is committed, which is exactly how this
+  example drifted. Documented too: `dangling: added-lines` needs a staged diff, so it only bites
+  under `scope=staged` — on a whole-repo surface it degrades to `warn`, and `repo` is the only rung
+  with server-side enforcement.
+
+### Added
+- **English-only ratchet gate for this repo's own sources** (`tools/lang_gate.py`, wired into CI and
+  `tools/check.sh`). New and modified lines must be English; legacy lines live in a per-file baseline
+  whose counts can only decrease. Escape hatch for a false positive: `# lang-ok`.
+
 ## [0.20.1] — 2026-08-09
 
 ### Fixed
