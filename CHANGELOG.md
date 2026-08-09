@@ -101,6 +101,10 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [0.19.2] — 2026-08-08
 
+> **Never tagged.** No `v0.19.2` release exists: the next release commit went straight to
+> `0.20.0`, so this fix shipped inside **v0.20.0**. The section is kept because the change is
+> real and dated; the version number is not. Its link below points at the commit, not a tag.
+
 ### Fixed
 - **`--robustify --write` no longer duplicates a uuid comment that is already on the line, just
   detached from its link.** The grammar accepts only whitespace between the link's `)` and its
@@ -485,10 +489,31 @@ First public release.
 - Ships a [pre-commit](https://pre-commit.com/) hook (`darnlink`, `darnlink-repair`).
 - Format specification: [FORMAT.md](FORMAT.md) <!-- uuid: 9052d864-2a45-4ed4-8725-d8a394e7a7ef -->.
 
-[Unreleased]: https://github.com/txemi/darnlink/compare/v0.5.0...HEAD
-[0.5.0]: https://github.com/txemi/darnlink/releases/tag/v0.5.0
-[0.4.0]: https://github.com/txemi/darnlink/releases/tag/v0.4.0
-[0.3.0]: https://github.com/txemi/darnlink/releases/tag/v0.3.0
-[0.2.0]: https://github.com/txemi/darnlink/releases/tag/v0.2.0
-[0.1.1]: https://github.com/txemi/darnlink/releases/tag/v0.1.1
+[Unreleased]: https://github.com/txemi/darnlink/compare/v0.20.2...HEAD
+[0.20.2]: https://github.com/txemi/darnlink/compare/v0.20.1...v0.20.2
+[0.20.1]: https://github.com/txemi/darnlink/compare/v0.20.0...v0.20.1
+[0.20.0]: https://github.com/txemi/darnlink/compare/v0.19.1...v0.20.0
+[0.19.1]: https://github.com/txemi/darnlink/compare/v0.19.0...v0.19.1
+[0.19.0]: https://github.com/txemi/darnlink/compare/v0.18.0...v0.19.0
+[0.18.0]: https://github.com/txemi/darnlink/compare/v0.17.0...v0.18.0
+[0.17.0]: https://github.com/txemi/darnlink/compare/v0.16.0...v0.17.0
+[0.16.0]: https://github.com/txemi/darnlink/compare/v0.15.0...v0.16.0
+[0.15.0]: https://github.com/txemi/darnlink/compare/v0.14.0...v0.15.0
+[0.14.0]: https://github.com/txemi/darnlink/compare/v0.13.0...v0.14.0
+[0.13.0]: https://github.com/txemi/darnlink/compare/v0.12.0...v0.13.0
+[0.12.0]: https://github.com/txemi/darnlink/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/txemi/darnlink/compare/v0.10.0...v0.11.0
+[0.10.0]: https://github.com/txemi/darnlink/compare/v0.9.1...v0.10.0
+[0.9.1]: https://github.com/txemi/darnlink/compare/v0.9.0...v0.9.1
+[0.9.0]: https://github.com/txemi/darnlink/compare/v0.8.0...v0.9.0
+[0.8.0]: https://github.com/txemi/darnlink/compare/v0.7.1...v0.8.0
+[0.7.1]: https://github.com/txemi/darnlink/compare/v0.7.0...v0.7.1
+[0.7.0]: https://github.com/txemi/darnlink/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/txemi/darnlink/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/txemi/darnlink/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/txemi/darnlink/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/txemi/darnlink/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/txemi/darnlink/compare/v0.1.1...v0.2.0
+[0.1.1]: https://github.com/txemi/darnlink/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/txemi/darnlink/releases/tag/v0.1.0
+[0.19.2]: https://github.com/txemi/darnlink/commit/f0cf814
