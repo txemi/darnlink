@@ -308,3 +308,39 @@ def test_repo_scope_fails_on_any_dangling_link(sandbox):
 
     assert r.returncode != 0
     assert "gone.md" in (r.stdout + r.stderr)
+
+
+def test_staged_scope_survives_a_payload_bigger_than_one_env_var(sandbox):
+    """Regression: the payload must not travel through the environment.
+
+    Linux caps a SINGLE env var (or argv entry) at MAX_ARG_STRLEN = 32 pages = 128 KiB — a per-string
+    limit, separate from the ~2 MB ARG_MAX total. Exceeding it makes the next `exec` fail with E2BIG,
+    so the gate does not report a finding, it *crashes*: `sed: Argument list too long`, exit 126. A
+    gate that cannot run gates nothing.
+
+    A whole-repo `check --json` on a real consumer measured ~200 KB. This builds a comparable payload
+    from a single file so the test stays fast.
+    """
+    repo, run = sandbox
+    links = "\n".join(f"[dead {i}](missing_target_with_a_deliberately_long_name_{i}.md)"
+                      for i in range(1200))
+    (repo / "big.md").write_text(f"---\nuuid: {U}\n---\n\n{links}\n")
+    _commit(repo, "base")
+    (repo / "big.md").write_text((repo / "big.md").read_text() + "\ntail line\n")
+    _git(repo, "add", "big.md")
+
+    # Assert the PRECONDITION, or this stops being a regression test the day the payload shrinks
+    # (a shorter `detail`, a leaner JSON shape) and silently starts passing for the wrong reason.
+    limit = os.sysconf("SC_PAGESIZE") * 32          # MAX_ARG_STRLEN, in bytes
+    payload = subprocess.run([_darnlink_bin(), "check", str(repo), "--json"],
+                             capture_output=True, text=True, env=_clean_env()).stdout
+    assert len(payload) > limit, (
+        f"scenario no longer reproduces the bug: payload is {len(payload)} B, "
+        f"under the {limit} B per-string limit. Make it bigger or delete this test."
+    )
+
+    r = run({"dangling": "added-lines", "scope": "staged"})
+    out = r.stdout + r.stderr
+
+    assert "Argument list too long" not in out, out[:400]
+    assert r.returncode == 0, out[:400]   # the added line carries no link → nothing to gate on

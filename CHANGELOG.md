@@ -6,6 +6,19 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+- **`darnlink-gate`: the staged scope crashed on any repo whose `check --json` exceeded 128 KiB.**
+  Linux caps a *single* environment variable at `MAX_ARG_STRLEN` = 32 pages = **128 KiB** — a
+  per-string limit, separate from the ~2 MB `ARG_MAX` total — and exceeding it makes the next `exec`
+  fail with `E2BIG`. The staged path exported the whole JSON payload, so on a real consumer (~200 KB)
+  the gate did not report a finding, it **crashed**: `sed: Argument list too long`, exit 126. A gate
+  that cannot run gates nothing, and it fails *loudly* only if someone is watching the output.
+  Payloads (findings JSON, staged list, added-lines map) now travel through temp files, cleaned up by
+  an `EXIT` trap; only short paths go through the environment. `create_readme_offenders` already did
+  this for the same reason — the staged path did not, and only tipped over once the JSON grew.
+  Pinned by a regression test whose scenario produces a ~547 KB payload.
+
+
 ## [0.20.0] — 2026-08-09
 
 ### Added
