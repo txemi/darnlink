@@ -20,5 +20,11 @@
 # (lang gate, tests, darnlink self-check at mode=max, dangling at zero).
 #
 # Bypass (discouraged, and it skips the wall for EVERY commit in the push): git push --no-verify
+#
+# stdin is redirected from /dev/null ON PURPOSE. git feeds a pre-push hook the list of refs being
+# pushed on stdin, and anything down the chain that reads stdin -- even incidentally, as `gh` does
+# inside a `while read` loop -- would silently swallow those lines and behave as if the input were
+# empty. That failure mode is invisible: no error, just a wrong answer. Nothing here needs the ref
+# list, so the safest thing is to not hand it over.
 set -euo pipefail
-exec bash "$(git rev-parse --show-toplevel)/tools/check.sh"
+exec bash "$(git rev-parse --show-toplevel)/tools/check.sh" < /dev/null
