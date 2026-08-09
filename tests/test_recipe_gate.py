@@ -329,6 +329,16 @@ def test_staged_scope_survives_a_payload_bigger_than_one_env_var(sandbox):
     (repo / "big.md").write_text((repo / "big.md").read_text() + "\ntail line\n")
     _git(repo, "add", "big.md")
 
+    # Assert the PRECONDITION, or this stops being a regression test the day the payload shrinks
+    # (a shorter `detail`, a leaner JSON shape) and silently starts passing for the wrong reason.
+    limit = os.sysconf("SC_PAGESIZE") * 32          # MAX_ARG_STRLEN, in bytes
+    payload = subprocess.run([_darnlink_bin(), "check", str(repo), "--json"],
+                             capture_output=True, text=True, env=_clean_env()).stdout
+    assert len(payload) > limit, (
+        f"scenario no longer reproduces the bug: payload is {len(payload)} B, "
+        f"under the {limit} B per-string limit. Make it bigger or delete this test."
+    )
+
     r = run({"dangling": "added-lines", "scope": "staged"})
     out = r.stdout + r.stderr
 
