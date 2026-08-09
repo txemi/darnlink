@@ -179,6 +179,12 @@ def _run_check(root: Path, excludes: set, as_json: bool, block_markers: tuple,
     rob_invalid = [p for p in rob.invalid if only is None or p.resolve() in only]
     strict_fail = bool(upgrades or rob_invalid)
 
+    # Dangling axis (015): plain links pointing at nothing. Reported on its own axis and DELIBERATELY
+    # absent from `code` (FR-049) — turning it into an exit code here would flip every consumer's
+    # gate red on the first upgrade, whose only escape would be lowering their mode. Which findings
+    # gate is the caller's policy; the core just names what it sees.
+    dangling = [f for f in rob.findings if f.kind is Kind.DANGLING]
+
     code = 2 if integrity_fail else (3 if strict_fail else 0)
 
     if as_json:
@@ -207,6 +213,12 @@ def _run_check(root: Path, excludes: set, as_json: bool, block_markers: tuple,
                     "detail": "frontmatter present but not valid YAML; left untouched (fix the file)"}
                    for p in rob_invalid],
             },
+            # Its own axis, never folded into `exit_code` (FR-049): a consumer opts in from its gate.
+            "dangling": {
+                "count": len(dangling),
+                "findings": [{"kind": f.kind.value, "file": str(f.file), "detail": f.detail}
+                             for f in dangling],
+            },
         }, indent=2))
     else:
         outcome = {0: "clean", 2: "integrity failure", 3: "strict failure"}[code]
@@ -218,6 +230,9 @@ def _run_check(root: Path, excludes: set, as_json: bool, block_markers: tuple,
               f"-> {'FAIL' if integrity_fail else 'ok'}")
         print(f"  [strict]    to robustify: {len(upgrades)} | invalid frontmatter: {len(rob_invalid)} "
               f"-> {'FAIL' if strict_fail else 'ok'}")
+        if dangling:
+            print(f"  [dangling]  targets that do not exist: {len(dangling)} "
+                  f"-> informational (does not affect the exit code)")
         for f in repairs + conflicts + unresolved:
             print(f"  [integrity/{f.kind.value}] {f.file}: {f.detail}")
         for p in invalid:
@@ -226,6 +241,8 @@ def _run_check(root: Path, excludes: set, as_json: bool, block_markers: tuple,
             print(f"  [strict/robustify] {f.file}: {f.detail}")
         for p in rob_invalid:
             print(f"  [strict/invalid-frontmatter] {p}: not valid YAML; left untouched (fix the file)")
+        for f in dangling:
+            print(f"  [dangling] {f.file}: {f.detail}")
         print(f"  -> exit {code} ({outcome})")
 
     return code
