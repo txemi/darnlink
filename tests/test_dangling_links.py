@@ -159,8 +159,11 @@ def test_check_reports_dangling_without_changing_the_exit_code(tmp_path, capsys)
     out = capsys.readouterr().out
 
     assert code == 0                      # clean: nothing to repair, nothing to robustify
-    assert "dangling" in out              # but not silent
-    assert "nope.md" in out
+    assert "dangling" in out              # but not silent: the count is stated
+    # …and not enumerated. On the trees this axis lands on, one line per finding would bury the
+    # findings that actually gate the build. `--json` carries them for machines; the gate recipe
+    # prints them when its dangling axis is switched on.
+    assert "nope.md" not in out
 
 
 def test_check_json_carries_dangling_on_its_own_axis(tmp_path, capsys):

@@ -7,6 +7,29 @@ All notable changes to darnlink are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- **The `dangling` axis is now gateable, opt-in, with an added-lines ratchet** (`recipes/darnlink-gate`).
+  `dangling` defaults to **`off`**, so upgrading the pin changes no verdict anywhere; `warn` lists
+  without failing; **`added-lines`** fails only on findings on lines the commit *adds* (`scope=staged`);
+  `repo` fails on any. Per-file gating was tried and rejected — touching one line of a README that
+  already carries old danglers would block the commit, which pushes people to `--no-verify`, and a gate
+  people bypass gates nothing. The added lines come from `git diff --cached -U0`: git lives in the
+  recipe, not in darnlink (spec 008, Option B).
+- **`Finding.line`** — optional, defaulted, set only by `dangling` today, and surfaced in
+  `check --json`. It exists because a *consumer* needs it as data: the ratchet intersects findings with
+  the lines a commit adds, and scraping that out of `detail` would couple the gate to prose.
+
+### Changed
+- **`check` no longer enumerates dangling findings in its text output** — it states the count on one
+  line and carries the details in `--json`. On the trees this axis lands on (thousands of dead links in
+  the repos it was measured on) one line each buried the findings that actually gate the build. The
+  count keeps it honest; the gate recipe prints them when its axis is switched on.
+
+### Known gaps
+- `darnlink-gate.ps1` ignores the `dangling` key, so a Windows-only gating surface does not enforce
+  this axis yet.
+
+
+### Added
 - **`dangling`: a plain link whose target does not exist is now reported** (feature 015). It was
   invisible before — not `unresolvable` (that is a *robust* link whose uuid died) and not
   `robustify` (there is nothing to anchor). `_anchor_target` returned `None` both for "the target is
