@@ -99,7 +99,10 @@ rendering when a home directory was reorganised, and that no gate had ever menti
 
 - **FR-041**: A plain relative link in a scanned Markdown file whose resolved target path **does not
   exist** MUST be reported as a `dangling` finding, naming the file, the line, the link as written,
-  and the resolved path.
+  and the resolved path. The line, link and resolved path travel in the finding's `detail`: no
+  finding kind has ever carried a line field, and widening the shared `Finding` record is outside
+  this feature. A dead link is acted on by opening it, so `file` + line is what makes the report
+  usable without a search.
 - **FR-042**: `dangling` MUST be **report-only**. No mode, including `--write`, may create, move or
   otherwise alter anything in response to it.
 - **FR-043**: The target's extension MUST NOT affect whether the finding fires; only its existence.

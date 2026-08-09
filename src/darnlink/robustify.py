@@ -81,17 +81,26 @@ def _dangling_target(href: str, linking_file: Path) -> Path | None:
     """
     if not is_local_relative(href):
         return None                       # FR-046: scheme, protocol-relative, absolute, bare #frag
+    # FR-047: `resolve_href` does not percent-decode, so `my%20file.md` resolves to a path that never
+    # exists. Judging the raw spelling alone would report every percent-encoded link in a tree — the
+    # kind of false positive that gets a gate switched off rather than fixed.
+    path_part, _ = split_fragment(href)
+    decoded = unquote(path_part)
+    encoded = decoded != path_part
+    # Decoding can change *what kind of thing* the href is, not just how it is spelled:
+    # `%2Fetc%2Fpasswd` becomes an absolute path and `http%3A//x` regains its scheme. Both pass
+    # `is_local_relative` while encoded, so judging only the raw form would let the encoding walk
+    # around FR-046 — suppressing a finding because `/etc/passwd` happens to exist, or inventing one
+    # for a URL. The decoded spelling is held to the same rule as the raw one.
+    if encoded and not is_local_relative(decoded):
+        return None
     t = resolve_href(href, linking_file)  # drops the fragment
     if t.exists():
         return None
-    # FR-047: `resolve_href` does not percent-decode, so `my%20file.md` resolves to a path that
-    # never exists. Judging that literally would report every percent-encoded link in a tree — the
-    # kind of false positive that gets a gate switched off rather than fixed. Accept the decoded
-    # spelling as proof of existence; anchoring such links stays out of scope.
-    path_part, _ = split_fragment(href)
-    decoded = unquote(path_part)
-    if decoded != path_part and (linking_file.parent / decoded).resolve().exists():
-        return None
+    if encoded:
+        d = resolve_href(decoded, linking_file)
+        # Report the DECODED path: it is the one the link denotes, and the one to look for on disk.
+        return None if d.exists() else d
     return t
 
 
@@ -371,9 +380,14 @@ def plan_robustify(
                 # it. A self-link (t is not None) is not a candidate.
                 dead = _dangling_target(link.href, f) if t is None else None
                 if dead is not None:
+                    # The line goes in `detail` (FR-041). `Finding` has no line field — no kind has
+                    # ever needed one — and widening the shared record for this is not this feature's
+                    # business. A dead link is acted on by opening it, so `file:line` is the part that
+                    # makes the report usable without a search.
+                    lineno = original.count("\n", 0, link.start) + 1
                     result.findings.append(Finding(
                         Kind.DANGLING, f,
-                        f"{link.href}: target does not exist (resolves to {dead})"))
+                        f"line {lineno}: {link.href}: target does not exist (resolves to {dead})"))
                 continue  # skip non-md/external and self-links
             tr = t.resolve()
             if tr in ignored_targets or tr in invalid_fm:

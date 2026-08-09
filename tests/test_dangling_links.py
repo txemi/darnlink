@@ -196,3 +196,40 @@ def test_image_embed_that_exists_is_not_reported(tmp_path):
     _w(tmp_path / "there.png", "bytes\n")
 
     assert _dangling(plan_robustify(tmp_path)) == []
+
+
+def test_finding_carries_the_line_number(tmp_path):
+    """FR-041: `file` alone means hunting for the link by hand in a long document."""
+    _w(tmp_path / "doc.md", f"---\nuuid: {U_A}\n---\n\nfiller\n\n[x](gone.md)\n")
+
+    found = _dangling(plan_robustify(tmp_path))
+    assert len(found) == 1 and found[0].detail.startswith("line 7:")
+
+
+def test_encoded_absolute_path_does_not_escape_the_local_rule(tmp_path):
+    """An encoded href can decode into something FR-046 excludes — the rule must apply to both.
+
+    `%2Fetc%2Fpasswd` passes `is_local_relative` while encoded, so judging only the raw spelling
+    would let the encoding walk around the rule: the finding would be suppressed merely because
+    `/etc/passwd` happens to exist on the machine running the scan.
+    """
+    _w(tmp_path / "doc.md", f"---\nuuid: {U_A}\n---\n\n[x](%2Fetc%2Fpasswd)\n")
+
+    assert _dangling(plan_robustify(tmp_path)) == []
+
+
+def test_encoded_scheme_is_not_reported(tmp_path):
+    """The mirror case: `http%3A//example.com` decodes to a URL, which is never a dangling path."""
+    _w(tmp_path / "doc.md", f"---\nuuid: {U_A}\n---\n\n[x](http%3A//example.com/nope.md)\n")
+
+    assert _dangling(plan_robustify(tmp_path)) == []
+
+
+def test_missing_encoded_path_reports_the_decoded_target(tmp_path):
+    """When it IS dangling, name the path the link denotes — that is the one to look for on disk."""
+    _w(tmp_path / "doc.md", f"---\nuuid: {U_A}\n---\n\n[x](my%20missing%20file.md)\n")
+
+    found = _dangling(plan_robustify(tmp_path))
+    assert len(found) == 1
+    assert "my missing file.md" in found[0].detail   # decoded, not %20
+    assert "my%20missing%20file.md" in found[0].detail  # and the link as written
