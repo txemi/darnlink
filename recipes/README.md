@@ -25,6 +25,28 @@ is that orchestration in one place; a consumer carries only a tiny config + a 3-
     passes (a true superset of `check` — it can't silently drop broken robust links).
     **Whole-repo only** — the staged pre-commit stays at strict on purpose (fast); the whole-repo wall
     (pre-push / CI) is where `max` is enforced. See [`docs/elevating-your-link-gate.md`](../docs/elevating-your-link-gate.md) <!-- uuid: e95eaed1-9866-4c48-a0d7-99a6382f5bf9 -->.
+- `dangling` (opt-in, **default `off`**) → gate on links whose target does not exist (feature 015).
+  A **separate axis, never folded into `mode`**, and that is the point: every consumer already carries
+  years of these, so folding them into `check`/`max` would turn each gate red on upgrade and the only
+  escape would be *lowering* `mode` — a ladder you can only climb by first stepping down is not a
+  ladder. Four settings:
+
+  | `dangling` | Behaviour |
+  |---|---|
+  | `off` *(default)* | not gated, not listed. Upgrading the pin changes no verdict. `check` still states the **count** on one line, so a repo learns it has dead links. |
+  | `warn` | listed, never fails. The honest way to see the backlog before gating it. |
+  | `added-lines` | fails only on findings on lines **this commit adds** (`scope=staged`). The adoption rung. |
+  | `repo` | fails on **any** finding. The wall, for a repo already at zero. |
+
+  **Why `added-lines` and not per-file:** per-file was tried and is not enough — editing one line of a
+  README that already carries old danglers blocks the commit, which pushes people to `--no-verify`,
+  and a gate people bypass gates nothing. The added lines come from `git diff --cached -U0`; git lives
+  here, not in darnlink (spec 008, Option B).
+
+  ⚠️ **Not yet in `darnlink-gate.ps1`.** The Windows recipe ignores the `dangling` key, so a
+  Windows-only surface silently does not gate this axis. Being explicit rather than letting the
+  difference be discovered: on a repo that gates on both, POSIX gates it and Windows does not.
+
 - `scope=repo` → judge the whole tree (**the wall — use in pre-push & CI**).
   `scope=staged` → judge only the files you're committing (**multi-session pre-commit**, so a
   teammate's in-flight plain link doesn't block your commit). It filters `darnlink check --json` by

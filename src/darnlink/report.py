@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from typing import Optional
 
 
 class Kind(str, Enum):
@@ -29,3 +30,8 @@ class Finding:
     file: Path        # the file the finding is about: the linking file for link findings,
                       # or the file itself for file-level findings (e.g. invalid_frontmatter)
     detail: str       # human-readable summary (e.g. "old.md -> ../new.md")
+    # 1-based line, when the finding is anchored to one. Optional and defaulted, so no existing kind
+    # has to change; only `dangling` sets it today. It exists because a CONSUMER needs it as data:
+    # the gate recipe's added-lines ratchet has to intersect findings with the lines a commit adds,
+    # and scraping that out of `detail` would couple the gate to prose.
+    line: Optional[int] = None

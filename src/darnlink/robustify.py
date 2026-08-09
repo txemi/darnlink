@@ -380,14 +380,15 @@ def plan_robustify(
                 # it. A self-link (t is not None) is not a candidate.
                 dead = _dangling_target(link.href, f) if t is None else None
                 if dead is not None:
-                    # The line goes in `detail` (FR-041). `Finding` has no line field — no kind has
-                    # ever needed one — and widening the shared record for this is not this feature's
-                    # business. A dead link is acted on by opening it, so `file:line` is the part that
-                    # makes the report usable without a search.
+                    # The line is carried BOTH ways on purpose: in `detail` for a human reading the
+                    # report, and in `Finding.line` for a machine. The gate recipe's added-lines
+                    # ratchet has to intersect findings with the lines a commit adds, and scraping a
+                    # number out of prose would couple it to wording.
                     lineno = original.count("\n", 0, link.start) + 1
                     result.findings.append(Finding(
                         Kind.DANGLING, f,
-                        f"line {lineno}: {link.href}: target does not exist (resolves to {dead})"))
+                        f"line {lineno}: {link.href}: target does not exist (resolves to {dead})",
+                        line=lineno))
                 continue  # skip non-md/external and self-links
             tr = t.resolve()
             if tr in ignored_targets or tr in invalid_fm:

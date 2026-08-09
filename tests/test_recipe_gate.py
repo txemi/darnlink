@@ -42,7 +42,27 @@ pytestmark = pytest.mark.skipif(
 _LEAKY_ENV = (
     "DARNLINK_REF", "DARNLINK_GATE_MODE", "DARNLINK_GATE_SCOPE", "DARNLINK_GATE_FAIL_CLOSED",
     "DARNLINK_GATE_WEB", "DARNLINK_GATE_CREATE_README", "DARNLINK_GATE_TOKEN_FILE",
+    "DARNLINK_GATE_DANGLING",
+    # ⚠️ And git's own. `git` exports these to every hook it runs, so when this suite is executed
+    # FROM the repo's pre-commit hook (`tools/check.sh`), an un-scrubbed `git` in a test inherits
+    # GIT_DIR from the outer repo while using the sandbox as its work tree. That combination is not
+    # a failing test — it is a `git add -A` against the wrong repository. It committed "delete
+    # every tracked file" into a real branch here on 2026-08-09 before this scrubbing existed.
+    "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_PREFIX",
+    "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_INDEX_VERSION",
+    "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL",
 )
+
+
+def _clean_env() -> dict:
+    """The ambient environment minus anything that would point a subprocess at the outer repo."""
+    return {k: v for k, v in os.environ.items() if k not in _LEAKY_ENV}
+
+
+def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
+    """Run git INSIDE `repo`, never inheriting the caller's git environment (see _LEAKY_ENV)."""
+    return subprocess.run(["git", *args], cwd=repo, env=_clean_env(), check=check,
+                          capture_output=True, text=True)
 
 
 @pytest.fixture
@@ -50,7 +70,7 @@ def sandbox(tmp_path):
     """A git-init'd repo dir + a `run(config)` helper that writes darnlink-gate.json and runs the recipe."""
     repo = tmp_path / "repo"
     repo.mkdir()
-    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    _git(repo, "init", "-q")
 
     bindir = tmp_path / "shimbin"
     bindir.mkdir()
@@ -66,7 +86,7 @@ def sandbox(tmp_path):
 
     def run(config: dict) -> subprocess.CompletedProcess:
         (repo / "darnlink-gate.json").write_text(json.dumps(config))
-        env = {k: v for k, v in os.environ.items() if k not in _LEAKY_ENV}
+        env = _clean_env()
         env["PATH"] = f"{bindir}{os.pathsep}" + env.get("PATH", "")
         env["DARNLINK_BIN"] = _darnlink_bin()
         return subprocess.run(
@@ -165,7 +185,10 @@ def test_unavailable_create_readme_axis_does_not_mask_a_failing_core(tmp_path):
 
     repo = tmp_path / "repo"
     repo.mkdir()
-    subprocess.run([needed["git"], "init", "-q"], cwd=repo, check=True)
+    # `env=_clean_env()`, like every other git call here: run from the repo's own pre-commit hook,
+    # an inherited GIT_DIR would make this init/operate on the OUTER repository. The absolute path
+    # is kept because this test deliberately builds a minimal PATH later.
+    subprocess.run([needed["git"], "init", "-q"], cwd=repo, env=_clean_env(), check=True)
     # a plain link to a uuid'd target → a strict/robustify offender → the core `check` exits 3
     (repo / "T.md").write_text(f"---\nuuid: {U}\n---\n# T\n")
     (repo / "A.md").write_text("# A\n[t](T.md) plain\n")
@@ -185,7 +208,7 @@ def test_unavailable_create_readme_axis_does_not_mask_a_failing_core(tmp_path):
     )
     shim.chmod(0o755)
 
-    env = {k: v for k, v in os.environ.items() if k not in _LEAKY_ENV}
+    env = _clean_env()
     env["PATH"] = str(bindir)  # only the minimal bin → python3 is unreachable
     env["DARNLINK_BIN"] = dbin
     env["DARNLINK_GATE_MODE"] = "check"
@@ -199,3 +222,89 @@ def test_unavailable_create_readme_axis_does_not_mask_a_failing_core(tmp_path):
         f"core strict failure must survive an unavailable create-readme axis; got {r.returncode}\n"
         f"STDOUT:\n{r.stdout}\nSTDERR:\n{r.stderr}"
     )
+
+
+# --- (c) the dangling axis (015) and its added-lines ratchet ----------------------------------------
+#
+# The rung that makes this adoptable. Every consumer already carries years of dangling links, so an
+# axis that gates the whole repo on day one would be bypassed, not fixed. `added-lines` judges only
+# what the commit ADDS: old debt never blocks, new debt cannot enter.
+
+def _commit(repo: Path, msg: str) -> None:
+    _git(repo, "add", "-A")
+    _git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", msg)
+
+
+def _repo_with_old_debt(repo: Path) -> None:
+    """A committed file that already contains a link to a path that never existed."""
+    (repo / "doc.md").write_text(f"---\nuuid: {U}\n---\n\n# doc\n\n[old debt](gone.md)\n")
+    _commit(repo, "base")
+
+
+def test_dangling_is_off_by_default(sandbox):
+    """The ratchet rule: upgrading the pin must not change any verdict for a repo that did not opt in.
+
+    `check` still states the count on one line — a repo should learn it has dead links — but it must
+    not enumerate them (a consumer measured at 2,526 would drown its real findings) and it must not
+    move the exit code.
+    """
+    repo, run = sandbox
+    _repo_with_old_debt(repo)
+
+    r = run({})   # no `dangling` key at all
+    out = r.stdout + r.stderr
+
+    assert r.returncode == 0
+    assert "gone.md" not in out          # not enumerated
+    assert "does not affect the exit code" in out   # but not hidden either
+
+
+def test_added_lines_lets_old_debt_through(sandbox):
+    """Touching a file that carries old danglers must not block the commit."""
+    repo, run = sandbox
+    _repo_with_old_debt(repo)
+    (repo / "doc.md").write_text((repo / "doc.md").read_text() + "\nan added line with no links\n")
+    _git(repo, "add", "doc.md")
+
+    r = run({"dangling": "added-lines", "scope": "staged"})
+
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_added_lines_blocks_a_newly_added_dead_link(sandbox):
+    """The other half: what the commit introduces is judged, and named with its line."""
+    repo, run = sandbox
+    _repo_with_old_debt(repo)
+    (repo / "doc.md").write_text((repo / "doc.md").read_text() + "\n[brand new](never_existed.md)\n")
+    _git(repo, "add", "doc.md")
+
+    r = run({"dangling": "added-lines", "scope": "staged"})
+
+    out = r.stdout + r.stderr
+    assert r.returncode != 0, out
+    assert "never_existed.md" in out
+    assert "gone.md" not in out          # the old debt is still none of this commit's business
+
+
+def test_warn_reports_without_failing(sandbox):
+    """The honest way to see the backlog before gating it."""
+    repo, run = sandbox
+    _repo_with_old_debt(repo)
+    (repo / "doc.md").write_text((repo / "doc.md").read_text() + "\n[brand new](never_existed.md)\n")
+    _git(repo, "add", "doc.md")
+
+    r = run({"dangling": "warn", "scope": "staged"})
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "never_existed.md" in (r.stdout + r.stderr)
+
+
+def test_repo_scope_fails_on_any_dangling_link(sandbox):
+    """The wall, for a repo already at zero."""
+    repo, run = sandbox
+    _repo_with_old_debt(repo)
+
+    r = run({"dangling": "repo"})
+
+    assert r.returncode != 0
+    assert "gone.md" in (r.stdout + r.stderr)

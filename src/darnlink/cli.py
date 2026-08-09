@@ -216,7 +216,10 @@ def _run_check(root: Path, excludes: set, as_json: bool, block_markers: tuple,
             # Its own axis, never folded into `exit_code` (FR-049): a consumer opts in from its gate.
             "dangling": {
                 "count": len(dangling),
-                "findings": [{"kind": f.kind.value, "file": str(f.file), "detail": f.detail}
+                # `line` is data, not decoration: a gate's added-lines ratchet intersects these with
+                # the lines a commit adds. It is the only axis that carries one today.
+                "findings": [{"kind": f.kind.value, "file": str(f.file), "detail": f.detail,
+                              "line": f.line}
                              for f in dangling],
             },
         }, indent=2))
@@ -241,8 +244,12 @@ def _run_check(root: Path, excludes: set, as_json: bool, block_markers: tuple,
             print(f"  [strict/robustify] {f.file}: {f.detail}")
         for p in rob_invalid:
             print(f"  [strict/invalid-frontmatter] {p}: not valid YAML; left untouched (fix the file)")
-        for f in dangling:
-            print(f"  [dangling] {f.file}: {f.detail}")
+        # Deliberately NOT enumerated here — only counted above. This axis lands on trees that have
+        # carried dead links for years (thousands, in the repos it was measured on), and printing one
+        # line each would bury the findings that actually gate the build under a wall of text nobody
+        # asked for. The count keeps it honest (Constitution II: no silent caps); `--json` carries
+        # every finding for a consumer that wants them, and the gate recipe prints them when its
+        # dangling axis is switched on.
         print(f"  -> exit {code} ({outcome})")
 
     return code

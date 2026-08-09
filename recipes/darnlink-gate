@@ -106,6 +106,26 @@ case "${WEB,,}" in ""|0|false|no|off) WEB="" ;; *) WEB=1 ;; esac
 # Robustify it by hand with `--create-readme --write`. Raises the max ceiling from "files" to "folders".
 CREATE_README="${DARNLINK_GATE_CREATE_README:-$(read_cfg create_readme "")}"
 case "${CREATE_README,,}" in ""|0|false|no|off) CREATE_README="" ;; *) CREATE_README=1 ;; esac
+# DANGLING (opt-in, default off): links whose target does not exist (darnlink feature 015). It is a
+# SEPARATE axis, never folded into MODE, and that is the whole point — every consumer already carries
+# years of these (measured: thousands across a nine-repo fleet), so folding it into check/max would
+# turn each gate red on upgrade and the only escape would be LOWERING mode. A ladder that can only be
+# climbed by first stepping down is not a ladder. Four settings:
+#   off          (default) not gated, not printed — upgrading the pin changes nothing;
+#   warn         printed, never fails: the honest way to see your backlog before gating it;
+#   added-lines  fails only on findings on lines THIS COMMIT ADDS (scope=staged). The adoption rung:
+#                old debt never blocks you, new debt cannot enter. Per-FILE would not do — touching
+#                one line of a README that carries old danglers would block the commit, and a gate
+#                people bypass gates nothing;
+#   repo         fails on ANY finding. The wall, for a repo already at zero.
+DANGLING="${DARNLINK_GATE_DANGLING:-$(read_cfg dangling off)}"
+case "${DANGLING,,}" in
+  off|""|0|false|no) DANGLING=off ;;
+  warn) DANGLING=warn ;;
+  added-lines|added_lines) DANGLING=added-lines ;;
+  repo|all|on|1|true|yes) DANGLING=repo ;;
+  *) echo "darnlink-gate: unknown dangling=$DANGLING (use off|warn|added-lines|repo) — treating as off." >&2; DANGLING=off ;;
+esac
 mapfile -t EXCLUDES < <(read_cfg excludes "")
 mapfile -t IGNORE_BLOCKS < <(read_cfg ignore_blocks "")
 # CREATE_README_EXCLUDES: extra directory globs that apply ONLY to the create-readme pass (see the
@@ -157,6 +177,40 @@ if ! run --help >/dev/null 2>&1; then bail "can't run darnlink at $REF (bad ref 
 # not evaluate); the offending files go to stderr for the human. `--create-readme` implies
 # `--create-frontmatter`, so the JSON also carries `robustify` findings — we deliberately keep only
 # `create_readme`, which is what keeps the mirror's dir-links from flooding in as robustify offenders.
+# Dangling axis (015). Prints one line per finding on stdout as `file<TAB>line<TAB>detail`, or the
+# single token ERR if it could not be evaluated — same contract as create_readme_offenders, so the
+# caller can apply the never-turn-a-red-gate-green rule.
+dangling_findings() {
+  command -v python3 >/dev/null 2>&1 || { echo ERR; return 0; }
+  local json jrc tmp
+  set +e
+  json="$(run check . --json "${DL_ARGS[@]}" 2>/dev/null)"; jrc=$?
+  set -e
+  if [ "$jrc" -gt 3 ] || [ -z "$json" ]; then echo ERR; return 0; fi
+  # Temp file, not env/argv: a whole-repo dump on a large consumer runs to megabytes (see above).
+  tmp="$(mktemp)"; printf '%s' "$json" > "$tmp"
+  # Capture, THEN clean up, THEN speak. Cleaning up only after a successful run leaks the file on any
+  # python failure, because `set -e` leaves the function before the `rm` (a gate that runs on every
+  # commit leaks once per commit).
+  local out prc
+  set +e
+  out="$(python3 - "$tmp" <<'PY'
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        data = json.load(fh)
+except Exception:
+    print("ERR"); sys.exit(0)
+for f in data.get("dangling", {}).get("findings", []):
+    print(f"{f.get('file','')}\t{f.get('line') or ''}\t{f.get('detail','')}")
+PY
+)"; prc=$?
+  set -e
+  rm -f "$tmp"
+  [ "$prc" -ne 0 ] && { echo ERR; return 0; }
+  printf '%s\n' "$out"
+}
+
 create_readme_offenders() {
   command -v python3 >/dev/null 2>&1 || { echo ERR; return 0; }
   local cr_args=("${DL_ARGS[@]}") e
@@ -176,7 +230,12 @@ create_readme_offenders() {
   # ignore-links finding too and can run to megabytes, well past ARG_MAX (a big mirror is exactly the case
   # this feature exists for). The path is short; python reads the file.
   tmp="$(mktemp)"; printf '%s' "$json" > "$tmp"
-  python3 - "$tmp" <<'PY'
+  # Same capture-then-clean-then-speak order as dangling_findings(): cleaning up only on the success
+  # path leaks the temp file whenever python fails, because `set -e` leaves before the `rm`.
+  # (stderr is NOT captured — the per-offender lines are meant to reach the user as they are printed.)
+  local out prc
+  set +e
+  out="$(python3 - "$tmp" <<'PY'
 import json, sys
 try:
     with open(sys.argv[1], encoding="utf-8") as fh:
@@ -188,7 +247,11 @@ for f in off:
     sys.stderr.write(f"  [create-readme] {f.get('file')}: {f.get('detail')}\n")
 print(len(off))
 PY
+)"; prc=$?
+  set -e
   rm -f "$tmp"
+  [ "$prc" -ne 0 ] && { echo ERR; return 0; }
+  printf '%s\n' "$out"
 }
 
 if [ "$SCOPE" != "staged" ]; then
@@ -270,6 +333,30 @@ if [ "$SCOPE" != "staged" ]; then
       [ "$rc" -eq 0 ] && rc=1
     fi
   fi
+  # Dangling axis, whole-repo. `added-lines` has no meaning without a staged diff, so here it reads as
+  # `warn`: the ratchet belongs to the pre-commit surface, and the wall must not invent a scope.
+  if [ "$DANGLING" != off ]; then
+    dl_out="$(dangling_findings)"
+    if [ "$dl_out" = "ERR" ]; then
+      if [ "$rc" -ne 0 ]; then
+        echo "darnlink-gate: dangling axis could not run, but the core gate is already failing (rc=$rc) — keeping it." >&2
+        exit "$rc"
+      fi
+      bail "dangling pass could not run (darnlink unreachable or python3 missing)"
+    fi
+    dl_n=0; [ -n "$dl_out" ] && dl_n="$(printf '%s\n' "$dl_out" | grep -c . || true)"
+    if [ "$dl_n" -gt 0 ]; then
+      printf '%s\n' "$dl_out" | while IFS=$'\t' read -r df dline ddet; do
+        echo "  [dangling] $df: $ddet" >&2
+      done
+      if [ "$DANGLING" = repo ]; then
+        echo "darnlink-gate: $dl_n link(s) point at a path that does not exist (dangling axis)." >&2
+        [ "$rc" -eq 0 ] && rc=1
+      else
+        echo "darnlink-gate: $dl_n dangling link(s) — informational (dangling=$DANGLING; does not fail the gate)." >&2
+      fi
+    fi
+  fi
   exit "$rc"
 fi
 
@@ -293,8 +380,21 @@ set -e
 if [ "$rc" -gt 3 ] || [ -z "$DL_JSON" ]; then
   bail "(staged) darnlink unreachable (rc=$rc)"
 fi
-export DL_JSON DL_ROOT="$root" DL_REF="$REF" DL_MODE="$MODE"
+export DL_JSON DL_ROOT="$root" DL_REF="$REF" DL_MODE="$MODE" DL_DANGLING="$DANGLING"
 export DL_STAGED="$(printf '%s\n' "${STAGED[@]}")"
+# The added-lines ratchet needs the LINES this commit adds, and git lives here, not in darnlink
+# (spec 008, Option B). `-U0` gives hunks with no context, so every `+` line in the header range is
+# genuinely new. Collected per staged file as `path:start,count`.
+if [ "$DANGLING" = added-lines ]; then
+  DL_ADDED=""
+  for p in "${STAGED[@]}"; do
+    [ -n "$p" ] || continue
+    hunks="$(git diff --cached -U0 -- "$p" 2>/dev/null | sed -n 's/^@@ -[^ ]* +\([0-9]*\)\(,\([0-9]*\)\)\{0,1\} @@.*/\1,\3/p' || true)"
+    [ -n "$hunks" ] && DL_ADDED="$DL_ADDED$(printf '%s' "$hunks" | sed "s#^#$p:#")
+"
+  done
+  export DL_ADDED
+fi
 
 # Pass everything via env (no interpolation into the script → no injection from finding text).
 python3 <<'PY'
@@ -308,10 +408,48 @@ def hits(axis):
     return [f for f in data.get(axis, {}).get("findings", []) if os.path.realpath(f["file"]) in staged]
 integ = hits("integrity")
 strict = [] if mode == "repair" else hits("strict")   # mode=repair gates on integrity only
+
+# --- dangling axis (015) ---------------------------------------------------------------------
+# `added-lines` is the rung that makes this adoptable: judge only the lines the commit ADDS, so
+# years of existing debt never block anyone and nothing new gets in. Per-FILE was tried and is not
+# enough — editing one line of a README that already carries old danglers would block the commit,
+# and a gate people bypass gates nothing.
+dangling_mode = os.environ.get("DL_DANGLING", "off")
+dangling = []
+if dangling_mode != "off":
+    found = hits("dangling")
+    if dangling_mode == "added-lines":
+        added = {}   # realpath -> set of added line numbers
+        for row in os.environ.get("DL_ADDED", "").split("\n"):
+            if not row.strip():
+                continue
+            path, _, span = row.rpartition(":")
+            start, _, count = span.partition(",")
+            try:
+                start_i = int(start)
+            except ValueError:
+                continue
+            # `+N @@` with no count means exactly one line; `+N,0` is a pure deletion (adds nothing).
+            count_i = 1 if count == "" else int(count)
+            key = os.path.realpath(os.path.join(root, path))
+            added.setdefault(key, set()).update(range(start_i, start_i + count_i))
+        dangling = [f for f in found
+                    if f.get("line") in added.get(os.path.realpath(f["file"]), ())]
+    else:
+        dangling = found
+
 for f in integ:  print(f"  [integrity/{f['kind']}] {f['file']}: {f['detail']}")
 for f in strict: print(f"  [strict/{f['kind']}] {f['file']}: {f['detail']}")
+for f in dangling: print(f"  [dangling] {f['file']}: {f['detail']}")
+
 if integ:  print("darnlink-gate (staged): integrity failure in a file you're committing."); sys.exit(2)
 if strict: print("darnlink-gate (staged): un-anchored plain link in a file you're committing "
                  f"(anchor it: uvx --from {os.environ['DL_REF']} darnlink . --robustify --write)."); sys.exit(3)
+if dangling and dangling_mode != "warn":
+    print(f"darnlink-gate (staged): {len(dangling)} link(s) you are adding point at a path that does "
+          "not exist. Fix the path, or drop the link if the target is gone.")
+    sys.exit(1)
+if dangling:
+    print(f"darnlink-gate (staged): {len(dangling)} dangling link(s) — informational (dangling=warn).")
 print("darnlink-gate (staged): clean."); sys.exit(0)
 PY
