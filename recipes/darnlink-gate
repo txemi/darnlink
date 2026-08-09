@@ -33,10 +33,39 @@
 #     findings: 2 integrity / 3 strict).
 #
 # CONFIG. Reads `darnlink-gate.json` at the repo root (all keys optional):
-#   { "ref": "git+https://github.com/txemi/darnlink@v0.7.0",
-#     "excludes": ["secrets","external_repos"], "ignore_blocks": ["txmd-autogrid"],
-#     "mode": "check", "scope": "repo", "fail_closed": true,
-#     "web": true, "create_readme": true, "create_readme_excludes": ["mirrors"] }
+#   { "ref": "git+https://github.com/txemi/darnlink@vX.Y.Z",
+#     "excludes": ["secrets","node_modules",".venv"], "ignore_blocks": ["txmd-autogrid"],
+#     "mode": "max", "scope": "repo", "fail_closed": true,
+#     "web": true, "dangling": "repo", "create_readme": true,
+#     "create_readme_excludes": ["mirrors"] }
+#
+#   ^ That is the TARGET, not a starting point: every axis at its strictest.
+#
+#   `vX.Y.Z` is a PLACEHOLDER ON PURPOSE, and it is the one thing here you must not copy verbatim.
+#   Resolve it when you paste:
+#       gh release view -R txemi/darnlink --json tagName -q .tagName
+#   A concrete tag written into this comment is exactly how the example rotted last time: it sat at
+#   v0.7.0 for thirteen releases and quietly recommended two rungs below what its own author was
+#   running. Any pin printed here ages the moment it is committed, so nothing is printed.
+#
+#   ADOPTING AN EXISTING REPO? Do not paste the above on day one; it will fail on contact with a
+#   tree that has never been gated, and a gate that fails on arrival gets deleted. Climb instead,
+#   fixing content at each rung (the ratchet only goes up):
+#     1. "mode": "repair"                  -> broken robust links + invalid YAML
+#     2. "mode": "check"                   -> + every anchorable link actually anchored
+#     3. "mode": "max"                     -> + every link points at a file that HAS a uuid
+#     4. "create_readme": true             -> + a link to a FOLDER requires its README.md
+#     5. "web": true                       -> + cross-repo GitHub links verified over the network
+#     6. "dangling": "warn" -> "added-lines" -> "repo"
+#        `warn` measures without failing; `added-lines` fails only on lines the commit ADDS (so old
+#        debt never blocks anyone); `repo` fails on any.
+#        ⚠️ `added-lines` needs a staged diff, so it only ever bites on `scope=staged` — i.e. the
+#        pre-commit hook. On a whole-repo surface (`scope=repo`: pre-push, CI) there is no diff to
+#        judge and it degrades to `warn`. So this rung is enforced ONLY by a local hook, which fails
+#        open when uv/network is missing: nothing on the server catches a new dangling link. If you
+#        want a wall rather than a habit, the rung that has one is `repo`.
+#        Measured on a nine-repo fleet: 2,356 links pointing at files that do not exist, none of
+#        them named by any other axis. Expect a number.
 #   mode ∈ { repair | check | max } — see WHAT IT DOES. Raising it is a one-way ratchet: only up.
 #   web (mode=max only): add a `web-check --online` pass — cross-repo links to OTHER GitHub repos must
 #     resolve to the destination's uuid (read online). Public targets need no token; private ones send
