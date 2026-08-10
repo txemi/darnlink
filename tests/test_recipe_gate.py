@@ -150,6 +150,40 @@ def test_create_readme_excludes_do_not_disable_robustify_over_that_folder(sandbo
     assert "[create-readme]" not in r.stderr  # the create-readme axis itself is suppressed for docs
 
 
+# --- (b-bis) the WEB pass must not swallow the axes that come after it ------------------------------
+
+def test_web_pass_does_not_skip_the_create_readme_axis(sandbox):
+    """REGRESSION. The web pass used to end in a bare `exit "$rc"`, which left the script before the
+    create-readme axis further down. In a repo with `mode=max` + `web: true` + `create_readme_excludes`
+    the axis therefore NEVER RAN: the config said it was on, the gate said exit 0, and a directory link
+    to a folder with no README sailed through. Measured on two consuming repos before the fix — same
+    tree, same config, `web` on → 0, `web` off → 1.
+
+    Offline-safe: the sandbox has no GitHub links, so `web-check --online` returns 0 without touching
+    the network. What is under test is the FALL-THROUGH, not the web check itself.
+    """
+    repo, run = sandbox
+    _dir_link_without_readme(repo)
+    cfg = {"ref": "x", "mode": "max", "web": True,
+           "create_readme": True, "create_readme_excludes": ["nada-que-excluir"]}
+    r = run(cfg)
+    assert r.returncode != 0, (
+        "with web on, the create-readme axis must still run and fail; "
+        f"got {r.returncode}\n{r.stdout}\n{r.stderr}"
+    )
+    assert "no README" in r.stderr, r.stderr
+
+
+def test_web_pass_verdict_survives_the_later_axes(sandbox):
+    """The other half of the same change: falling through must not DOWNGRADE a web failure. A later
+    axis that finds nothing must leave the web verdict intact (the axes only ever raise rc from 0)."""
+    repo, run = sandbox
+    (repo / "A.md").write_text("# A\nnothing to see\n")
+    r = run({"ref": "x", "mode": "max", "web": True, "create_readme": True,
+             "create_readme_excludes": ["nada-que-excluir"]})
+    assert r.returncode == 0, f"clean tree must stay green\n{r.stdout}\n{r.stderr}"
+
+
 # --- (c) backward compatibility: mode=max without the new key is unchanged --------------------------
 
 def test_backward_compat_max_without_create_readme_is_green(sandbox):

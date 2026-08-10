@@ -330,16 +330,28 @@ if [ "$SCOPE" != "staged" ]; then
       # failure is reported web_unverifiable, still exit 0 — it NEVER exits high); 3 = a plain web link
       # not yet anchored (dry-run: it COULD be robustified) — a real gate failure, which is the point
       # (detect un-robustified web links); 4 = a broken/moved/mismatched public web link. So EVERY
-      # non-zero is fail-closed, NOT the core's rc>3 "unreachable" case — exit it DIRECTLY, bypassing the
-      # bail heuristic below (which would swallow a genuine 4 as "network hiccup" and go green).
-      exit "$rc"
+      # non-zero is fail-closed, NOT the core's rc>3 "unreachable" case: it must NOT go through the
+      # `rc>3 -> bail` heuristic below, which would swallow a genuine 4 as "network hiccup" and go green.
+      #
+      # ⚠️ This used to be a bare `exit "$rc"`, and that was a BUG: it left the function before the
+      # create-readme axis further down, so in a repo with `mode=max` + `web: true` +
+      # `create_readme_excludes` the create-readme axis NEVER RAN. The config said the axis was on, the
+      # gate reported a clean exit 0, and a directory link to a folder with no README sailed through.
+      # Measured on two consuming repos before the fix: injecting exactly that case returned 0 with web
+      # on and 1 with web off — same tree, same config, opposite verdicts.
+      #
+      # So: remember the web verdict, mark it as already-final (no bail heuristic), and FALL THROUGH so
+      # the remaining axes still run. The exit happens once, at the end, with the worst verdict.
+      RC_IS_FINAL=1   # `rc` ya lleva el veredicto del pase web; solo hay que impedir el heuristico de abajo
     fi
   else
     run check . "${DL_ARGS[@]}"; rc=$?   # `darnlink check` → stable 0/2/3 contract (mode=check|repair)
   fi
   set -e
   # rc>3 (e.g. 127 network) → fail open + warn; darnlink's own low exit codes pass through.
-  if [ "$rc" -gt 3 ]; then bail "darnlink unreachable (rc=$rc)"; fi
+  # RC_IS_FINAL marks a verdict that is already fail-closed by contract (today: the web pass, whose
+  # codes are all in 0..4 and none of them mean "unreachable"), so it must skip this heuristic.
+  if [ -z "${RC_IS_FINAL:-}" ] && [ "$rc" -gt 3 ]; then bail "darnlink unreachable (rc=$rc)"; fi
   # mode=repair gates on integrity only: a strict-only failure (3) is clean. (Set rc=0 rather than exit
   # so the create-readme axis below still runs — it is an independent axis, not part of strict.)
   if [ "$MODE" = "repair" ] && [ "$rc" -eq 3 ]; then rc=0; fi
