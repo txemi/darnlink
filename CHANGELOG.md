@@ -6,6 +6,32 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.20.3] — 2026-08-10
+
+### Fixed
+- **`darnlink-gate`: the `web` pass exited the script, skipping every axis after it** (#45). It ended
+  in a bare `exit "$rc"`, which left the recipe *before* the `create-readme` axis further down. In a
+  repo configured with `mode=max` + `web: true` + `create_readme_excludes`, **that axis therefore
+  never ran**: the config said it was on, the gate answered `exit 0`, and a directory link to a
+  folder with no README sailed straight through. Measured on two consuming repos before the fix —
+  same tree, same config, `web` on → `0`, `web` off → `1`. One of them had spent half a day with the
+  axis nominally enabled and gating nothing.
+
+  The `exit` was not gratuitous and what it protected is preserved: `web-check`'s codes are all in
+  `0..4` and **none of them means "could not run"**, so they must not pass through the
+  `rc>3 → bail` heuristic, which would read a genuine `4` (broken public web link) as a network
+  hiccup and go green. The verdict is now marked **already final** and the recipe falls through; the
+  exit happens once, at the end, with the worst verdict.
+
+  That immunity has a **ceiling**, missing from the first draft and caught in review: a code *above*
+  the contract (`127` no `uvx`, `126` permissions) is not a verdict about the repo — the tool did not
+  run — so `>4` always bails, keeping the fail-open promise. Without it, a machine without `uv` would
+  have received a hard `127` from a gate that promises to fail open.
+
+  Three regression tests, each validated by failing on the previous code: the axis still runs with
+  `web` on, falling through does not downgrade a web failure, and a `127` during the web pass still
+  skips (fail-open) or exits `4` (fail-closed).
+
 ## [0.20.2] — 2026-08-09
 
 ### Fixed
@@ -489,7 +515,8 @@ First public release.
 - Ships a [pre-commit](https://pre-commit.com/) hook (`darnlink`, `darnlink-repair`).
 - Format specification: [FORMAT.md](FORMAT.md) <!-- uuid: 9052d864-2a45-4ed4-8725-d8a394e7a7ef -->.
 
-[Unreleased]: https://github.com/txemi/darnlink/compare/v0.20.2...HEAD
+[Unreleased]: https://github.com/txemi/darnlink/compare/v0.20.3...HEAD
+[0.20.3]: https://github.com/txemi/darnlink/compare/v0.20.2...v0.20.3
 [0.20.2]: https://github.com/txemi/darnlink/compare/v0.20.1...v0.20.2
 [0.20.1]: https://github.com/txemi/darnlink/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/txemi/darnlink/compare/v0.19.1...v0.20.0
