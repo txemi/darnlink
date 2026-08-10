@@ -6,6 +6,40 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.20.4] — 2026-08-10
+
+### Added
+- **`darnlink-gate`: `dangling_max`, a budget that makes the `repo` rung adoptable before you reach
+  zero** (#47). The `dangling` axis had four rungs and a hole between the last two. `added-lines` —
+  the adoption rung — **needs a staged diff**, so it only ever bites on `scope=staged`. On a
+  whole-repo surface (pre-push, CI) there is no diff to judge and it degrades to `warn`.
+
+  The consequence is worth stating plainly: **a repo carrying old dangling debt has no server-side
+  wall for this axis, on any surface, until the day it reaches exactly zero.** Measured on a
+  consuming repo: the axis had been "on" for months, its only wall a local hook that itself fails
+  open when `uv` is missing. That is not a wall, it is a habit — and raising the setting was no
+  escape, because `repo` demands zero and the repo was at 256.
+
+  `"dangling_max": <int>` (default `0`) turns `repo` into a budget: fail only above that count. You
+  get the wall **today**, at your current number, and every cleanup lowers it. Same shape as a
+  coverage floor — the number is a receipt of where you are, not permission to stay.
+
+  Three details keep it a ratchet rather than an allowance:
+
+  - **Coming in under budget is reported**, and *reaching zero especially so* — a budget nobody
+    lowers **is** an allowance, and nothing else in the system can notice it went stale. The
+    reminder has to appear in front of whoever just did the cleanup: the one moment someone is both
+    looking and able to act.
+  - **A non-numeric value counts as `0`, never as infinite.** Silently *widening* an allowance is
+    the one direction a config typo must not be able to go.
+  - **Absent key = byte-identical verdict.** Raising the pin changes nothing for anyone who did not
+    opt in — the rule the whole axis was built on.
+
+  The zero case was missing from the first draft and caught in review: the verdict lived inside the
+  *there are findings* branch, so the gate went **silent exactly when the last dangler died**. A
+  ratchet whose reminder disappears on success is an allowance with a grace period. Its regression
+  test was validated by failing it against the previous recipe.
+
 ## [0.20.3] — 2026-08-10
 
 ### Fixed
@@ -515,7 +549,8 @@ First public release.
 - Ships a [pre-commit](https://pre-commit.com/) hook (`darnlink`, `darnlink-repair`).
 - Format specification: [FORMAT.md](FORMAT.md) <!-- uuid: 9052d864-2a45-4ed4-8725-d8a394e7a7ef -->.
 
-[Unreleased]: https://github.com/txemi/darnlink/compare/v0.20.3...HEAD
+[Unreleased]: https://github.com/txemi/darnlink/compare/v0.20.4...HEAD
+[0.20.4]: https://github.com/txemi/darnlink/compare/v0.20.3...v0.20.4
 [0.20.3]: https://github.com/txemi/darnlink/compare/v0.20.2...v0.20.3
 [0.20.2]: https://github.com/txemi/darnlink/compare/v0.20.1...v0.20.2
 [0.20.1]: https://github.com/txemi/darnlink/compare/v0.20.0...v0.20.1
