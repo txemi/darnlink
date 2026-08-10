@@ -165,7 +165,7 @@ def test_web_pass_does_not_skip_the_create_readme_axis(sandbox):
     repo, run = sandbox
     _dir_link_without_readme(repo)
     cfg = {"ref": "x", "mode": "max", "web": True,
-           "create_readme": True, "create_readme_excludes": ["nada-que-excluir"]}
+           "create_readme": True, "create_readme_excludes": ["nothing-to-exclude"]}
     r = run(cfg)
     assert r.returncode != 0, (
         "with web on, the create-readme axis must still run and fail; "
@@ -180,8 +180,48 @@ def test_web_pass_verdict_survives_the_later_axes(sandbox):
     repo, run = sandbox
     (repo / "A.md").write_text("# A\nnothing to see\n")
     r = run({"ref": "x", "mode": "max", "web": True, "create_readme": True,
-             "create_readme_excludes": ["nada-que-excluir"]})
+             "create_readme_excludes": ["nothing-to-exclude"]})
     assert r.returncode == 0, f"clean tree must stay green\n{r.stdout}\n{r.stderr}"
+
+
+def test_a_127_during_the_web_pass_still_bails(tmp_path):
+    """The ceiling of RC_IS_FINAL. web-check's codes are 0..4 and none means "unreachable", so a 4 is a
+    final verdict — but a code ABOVE the contract (127 = tool missing, 126 = permissions) is not a verdict
+    about the repo at all, and must still go through bail(): fail-open SKIPS, fail-closed exits 4.
+
+    Caught by Copilot on PR #45: the first draft skipped the heuristic whenever RC_IS_FINAL was set, so a
+    machine without `uv` would have got a hard 127 out of a gate that promises to fail open.
+
+    The shim answers normally for every pass and dies with 127 only for `web-check`, which is exactly the
+    narrow window: the core passed, then the tool became unreachable.
+    """
+    repo = tmp_path / "repo"; repo.mkdir()
+    _git(repo, "init", "-q")
+    (repo / "A.md").write_text("# A\n")
+    bindir = tmp_path / "shimbin"; bindir.mkdir()
+    shim = bindir / "uvx"
+    shim.write_text(
+        "#!/usr/bin/env bash\n"
+        'args=("$@")\n'
+        '[ "${args[0]:-}" = "--from" ] && args=("${args[@]:2}")\n'
+        '[ "${args[0]:-}" = "darnlink" ] && args=("${args[@]:1}")\n'
+        '[ "${args[0]:-}" = "web-check" ] && { echo "boom" >&2; exit 127; }\n'
+        'exec "${DARNLINK_BIN:-darnlink}" "${args[@]}"\n'
+    )
+    shim.chmod(0o755)
+    (repo / "darnlink-gate.json").write_text(json.dumps(
+        {"ref": "x", "mode": "max", "web": True, "create_readme": True,
+         "create_readme_excludes": ["nothing-to-exclude"]}))
+    env = _clean_env(); env["PATH"] = f"{bindir}{os.pathsep}" + env.get("PATH", "")
+    env["DARNLINK_BIN"] = _darnlink_bin()
+
+    r = subprocess.run(["bash", str(RECIPE)], cwd=repo, env=env, capture_output=True, text=True)
+    assert r.returncode == 0, f"fail-open must SKIP on an unreachable tool, not surface 127\n{r.stderr}"
+    assert "SKIP" in r.stderr or "unreachable" in r.stderr, r.stderr
+
+    env["DARNLINK_GATE_FAIL_CLOSED"] = "1"
+    r2 = subprocess.run(["bash", str(RECIPE)], cwd=repo, env=env, capture_output=True, text=True)
+    assert r2.returncode == 4, f"fail-closed must exit 4 (could-not-gate), got {r2.returncode}\n{r2.stderr}"
 
 
 # --- (c) backward compatibility: mode=max without the new key is unchanged --------------------------
