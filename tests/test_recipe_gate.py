@@ -445,6 +445,33 @@ def test_coming_in_under_budget_asks_for_the_budget_to_be_lowered(sandbox):
     assert "lower dangling_max to 2" in (r.stdout + r.stderr)
 
 
+def test_reaching_zero_with_a_budget_still_asks_for_it_to_be_dropped(sandbox):
+    """The milestone case, and the one that is easiest to get wrong.
+
+    If the reminder lives inside `there are findings`, the gate goes SILENT exactly when the last
+    dangler dies — the one moment the stale budget is both visible and free to remove. A ratchet
+    whose reminder disappears on success is not a ratchet, it is an allowance with a grace period.
+    """
+    repo, run = sandbox
+    _repo_with_n_danglers(repo, 0)   # a clean repo: the cleanup finished
+
+    r = run({"dangling": "repo", "dangling_max": 5})
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "drop dangling_max" in (r.stdout + r.stderr)
+
+
+def test_a_clean_repo_without_a_budget_says_nothing(sandbox):
+    """The mirror of the above: no budget set, nothing to nag about."""
+    repo, run = sandbox
+    _repo_with_n_danglers(repo, 0)
+
+    r = run({"dangling": "repo"})
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "dangling_max" not in (r.stdout + r.stderr)
+
+
 def test_a_junk_budget_is_treated_as_zero_not_as_infinite(sandbox):
     """A typo must never silently WIDEN an allowance — it fails closed, and says why."""
     repo, run = sandbox
