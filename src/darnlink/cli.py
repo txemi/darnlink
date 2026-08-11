@@ -422,6 +422,12 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
             print(f"  [web_not_found] {x.file}: {x.detail} ({x.href})")
         for x in anchors:
             print(f"  [web_anchor] {x.file}: {x.detail}")
+        # Parse/URL failures first: those are a defect in THIS repo's own content, deterministic and
+        # fixable locally, while the rest are environmental (no token, private cross-org repo) with
+        # nothing to fix. Without this sort the actionable ones fall past the preview cut and are
+        # never seen, because the environmental ones outnumber them by orders of magnitude.
+        _actionable = ("not a recognised", "malformed URL")
+        unverifiable.sort(key=lambda x: 0 if x.detail.startswith(_actionable) else 1)
         for x in unverifiable[:UNVERIFIABLE_PREVIEW]:
             print(f"  [web_unverifiable] {x.file}: {x.detail} ({x.href})")
         if len(unverifiable) > UNVERIFIABLE_PREVIEW:

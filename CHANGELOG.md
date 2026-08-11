@@ -31,6 +31,27 @@ All notable changes to darnlink are documented here. The format is based on
   And `web_unverifiable` cannot fail a gate, so the change can turn a green run into a quieter one,
   never into a red one.
 
+- **`web-check --online` verifies links it used to merely survive.** The conservative rejection above
+  is safe but blunt: it also turns down hrefs that are perfectly resolvable. Three are recovered here.
+
+  - **A CommonMark link title** — `[t](url "Title")` — arrives glued to the href, because `MD_LINK_RE`
+    captures everything up to the closing paren. This was the most banal trigger of the crash, and it
+    has nothing to do with mirrored content. The title is stripped, so the link is **verified** again.
+  - **A space inside `#fragment` or `?query`** — the one true regression the previous entry names.
+    Only `owner`/`repo`/`ref`/`path` go on the wire, so the character guard moves to the parsed groups.
+  - Neither may reopen the false `web_not_found`, so a **wreckage rule** runs first: a disallowed
+    separator followed anywhere later by a second scheme. Stated as a *cause* rather than a list of
+    shapes, after an earlier draft enumerated two and let seven others through.
+
+  One cost is accepted knowingly: a *legitimate* titled link whose title happens to be a URL becomes
+  unverifiable. No textual rule separates it from the wreckage, and the two directions are not
+  symmetric — unverifiable is a link this run could not confirm, a false break is an accusation
+  against a file that is fine.
+
+### Changed
+- `web-check`'s text report lists parse/URL failures **before** the environmental `web_unverifiable`
+  entries, so the ones you can actually fix are not truncated away by the preview cut.
+
   Client-side URL errors get their own sentinel, kept out of the retry set: retrying a deterministic
   rejection spends real sleeps and can never succeed, and folding it into the network sentinel would
   bury darnlink's own defect under "network error". Strictly, 013 forbade neither crash — FR-008
