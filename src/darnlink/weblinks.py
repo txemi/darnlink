@@ -53,13 +53,54 @@ _GITHUB_BLOB_RE = re.compile(
 )
 
 
-#: Exactly what `http.client` refuses to put on the wire (`_contains_disallowed_url_pchar_re`). An
-#: href carrying any of these is not a URL: mirrored third-party content arrives with two truncated
-#: URLs separated by a space, with control characters from OCR, with a CommonMark title glued on by
-#: `MD_LINK_RE`. Matching http.client's own set rather than the narrower `\s` is deliberate — anything
-#: that slips past here reaches the fetch layer and takes a different route to a different verdict for
-#: the same defect.
+#: Exactly what `http.client` refuses to put on the wire (`_contains_disallowed_url_pchar_re`).
+#: Matching its set rather than `\s` is the point: 0x7f and the C0 range passed a `\s` guard, reached the
+#: fetch layer, and produced a DIFFERENT verdict for the same defect.
 _DISALLOWED_URL_CHARS_RE = re.compile(r"[\x00-\x20\x7f]")
+
+#: CommonMark link title: `[text](url "Title")`. `MD_LINK_RE` hands it to us glued to the href, so it
+#: must come off before the href is judged or parsed. The `(…)` form CommonMark also allows is absent
+#: on purpose: `MD_LINK_RE`'s href is `[^)]+`, so a captured href can never end in `)` and the
+#: alternative would be unreachable code pretending to be coverage.
+_LINK_TITLE_RE = re.compile(r"""\s+("[^"]*"|'[^']*')$""")
+
+#: Scraped wreckage: a separator `http.client` would refuse, followed ANYWHERE LATER by a second
+#: scheme. It must be caught BEFORE the regex runs, because the path group stops at the first `?` or
+#: `#`: a wreckage whose first URL carries a query or a fragment parses to a TRUNCATED path, fetches a
+#: different file, and reports its 404 as a hard break -- a false `web_not_found` in a blocking gate,
+#: which is what this parser promises never to produce.
+#:
+#: An earlier version enumerated the SHAPE (whitespace, an optional quote, a scheme) and closed only
+#: two of them: with a 0x7f or C0 separator, or with anything at all between the space and the scheme
+#: (an angle bracket, a paren, emphasis markers, an HTML entity), the wreckage sailed through.
+#: Enumerating shapes of malformed input is a losing game, so this matches the CAUSE instead -- and
+#: over the same character set as the guard below, rather than the narrower one the module elsewhere
+#: argues against.
+_WRECKAGE_RE = re.compile(r"[\x00-\x20\x7f].*?https?://", re.IGNORECASE | re.DOTALL)
+
+
+def _strip_link_title(href: str) -> str:
+    """Remove a trailing CommonMark title — UNLESS its contents are themselves a URL.
+
+    `[t]( https://…/inv... "https://…/invoker.go")` is not a titled link: it is the scraped
+    two-URL wreckage this module exists to survive, wearing quotes. Stripping it would leave a
+    TRUNCATED path that fetches a different file and reports its 404 as a real break — the precise
+    false `web_not_found` that `parse_github_url` refuses to produce. So a "title" that starts with a
+    scheme is left attached, the guards then reject the href, and the honest `web_unverifiable`
+    survives.
+
+    **Known cost, accepted deliberately.** A *legitimate* titled link whose title happens to be a URL
+    (`[t](…/a.md#L10 "https://example.com/doc")`) is now unverifiable, where it used to resolve. The
+    truncation argument does not apply to it — its path is already cut at the `#` — but no textual
+    rule separates it from the wreckage above, and the two failure directions are not symmetric:
+    unverifiable is a link this run could not confirm, while the alternative is a hard break reported
+    against a file that is perfectly fine. Measured at zero occurrences across the fleet."""
+    m = _LINK_TITLE_RE.search(href)
+    if not m:
+        return href
+    if m.group(1)[1:].lstrip().lower().startswith(("http://", "https://")):
+        return href
+    return href[: m.start()]
 
 
 @dataclass(frozen=True)
@@ -73,32 +114,55 @@ class GithubUrl:
         """GitHub Contents API URL for this file. With `Accept: application/vnd.github.raw` it returns
         the raw bytes and works for BOTH public (no token) and private (token) repos — one code path.
 
-        Every field is percent-encoded, because `http.client` encodes the request line as ASCII and
-        raises `UnicodeEncodeError` on anything else: without this an ordinary accented filename killed
-        the whole run. All four, not just the path — an owner or a repo can carry non-ASCII as easily.
-        `safe="/%"` on the path leaves an href that is already encoded alone, so a link written with
-        `%20` does not become `%2520`."""
-        q = urllib.parse.quote
-        return (f"https://api.github.com/repos/{q(self.owner, safe='%')}/{q(self.repo, safe='%')}"
-                f"/contents/{q(self.path, safe='/%')}?ref={q(self.ref, safe='%')}")
+        Path and ref are percent-encoded because `http.client` encodes the request line as ASCII and
+        raises `UnicodeEncodeError` on anything else: without this a perfectly ordinary file with
+        an accented filename (`documentaci%C3%B3n.md` once encoded) killed the run — the same crash
+        arriving by a route that guard cannot see. `safe="/%"` leaves an already-encoded href alone,
+        so a link written with `%20` does not become `%2520`. All four fields are encoded, not just
+        two: an owner or repo can carry non-ASCII as easily as a path can."""
+        q = lambda s, safe="%": urllib.parse.quote(s, safe=safe)  # noqa: E731
+        return (f"https://api.github.com/repos/{q(self.owner)}/{q(self.repo)}"
+                f"/contents/{q(self.path, '/%')}?ref={q(self.ref)}")
 
 
 def parse_github_url(url: str) -> Optional[GithubUrl]:
     """Pure textual parse of a GitHub blob/raw URL into (owner, repo, ref, path). No network (FR-007).
     Returns None for any unrecognised shape — the caller reports it `web_unverifiable`, never crashes.
 
-    **An href carrying a character `http.client` would refuse is rejected outright**, which is the
-    conservative half of this fix and the reason it is safe. The tempting alternative — forbid those
-    characters only INSIDE the regex groups, so more links can still be resolved — silently truncates
-    the path at the first offending character, fetches a DIFFERENT file, and reports its 404 as a real
-    break. A false `web_not_found` in a blocking gate is worse than the crash this replaces, and worse
-    than admitting the link could not be verified. Recovering the links this rejects (a CommonMark
-    title glued to the href, a space inside a `#fragment`) is a separate, riskier change."""
-    url = url.strip()
-    if _DISALLOWED_URL_CHARS_RE.search(url):
+    A CommonMark **link title** — `[text](url "Title")` — is stripped first: `MD_LINK_RE` captures
+    everything up to the closing paren, so the title arrives glued to the href. Without this, a
+    perfectly ordinary titled link was unverifiable at best (and, before the guard below, a crash).
+
+    An href carrying a CONTROL CHARACTER OR SPACE is then rejected outright, because it is not a URL.
+    Mirrored third-party content (a scraped report, a ticket attachment) can carry
+    `[text]( https://…/inv... https://…)`, where the "href" is really two truncated URLs with a space
+    between them. Both obvious treatments end badly, and both were observed: letting it through
+    reached `urllib` and raised `http.client.InvalidURL`, killing the whole run; and merely forbidding
+    whitespace INSIDE the regex groups would have silently truncated the path at the space and fetched
+    a DIFFERENT file, whose 404 is then reported as a real break (`web_not_found`) — a false failure,
+    which is worse than saying we could not verify it. `web_unverifiable` is the honest verdict.
+
+    The rejected set is `[\\x00-\\x20\\x7f]`, matching `http.client`'s own rule exactly rather than the
+    narrower `\\s`. Scraped content carries 0x7f and C0 characters, not only spaces, and any of them
+    that slips past here reaches the fetch layer and takes a different code path to a different
+    verdict for the same defect.
+
+    Two guards run, in this order, and the distinction matters:
+
+    1. `_WRECKAGE_RE` over the **whole href** — a disallowed separator followed anywhere later by a
+       second scheme. It must see the raw href, because the wreckage it detects is precisely what the
+       parse would truncate.
+    2. `_DISALLOWED_URL_CHARS_RE` over the **four parsed groups**, because only those go on the wire:
+       `#fragment` and `?query` are dropped by the regex, so judging the raw href there made
+       `…/a.md#my anchor` unverifiable over a space that is never sent."""
+    url = _strip_link_title(url.strip()).strip()
+    if _WRECKAGE_RE.search(url):
         return None
     m = _GITHUB_BLOB_RE.match(url)
     if not m:
+        return None
+    parts = (m["owner"], m["repo"], m["ref"], m["path"])
+    if any(_DISALLOWED_URL_CHARS_RE.search(p) for p in parts):
         return None
     return GithubUrl(m["owner"], m["repo"], m["ref"], m["path"].rstrip("/"))
 
@@ -162,20 +226,26 @@ def _fetch_once(gu: GithubUrl, token: Optional[str]) -> Tuple[int, Optional[str]
     except urllib.error.HTTPError as e:
         return (e.code, None)
     except (http.client.InvalidURL, ValueError):
-        # A URL WE built and urllib refuses to send: a darnlink defect, not the network's fault. Its
-        # own sentinel, deliberately OUTSIDE `_TRANSIENT_STATUSES` — retrying a deterministic
-        # client-side rejection spends real sleeps and can never succeed, and folding it into the
-        # network sentinel would bury our own bug under "network error" forever. Two clauses because
-        # they escape by two different doors: `InvalidURL` descends from `HTTPException`, and
-        # `UnicodeEncodeError` from `ValueError`; neither is an `OSError`.
+        # A URL WE built and urllib refuses to send: a darnlink defect, not the network's fault. It
+        # gets its own sentinel, deliberately OUTSIDE `_TRANSIENT_STATUSES`, for two reasons: retrying
+        # a deterministic client-side rejection buys 1.5s of sleeps per malformed href and can never
+        # succeed; and folding it into the network sentinel would bury our own bug under "network
+        # error" forever. Every OTHER HTTPException subclass really is transport (BadStatusLine,
+        # IncompleteRead, RemoteDisconnected, LineTooLong, the ImproperConnectionState family), so -1
+        # is right for them.
+        #
+        # `ValueError` rides here for the same reason and is NOT redundant: `InvalidURL` does not
+        # descend from it, and http.client encodes the request line as ASCII, so a non-ASCII path
+        # raises UnicodeEncodeError (a ValueError) from a completely different line. Percent-encoding
+        # in `contents_api_url` means neither should reach here any more — which is exactly why this
+        # is a belt, kept and unit-tested rather than trusted.
         return (-3, None)
     except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException):
-        # `HTTPException` covers the genuine transport failures (BadStatusLine, IncompleteRead,
-        # RemoteDisconnected, …). It descends from Exception, NOT OSError, so it escaped this clause
-        # entirely and propagated. Note 013 forbids that only by implication: FR-008 covers an
-        # *unrecognised* URL shape, and FR-009 is worded for *transport* errors — a client-side
-        # validation error is neither, so the crash fell through the gap between two requirements each
-        # written assuming the other covered it.
+        # `http.client.HTTPException` is the belt to `parse_github_url`'s braces: it descends from
+        # Exception, NOT from OSError, so it escaped this clause entirely and propagated — a crash.
+        # Note 013 forbids that only by implication: FR-008 covers an *unrecognised* URL shape (this
+        # one the regex accepted), and FR-009 covers *transport* errors (this one is client-side
+        # validation). The crash fell through the gap between them.
         return (-1, None)
 
 
@@ -274,8 +344,8 @@ def _classify(link: WebLink, gu: Optional[GithubUrl], status: int, dest_uuid: Op
                           "destination URL 404s; darnlink does not search where it moved (LLM layer's job)")
     if status == -3:
         return WebFinding("web_unverifiable", f, link.href,
-                          "malformed URL — the client refused to send it; nothing was fetched, and it "
-                          "was not retried because a client-side rejection cannot clear on a retry")
+                          "malformed URL — the client refused to send it (control character or space "
+                          "in the href); nothing was fetched and it was not retried")
     if status != 200:
         return WebFinding("web_unverifiable", f, link.href, f"fetch failed (status {status})")
     # status 200: we have the destination content and its uuid (may be None)

@@ -61,6 +61,15 @@ def test_contents_api_url():
         "https://api.github.com/repos/example-org/handbook/contents/docs/x.md?ref=main"
 
 
+def test_contents_api_url_encodes_all_four_fields():
+    """Not just path and ref: an owner or a repo can carry non-ASCII as easily as a path can, and an
+    unencoded one reaches http.client and raises. Encoding only two fields survived the whole suite,
+    which is why this asserts the field the earlier version left raw."""
+    url = GithubUrl("\xf3wner", "r\xe9po", "m\xe1in", "d\xf3cs/x.md").contents_api_url()
+    url.encode("ascii")  # would raise before
+    assert "%C3%B3wner" in url and "r%C3%A9po" in url
+
+
 # --- link finder: robust vs plain web links, code fences ignored ---
 
 def test_find_web_links_plain_and_anchored():
@@ -182,7 +191,13 @@ def test_online_network_error_is_unverifiable(tmp_path):
     assert findings[0].kind == "web_unverifiable"
 
 
-# --- an href we cannot send: rejected, never fetched, never a crash ---
+def test_online_unparseable_url_is_unverifiable(tmp_path):
+    _w(tmp_path / "conta.md", f"see [x](https://example.com/whatever) <!-- web-uuid: {UUID} -->\n")
+    findings, _ = check_web_links_online(tmp_path, None, _fetcher({}))
+    assert findings[0].kind == "web_unverifiable"
+
+
+# --- malformed href with whitespace (regression: it used to CRASH the whole run) ---
 
 #: The real shape, from a scraped report mirrored into a docs repo: the "href" is two truncated URLs
 #: with a space between them. It reached urllib and raised http.client.InvalidURL.
@@ -191,105 +206,222 @@ _SPACED_HREF = ("https://github.com/cli/cli/blob/30066b0042d0c5928d959e288144300
                 "30066b0042d0c5928d959e288144300cb28196c9/internal/codespaces/rpc/invoker.go")
 
 
-def test_parse_rejects_an_href_the_client_would_refuse():
-    """The second assert is the one that matters: forbidding these characters only INSIDE the regex
-    groups would parse this into a TRUNCATED path (`…/rpc/inv...`), whose 404 is then reported as a
-    real break. A false `web_not_found` is worse than an honest `web_unverifiable`.
+def test_parse_strips_a_commonmark_link_title():
+    """`[t](url "Title")` is ordinary Markdown, and MD_LINK_RE hands the title over glued to the href.
+    Before the title was stripped this link CRASHED the run; stripping makes it verifiable again
+    instead of merely non-fatal."""
+    assert parse_github_url('https://github.com/o/r/blob/main/a.md "Handbook"') == \
+        GithubUrl("o", "r", "main", "a.md")
+    assert parse_github_url("https://github.com/o/r/blob/main/a.md 'H'") == \
+        GithubUrl("o", "r", "main", "a.md")
 
-    The set is http.client's own, not the narrower whitespace class: scraped and OCR'd content carries
-    0x7f and C0 characters, and any of them slipping past here reaches the fetch layer and produces a
-    different verdict for the same defect."""
-    assert parse_github_url(_SPACED_HREF) is None
-    assert parse_github_url("https://github.com/o/r/blob/main/a b.md") is None
-    for ch in ("\x7f", "\x01", "\x0e", "\t"):
+
+def test_parse_rejects_control_characters_not_only_spaces():
+    """The guard must match what http.client itself refuses ([\\x00-\\x20\\x7f]), not the narrower \\s.
+    A 0x7f or C0 character passed a \\s guard, reached the fetch layer, and produced a different
+    verdict ('fetch failed') for the very same defect."""
+    for ch in ("\x7f", "\x01", "\x0e"):
         assert parse_github_url(f"https://github.com/o/r/blob/main/a{ch}b.md") is None
 
 
-def test_online_unsendable_href_is_unverifiable_and_never_fetched(tmp_path):
+def test_parse_url_with_whitespace_is_none():
+    """FR-008: an unrecognised shape is None (-> web_unverifiable), never a crash and never a guess.
+
+    The second assert is the one that matters: forbidding whitespace only INSIDE the regex groups
+    would have parsed this into a TRUNCATED path (`…/rpc/inv...`), whose 404 is then reported as a
+    real break. A false `web_not_found` is worse than an honest `web_unverifiable`."""
+    assert parse_github_url(_SPACED_HREF) is None
+    assert parse_github_url("https://github.com/o/r/blob/main/a b.md") is None
+
+
+def test_online_href_with_whitespace_is_unverifiable_not_a_crash(tmp_path):
+    """End to end: a mirrored document carrying such an href must not take the run down with it."""
     _w(tmp_path / "mirror" / "report.md", f"GitHub CLI [retrieves details]( {_SPACED_HREF})\n")
 
-    def exploding_fetcher(gu, token):
-        raise AssertionError(f"fetched an href we cannot send: {gu!r}")
+    def exploding_fetcher(gu, token):  # must never be reached for this link
+        raise AssertionError(f"fetched a malformed href: {gu!r}")
 
     findings, edits = check_web_links_online(tmp_path, None, exploding_fetcher)
     assert [f.kind for f in findings] == ["web_unverifiable"]
     assert edits == {}
 
 
-def test_contents_api_url_encodes_all_four_fields():
-    """Not just the path: an owner or repo can carry non-ASCII as easily. http.client encodes the
-    request line as ASCII and raises UnicodeEncodeError -- a ValueError, which escapes even an
-    HTTPException belt -- so an ordinary accented filename killed the run."""
-    url = GithubUrl("\xf3wner", "r\xe9po", "m\xe1in", "d\xf3cs/x.md").contents_api_url()
-    url.encode("ascii")  # would raise before
-    assert "%C3%B3wner" in url and "r%C3%A9po" in url
-
-
-def test_already_encoded_path_is_not_double_encoded():
-    """safe='/%' — a link written with %20 must not become %2520."""
-    assert "a%20b.md" in GithubUrl("o", "r", "main", "a%20b.md").contents_api_url()
-
-
 @pytest.mark.parametrize("exc", [
-    http.client.InvalidURL("bad"),
-    UnicodeEncodeError("ascii", "x", 0, 1, "ordinal not in range"),
+    http.client.InvalidURL("bad"),                                  # HTTPException, not OSError
+    UnicodeEncodeError("ascii", "x", 0, 1, "ordinal not in range"),  # ValueError, not either
 ])
 def test_fetch_once_never_propagates_a_client_side_url_error(monkeypatch, exc):
-    """Both escape `except (URLError, TimeoutError, OSError)` by a different route -- InvalidURL from
-    HTTPException, UnicodeEncodeError from ValueError -- and both used to propagate and kill the run.
-    Injected rather than provoked: with the URL encoded, provoking it would make the request VALID and
-    this test would hit the network, which no test here may do."""
+    """Belt as well as braces. Both escape `except (URLError, TimeoutError, OSError)` by a different
+    route — InvalidURL descends from HTTPException, UnicodeEncodeError from ValueError — and both used
+    to propagate and kill the run. Injected rather than provoked with a real malformed URL: since the
+    path is percent-encoded, provoking it would make the request VALID and this test would hit the
+    network, which no test here may do."""
     from darnlink.weblinks import _fetch_once
-    monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: (_ for _ in ()).throw(exc))
+
+    def boom(*a, **k):
+        raise exc
+
+    monkeypatch.setattr("urllib.request.urlopen", boom)
     assert _fetch_once(GithubUrl("o", "r", "main", "a.md"), None) == (-3, None)
 
 
-def test_a_client_side_url_error_is_not_retried(monkeypatch):
-    """Deterministic: retrying spends real sleeps and can never succeed. -3 must stay OUT of
-    _TRANSIENT_STATUSES -- that separation is the sentinel's whole purpose."""
+def test_malformed_url_is_not_retried(monkeypatch):
+    """A client-side rejection is deterministic: retrying costs real sleeps and can never succeed.
+    -3 must therefore stay OUT of _TRANSIENT_STATUSES — this asserts the sentinel's whole purpose."""
     from darnlink.weblinks import _TRANSIENT_STATUSES, default_fetcher
     assert -3 not in _TRANSIENT_STATUSES
-    monkeypatch.setattr("urllib.request.urlopen",
-                        lambda *a, **k: (_ for _ in ()).throw(http.client.InvalidURL("bad")))
+
+    def boom(*a, **k):
+        raise http.client.InvalidURL("bad")
+
+    monkeypatch.setattr("urllib.request.urlopen", boom)
     slept = []
-    assert default_fetcher(GithubUrl("o", "r", "main", "a.md"), None,
-                           attempts=3, sleep=slept.append) == (-3, None)
-    assert slept == []
+    status, _ = default_fetcher(GithubUrl("o", "r", "main", "a.md"), None,
+                                attempts=3, sleep=slept.append)
+    assert (status, slept) == (-3, [])
 
 
 def test_fetch_once_maps_a_transport_http_exception_to_the_network_sentinel(monkeypatch):
     """The other half of the widened except: a genuine transport HTTPException must still be -1, the
-    RETRYABLE sentinel. If the two ever collapse, a flaky connection stops being retried or a
-    malformed URL starts being."""
+    RETRYABLE sentinel — not -3. If these two ever collapse into one, a flaky connection stops being
+    retried or a malformed URL starts being."""
     from darnlink.weblinks import _TRANSIENT_STATUSES, _fetch_once
-    monkeypatch.setattr("urllib.request.urlopen",
-                        lambda *a, **k: (_ for _ in ()).throw(http.client.BadStatusLine("")))
+
+    def boom(*a, **k):
+        raise http.client.BadStatusLine("")
+
+    monkeypatch.setattr("urllib.request.urlopen", boom)
     assert _fetch_once(GithubUrl("o", "r", "main", "a.md"), None) == (-1, None)
     assert -1 in _TRANSIENT_STATUSES
 
 
-def test_repo_accessible_encodes_and_never_raises(monkeypatch):
-    """Its twin was the one that crashed, so this one was left unencoded and its own docstring's
-    'never raises' was false. Its real body runs in no other test in the suite."""
-    from darnlink.weblinks import _repo_accessible
+def test_actionable_unverifiable_are_listed_before_the_environmental_ones(tmp_path, capsys):
+    """The preview truncates at UNVERIFIABLE_PREVIEW. Content defects in your own repo are fixable and
+    rare; the environmental ones (no token, private cross-org) are unfixable and thousands. Unsorted,
+    the actionable ones fall past the cut and are never seen.
+
+    The filler must be GENUINELY environmental: an earlier version of this test used example.com URLs,
+    which land in the SAME actionable bucket ('not a recognised…'), so every entry sorted to key 0 and
+    the assertion held with the sort deleted. It passed while proving nothing — the very defect this
+    file documents two tests above."""
+    _w(tmp_path / "z_bad.md", "see [x](https://github.com/o/r/blob/main/a b.md)\n")
+    for i in range(UNVERIFIABLE_PREVIEW + 5):  # real GitHub URLs, 404 with no token -> environmental
+        _w(tmp_path / f"doc{i}.md", f"see [x](https://github.com/o/r/blob/main/env{i}.md)\n")
+    _run_web_check_cli([str(tmp_path), "--online"], fetcher=_fetcher({}))
+    shown = [l for l in capsys.readouterr().out.splitlines() if "[web_unverifiable]" in l]
+    assert len(shown) == UNVERIFIABLE_PREVIEW
+    assert "not a recognised" in shown[0]
+    assert all("no token" in l for l in shown[1:])
+
+
+def test_wreckage_with_a_query_or_fragment_is_never_fetched(tmp_path):
+    """The regression this round introduced and then removed. The path group stops at the first `?`
+    or `#`, so guarding only the PARSED groups let a wreckage whose first URL carries one through as a
+    TRUNCATED path — fetched, 404, reported as a hard break. A false web_not_found in a blocking gate
+    is worse than the crash this PR started from, so all four shapes must reach nobody."""
+    base = "https://github.com/cli/cli/blob/abc1234/internal/inv..."
+    second = "https://github.com/cli/cli/blob/abc1234/internal/invoker.go"
+    # The separator is NOT always a space and the scheme is NOT always adjacent: scraped content
+    # arrives with control characters, angle brackets, parens, emphasis markers and HTML entities in
+    # between. An earlier guard enumerated two shapes and let seven others through.
+    joiners = [" ", ' "', " <", " (", " [", " **", "\x7f", "\x01", " &lt;", "\t'"]
+    for first in (base, base + "?x=1", base + "#frag"):
+        for mid in joiners:
+            assert parse_github_url(first + mid + second) is None, repr(first + mid + second)
+
+
+def test_repo_accessible_encodes_owner_and_repo(monkeypatch):
+    """Its twin was fixed and it was not, so a non-ASCII owner raised UnicodeEncodeError here and the
+    new `except ValueError` swallowed it as a "network blip" -- returning True, which promotes the
+    destination's 404 to a hard break. Burying our own defect under "network error" is the very thing
+    the sibling function's comment calls unacceptable."""
     seen = {}
 
     def capture(req, timeout=None):
         seen["url"] = req.full_url
         raise http.client.BadStatusLine("")
 
+    from darnlink.weblinks import _repo_accessible
     _repo_accessible.cache_clear()
     monkeypatch.setattr("urllib.request.urlopen", capture)
-    assert _repo_accessible("\xf3wner", "r\xe9po", None) is True
+    _repo_accessible("\xf3wner", "r\xe9po", None)
     _repo_accessible.cache_clear()
     seen["url"].encode("ascii")  # would raise before
     assert "%C3%B3wner" in seen["url"]
 
 
-def test_online_unparseable_url_is_unverifiable(tmp_path):
-    _w(tmp_path / "conta.md", f"see [x](https://example.com/whatever) <!-- web-uuid: {UUID} -->\n")
-    findings, _ = check_web_links_online(tmp_path, None, _fetcher({}))
-    assert findings[0].kind == "web_unverifiable"
+def test_repo_accessible_survives_an_http_exception(monkeypatch):
+    """The one line of the fix with no coverage otherwise: _repo_accessible's body never runs in the
+    suite (every other test patches it out). A transport-level HTTPException must leave it True, so a
+    persistent 404 is not downgraded to unverifiable by a blip."""
+    import http.client as _http
+    from darnlink.weblinks import _repo_accessible
+
+    def boom(*a, **k):
+        raise _http.BadStatusLine("")
+
+    _repo_accessible.cache_clear()
+    monkeypatch.setattr("urllib.request.urlopen", boom)
+    assert _repo_accessible("o", "r", None) is True
+    _repo_accessible.cache_clear()
+
+
+def test_online_malformed_href_is_stopped_by_the_parser_not_by_the_fetcher(tmp_path):
+    """The guard intercepts first, so the finding is the PARSE one — not the -3 sentinel. Asserted on
+    the detail, because an earlier version of this test claimed to cover -3 while never reaching it:
+    it checked only `kind`, so it passed and proved nothing."""
+    _w(tmp_path / "doc.md", "see [x](https://github.com/o/r/blob/main/a b.md)\n")
+
+    def exploding_fetcher(gu, token):
+        raise AssertionError("must not fetch a malformed href")
+
+    findings, _ = check_web_links_online(tmp_path, None, exploding_fetcher)
+    assert [(f.kind, f.detail) for f in findings] == \
+        [("web_unverifiable", "not a recognised GitHub blob/raw URL")]
+
+
+def test_classify_reports_the_minus_3_sentinel(tmp_path):
+    """The -3 branch is a belt: with the guard in front and percent-encoding underneath, nothing in
+    production should reach it. Unit-tested directly so 'unreachable' never quietly becomes 'wrong'."""
+    from darnlink.weblinks import WebLink, _classify
+    link = WebLink("t", URL, None, 0, 0)
+    f = _classify(link, parse_github_url(URL), -3, None, False, Path("x.md"))
+    assert f.kind == "web_unverifiable" and "malformed URL" in f.detail
+
+
+def test_non_ascii_path_is_percent_encoded_and_does_not_crash():
+    """An accented filename is not hypothetical here. http.client encodes the request line as ASCII and
+    raises UnicodeEncodeError — a ValueError, so it escaped even the HTTPException belt. Encoding the
+    path fixes it at the source; the link VERIFIES instead of merely not crashing."""
+    gu = parse_github_url("https://github.com/o/r/blob/main/docs/documentación.md")
+    assert gu is not None
+    url = gu.contents_api_url()
+    assert "documentaci%C3%B3n.md" in url
+    url.encode("ascii")  # would raise before
+
+
+def test_already_encoded_path_is_not_double_encoded():
+    """safe='/%' — a link written with %20 must not become %2520."""
+    gu = parse_github_url("https://github.com/o/r/blob/main/a%20b.md")
+    assert "a%20b.md" in gu.contents_api_url()
+
+
+def test_a_quoted_second_url_is_not_treated_as_a_title():
+    """The scraped two-URL wreckage, wearing quotes. Stripping the 'title' would leave a TRUNCATED
+    path, fetch a different file, and report its 404 as a real break — the false web_not_found this
+    module refuses to produce."""
+    href = ('https://github.com/cli/cli/blob/abc1234/internal/inv... '
+            '"https://github.com/cli/cli/blob/abc1234/internal/invoker.go"')
+    assert parse_github_url(href) is None
+
+
+def test_space_in_fragment_or_query_still_verifies():
+    """Only owner/repo/ref/path go on the wire; #fragment and ?query are dropped by the regex. Judging
+    the raw href made these unverifiable over a space that is never sent."""
+    assert parse_github_url("https://github.com/o/r/blob/main/a.md#my anchor") == \
+        GithubUrl("o", "r", "main", "a.md")
+    assert parse_github_url("https://github.com/o/r/blob/main/a.md?plain=1&x=a b") == \
+        GithubUrl("o", "r", "main", "a.md")
 
 
 def test_many_unverifiable_are_summarised_not_listed_one_by_one(tmp_path, capsys):
