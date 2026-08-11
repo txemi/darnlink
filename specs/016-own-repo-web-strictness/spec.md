@@ -71,8 +71,13 @@ Two secondary measurements shape the design:
 Two caveats stated rather than buried, because the whole case rests on these numbers:
 
 - **The snapshot is post-remediation.** On the day of measurement, 11 of these links were fixed by
-  hand — `uuid` added to 8 destination files, then anchored — precisely to let the new axis start at
-  zero. Before that day the uuid-less bucket was 27.
+  hand — `uuid` added to 8 destination files, then anchored — precisely to keep the new axis's opening
+  budget small. An earlier count that day put the uuid-less bucket at 27, but under a **wider scope**
+  (it included vendored `clones/` and `mirrors/`), so the two figures are **not subtractable**; only
+  the 17 above is measured under the scope stated here.
+- **The 17 is a floor, not a total.** Seven more links point at repositories not checked out locally,
+  so they could not be resolved offline; some of those destinations may also lack a `uuid`. The honest
+  headline is *"17 confirmed, up to 24"*.
 - **Every ref in the fleet is a branch**: `main` 201, `master` 20, `HEAD` 7, and nothing else across
   all 228. The immutable-ref exclusion below is therefore **reasoning, not measurement** — it has zero
   occurrences today and is specified so the first one does not become an unfixable failure.
@@ -151,8 +156,11 @@ into it later.
 
 ### Adoption: a budget, not a cliff
 
-The gate recipe gains `own_web` (the owner list, or `origin`) and **`own_web_max`**: fail only above
-the budget, and print the "lower it to N" nudge when the count drops. Without it, switching the axis
+The gate recipe gains `own_web` (a list of owner names), `own_web_from_origin` (a boolean) and
+**`own_web_max`**: fail only above the budget, and print the "lower it to N" nudge when the count
+drops. The boolean is separate for the same reason the CLI has a separate flag and not an `auto`
+value — putting `origin` inside the list re-creates, one layer down, the sentinel collision this
+design rejected above. Without it, switching the axis
 on fails several repos at once on day one, and an axis that cannot be adopted incrementally gets
 turned off instead of obeyed — the lesson 015 already paid.
 
@@ -189,9 +197,18 @@ the exemption second.
 [text](url) <!-- web-uuid: X --> <!-- darnlink-own-exempt -->
 ```
 
-Getting this wrong is not cosmetic: with the exemption first, the link parses as *plain*, and under
-`--write` a **second** `<!-- web-uuid: X -->` is appended after the exemption, silently corrupting the
-line. FR-011 and its acceptance scenario pin the order for exactly that reason.
+**Measured, because the obvious rationale for this is wrong and was written down once already.** With
+the exemption first and no anchor, `--write` inserts the anchor *before* the untouched exemption, so
+the line **self-heals into the normative order** — no corruption. The corruption is a different case:
+an anchor that already sits **after** the exemption,
+
+```
+[text](url) <!-- darnlink-own-exempt --> <!-- web-uuid: X -->
+```
+
+which the tail regex cannot see, so the link reads as plain and a **second** anchor is appended,
+leaving two. That is the case the acceptance scenario must assert, and the reason the order is
+normative rather than advisory.
 
 Why not each of the three opt-outs that already exist, in the order someone will suggest them:
 
@@ -201,8 +218,9 @@ Why not each of the three opt-outs that already exist, in the order someone will
 - **006's file-level `darnlink-ignore-links`** is too blunt: it disables link handling for the
   **whole file**, including the core's intra-repo robustify. Exempting one cross-repo link must not
   cost the file its local link healing.
-- **`--ignore-block`** works on regions, not links, and web-check already honours it — it is the right
-  tool for a generated *section*, and it stays available. It is not a per-link exemption.
+- **`--ignore-block`** works on regions, not links, and web-check already honours it by dropping the
+  link **before any finding exists** — it is the right tool for a generated *section*, and it stays
+  exactly as it is. It is not a per-link exemption, and FR-014 must not turn it into one.
 
 **Composition is a requirement, not a bonus** — and it is not free today: web-check currently ignores
 the 003 and 006 file-level markers entirely (it only skips `--ignore-block` regions and code fences).
@@ -303,52 +321,78 @@ convenience needs a named sentence in P-IV.
   **`web_own_no_uuid`**, and MUST set the exit code to **4** (subject to FR-012).
 - **FR-005** FR-004 MUST NOT fire when the destination path does not end in `.md`, compared
   **case-insensitively** (`iter_markdown_files` already lowercases; `A.MD` is a Markdown file).
-- **FR-006** FR-004 MUST NOT fire when the URL's ref matches `^[0-9a-f]{7,40}$` — a commit SHA, long
-  or short. The test MUST be purely textual: no other ref shape is excluded, and in particular a tag
-  MUST NOT be, because a tag is textually indistinguishable from a branch of the same name and
-  telling them apart needs the network (see §What fails).
+- **FR-006** FR-004 MUST NOT fire when the URL's ref matches `^[0-9a-fA-F]{7,40}$` — a commit SHA,
+  long or short, in either case (GitHub accepts an uppercase SHA in a blob URL, and FR-001 and FR-005
+  both fold case; a rule that did not would make such a link an unfixable failure). The test MUST be
+  purely textual: no other ref shape is excluded, and in particular a tag MUST NOT be, because a tag
+  is textually indistinguishable from a branch of the same name and telling them apart needs the
+  network (see §What fails).
 - **FR-007** No other classification changes. In particular a 404 (with or without token), an
   unreadable repo (the `-2` sentinel), a non-GitHub URL and a transport error MUST keep today's kind
   and exit contribution, owned or not.
 - **FR-008** The `web_own_no_uuid` message MUST name owner, repo, destination path, and state the
   action (add a `uuid` to that file's frontmatter in that repository). It MUST NOT suggest `--write`.
 - **FR-009** Ownership and every exclusion MUST be decided without any additional network request.
-- **FR-010** `--json` MUST emit the new kind under its own `kind`, and include a `web_own_no_uuid`
-  count in the summary object, so a consumer can report on it.
-- **FR-011** A link followed by **`<!-- darnlink-own-exempt -->`** MUST be exempt from FR-004 **and
-  from 013's FR-005** (`web_anchor`): an exempt link is never anchored, under `--write` or otherwise —
-  anchoring it is the very damage the marker exists to prevent, since the destination's `uuid` will
-  not survive its next regeneration. When combined with an anchor the order is normative — 
+- **FR-010** `--json` MUST emit both new kinds (`web_own_no_uuid`, `web_own_exempt`) under their own
+  `kind`, and include a count of each in the summary object, so a consumer can report on them.
+- **FR-011** A link followed by **`<!-- darnlink-own-exempt -->`** MUST be exempt from **three**
+  verdicts, and from exactly three:
+  - **FR-004** (`web_own_no_uuid`) — the point of the marker.
+  - **013's FR-005** (`web_anchor`) — an exempt link is never anchored, under `--write` or otherwise;
+    anchoring it is the very damage the marker exists to prevent, since the destination's `uuid` will
+    not survive its next regeneration.
+  - **`web_mismatch`** — without this the escape hatch does not escape. A destination that
+    regenerates is precisely one whose `uuid` drifts, and the normal migration path (adding the marker
+    to a link anchored earlier) would otherwise leave a permanent exit-4 `web_mismatch` — the same
+    dead end by another door.
+
+  It MUST **not** exempt from `web_not_found`: a dead link is dead whether or not its destination is
+  regenerated, and that is still worth failing on.
+
+  When combined with an anchor the order is normative —
   `[text](url) <!-- web-uuid: X --> <!-- darnlink-own-exempt -->` — because both markers claim the
-  position immediately after `)`. The link MUST still be reported, as its own tolerated kind, and MUST
-  NOT contribute to the exit code: silently dropping it would hide the exemption from whoever audits
-  the repo later.
+  position immediately after `)`. The link MUST still be reported, under the kind **`web_own_exempt`**,
+  and MUST NOT contribute to the exit code: silently dropping it would hide the exemption from whoever
+  audits the repo later.
 - **FR-012** `web-check` MUST accept **`--own-max N`**. While the number of `web_own_no_uuid` findings
   is **at or below** `N`, they MUST NOT contribute to the exit code; above `N`, FR-004's exit 4
-  applies. Other exit-4 causes are unaffected: one budgeted finding plus one real `web_not_found`
+  applies. The count is of **findings, not destinations**: two links in different files pointing at
+  the same uuid-less file cost 2, and one edit at the destination clears both. `web_own_exempt` never
+  counts. Other exit-4 causes are unaffected: one budgeted finding plus one real `web_not_found`
   still exits 4. The findings are always reported — the budget silences the *verdict*, never the
   *finding*. Omitting the flag MUST be distinguishable from `--own-max 0` (default `None`), and
   `--own-max` without any owner set MUST be a usage error (exit 1).
 - **FR-013** When the count is at or below a non-zero `--own-max`, the report MUST print the count and
   say that lowering the budget to that number keeps the ratchet; when the count reaches **zero** it
   MUST say to drop the flag entirely. Both nudges, as `dangling_max` gives. A budget nobody is told to
-  lower is a budget that never goes down.
-- **FR-014** The new finding MUST compose with the existing opt-outs: a file carrying
-  `darnlink-ignore-file` (003) or `darnlink-ignore-links` (006), and any region inside an
-  `--ignore-block` marker, MUST NOT produce it. This is a filter **by kind**, applied to
-  `web_own_no_uuid` only — it MUST NOT suppress `web_mismatch`, `web_not_found` or any other web
-  finding in that file, which would silently violate FR-007. That is a **third** semantics for those
-  markers, narrower than the "removed from the darnlink graph entirely" the core gives them, and it
-  is declared here rather than left to the implementer. Today `web-check` honours only
-  `--ignore-block` and code fences, so 003 and 006 are new work here, not an existing guarantee (this
-  mirrors 015's FR-045).
-- **FR-015** The gate recipe MUST expose `own_web` (a list of owner names, or the string `origin`
-  meaning `--own-from-origin`) and `own_web_max` (int), passing them through as `--own` / 
-  `--own-from-origin` / `--own-max`. Because FR-003 and FR-012 make **exit 1 reachable from
-  configuration**, the recipe MUST treat exit 1 from `web-check` as a *tool/usage* error — its
-  existing fail-open-and-warn path — and MUST NOT report it as a repository verdict. Today the recipe
-  documents web-check's contract as "0/3/4, every non-zero fail-closed"; that contract is what this
-  requirement changes.
+  lower is a budget that never goes down. The run's outcome word MUST also reflect the budget: today
+  exit 0 prints `clean`, and printing `clean` with findings on screen is exactly the misreading this
+  project's consumers have already paid for — under budget it MUST say so instead.
+- **FR-014** The new finding MUST compose with the file-level opt-outs: a file carrying
+  `darnlink-ignore-file` (003) or `darnlink-ignore-links` (006) MUST NOT produce it. This is a filter
+  **by kind**, applied to `web_own_no_uuid` only — it MUST NOT suppress `web_mismatch`,
+  `web_not_found` or any other web finding in that file, which would silently violate FR-007. That is
+  a **third** semantics for those markers, narrower than the "removed from the darnlink graph
+  entirely" the core gives them, and it is declared here rather than left to the implementer. Today
+  `web-check` honours neither, so this is new work, not an existing guarantee (mirroring 015's
+  FR-045).
+- **FR-014b** `--ignore-block` is **out of FR-014 and unchanged**. It already suppresses the link
+  *before any finding exists* (`find_web_links` skips the span), so it emits nothing at all today.
+  Folding it into FR-014's by-kind rule would make links inside an ignored region start producing
+  `web_not_found` — a behaviour change FR-007 forbids. Stated because the natural reading of "compose
+  with the existing opt-outs" gets this backwards.
+- **FR-015** **Both** gate recipes — the bash `darnlink-gate` and its PowerShell twin, which carries
+  the same web pass and the same verbatim-exit-code contract — MUST expose `own_web` (a list of owner
+  names), `own_web_from_origin` (bool) and `own_web_max` (int), passing them through as `--own` /
+  `--own-from-origin` / `--own-max`. A single-surface implementation is how the two recipes have
+  already drifted (`dangling_max` exists in one and not the other).
+- **FR-016** Because FR-003 and FR-012 make **exit 1 reachable from a configuration typo**, the
+  recipes MUST treat exit 1 from `web-check` as a *usage* error and MUST NOT report it as a repository
+  verdict. It MUST NOT be routed to the recipe's `bail()` helper, which **exits the whole script**: a
+  forgotten `own_web` beside an `own_web_max` would then produce a green gate that also silently skips
+  the create-readme and dangling axes — the precise bug the recipe already documents and fixed once
+  with `RC_IS_FINAL`. The required shape is the create-readme axis's: warn, preserve any already
+  failing `rc`, and let every remaining axis run.
 
 ### Key Entities
 
@@ -357,6 +401,21 @@ convenience needs a named sentence in P-IV.
 - **`web_own_no_uuid`** — the **sixth** web finding kind (beside `web_ok`, `web_anchor`,
   `web_mismatch`, `web_not_found`, `web_unverifiable`): a destination *you control* that has not been
   given the `uuid` its inbound cross-repo link needs.
+- **`web_own_exempt`** — the **seventh**: a link whose FR-011 marker takes it out of the three
+  verdicts listed there. Reported, never silent, never part of the exit code, and included in
+  `--json` like any other kind (FR-010).
+
+### Precedence, when several rules apply to the same link
+
+Evaluated in this order, first match wins, so every combination has one answer:
+
+1. **`--ignore-block` / code fence** — the link is never seen (FR-014b).
+2. **FR-014's file markers** — `web_own_no_uuid` is filtered; other web kinds survive.
+3. **FR-011's exemption** — `web_own_exempt`. It wins over FR-005/FR-006, so an exempt link to a
+   `.py` or to a SHA-pinned path reports `web_own_exempt`, not `web_unverifiable`: the author said
+   "leave this link alone", which is the more specific statement.
+4. **FR-005 / FR-006** — `web_unverifiable`, unchanged.
+5. **FR-004** — `web_own_no_uuid`, subject to FR-012's budget.
 
 ## Acceptance
 
@@ -383,18 +442,26 @@ resolves through `git config`.
    emitted — **and the same with `--own explicit --own-from-origin`**, where the owner set would not
    be empty (FR-003).
 10. **No extra fetch.** The mocked fetcher is called exactly as many times as without any owner set.
-11. **Opt-out.** A link followed by `<!-- darnlink-own-exempt -->` reports under its tolerated kind and
-    does not affect the exit code; the same link without the marker is `web_own_no_uuid`, exit 4. An
-    exempt link whose destination **does** have a uuid is **not** reported `web_anchor` and is **not**
-    rewritten under `--write` (FR-011). With both markers present in the normative order, the anchor is
-    still recognised and the file is byte-identical after a `--write` run.
+11. **Opt-out.** A link followed by `<!-- darnlink-own-exempt -->` reports `web_own_exempt` and does
+    not affect the exit code; the same link without the marker is `web_own_no_uuid`, exit 4. An exempt
+    link whose destination **does** have a uuid is **not** reported `web_anchor` and is **not**
+    rewritten under `--write`; an exempt **anchored** link whose destination uuid has **changed** is
+    **not** `web_mismatch` (FR-011's third exemption, the one that makes the hatch escape). With both
+    markers in the normative order the anchor is still recognised and the file is byte-identical after
+    `--write`. **And the corruption case**: with the anchor written *after* the exemption, `--write`
+    must not append a second anchor — the file ends with exactly one.
+11b. **Exempt beats the other exclusions.** An exempt link to a `.py`, and an exempt link on a
+    SHA-pinned ref, both report `web_own_exempt` rather than `web_unverifiable` (§Precedence).
 12. **Owner case.** `--own OWNED` against a `owned/repo/…` URL is owned, and vice versa (FR-001).
-13. **Budget.** With two owned uuid-less destinations: `--own-max 2` → both reported, exit **0**, and
-    the report says to lower the budget to 2; `--own-max 1` → exit **4**; `--own-max 2` with an
-    additional real `web_not_found` → exit **4** (FR-012). `--own-max` with no owner set → exit 1.
-14. **Composition.** The same failing link is silent when its file carries `darnlink-ignore-file`,
-    when it carries `darnlink-ignore-links`, and when it sits inside an `--ignore-block` region — while
-    a `web_not_found` in that same file is **still reported** (FR-014's by-kind filter).
+13. **Budget.** With two owned uuid-less destinations: `--own-max 2` → both reported, exit **0**, the
+    outcome word is not `clean`, and the report says to lower the budget to 2; `--own-max 1` → exit
+    **4**; `--own-max 2` with an additional real `web_not_found` → exit **4** (FR-012). `--own-max`
+    with no owner set → exit 1. Two links in **different files** pointing at the **same** uuid-less
+    destination count as **2** (FR-012 counts findings, not destinations).
+14. **Composition.** The same failing link is silent when its file carries `darnlink-ignore-file` and
+    when it carries `darnlink-ignore-links`, while a `web_not_found` in that same file is **still
+    reported** (FR-014's by-kind filter). A link inside an `--ignore-block` region produces **nothing
+    at all**, as today — including no `web_not_found` (FR-014b).
 15. **JSON shape.** `--json` carries every `web_own_no_uuid` in `findings` with that literal `kind`,
     plus a `web_own_no_uuid` count in the summary object (FR-010).
 16. **The message does not lie.** The `web_own_no_uuid` text contains the owner, the repo, the path,
@@ -438,3 +505,14 @@ No other principle changes: the base rule is a pure textual predicate over data 
   PR so the amendment and the correction are reviewable apart.
 - **FR-009 of 013** should be restated to cover client-side validation errors, not only transport
   errors — see §Prerequisite.
+- **`_GITHUB_BLOB_RE` mis-parses a branch containing a slash.** `(?P<ref>[^/]+)` stops at the first
+  separator, so `blob/release/1.2/docs/a.md` yields `ref='release'` and `path='1.2/docs/a.md'` — the
+  wrong file, fetched and reported as `web_not_found`. Pre-existing in 013, but this spec makes `ref`
+  load-bearing (FR-006) and rests part of its case on *"every ref in the fleet is a branch"*, so it is
+  named here. Fixing it needs the ref/path split to be resolved against the repo's branch list, i.e.
+  the network — the same wall as the tag question, and the reason it stays a known limit rather than a
+  requirement.
+- **P-II is untouched by the letter of this spec but not by its spirit**: `--own-from-origin` makes
+  darnlink spawn an external process for the first time. Worth a sentence when the constitution is
+  amended for P-IV, along with the `safe.directory` failure mode (`git` refusing a repo it considers
+  dubiously owned), which FR-003 should list among its exit-1 reasons.
