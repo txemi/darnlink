@@ -70,11 +70,11 @@ Two secondary measurements shape the design:
 
 Two caveats stated rather than buried, because the whole case rests on these numbers:
 
-- **The snapshot is post-remediation.** On the day of measurement, 11 of these links were fixed by
-  hand — `uuid` added to 8 destination files, then anchored — precisely to keep the new axis's opening
-  budget small. An earlier count that day put the uuid-less bucket at 27, but under a **wider scope**
-  (it included vendored `clones/` and `mirrors/`), so the two figures are **not subtractable**; only
-  the 17 above is measured under the scope stated here.
+- **The snapshot is post-remediation.** Earlier the same day, 11 links that would otherwise sit in
+  this bucket were fixed by hand — `uuid` added to 8 destination files, then anchored — precisely to
+  keep the new axis's opening budget small. An earlier count that day is deliberately **not** quoted
+  here: it was taken under a different scope and the two numbers do not reconcile, and a figure that
+  invites a subtraction it does not support is worse than no figure.
 - **The 17 is a floor, not a total.** Seven more links point at repositories not checked out locally,
   so they could not be resolved offline; some of those destinations may also lack a `uuid`. The honest
   headline is *"17 confirmed, up to 24"*.
@@ -156,25 +156,27 @@ into it later.
 
 ### Adoption: a budget, not a cliff
 
-The gate recipe gains `own_web` (a list of owner names), `own_web_from_origin` (a boolean) and
-**`own_web_max`**: fail only above the budget, and print the "lower it to N" nudge when the count
-drops. The boolean is separate for the same reason the CLI has a separate flag and not an `auto`
-value — putting `origin` inside the list re-creates, one layer down, the sentinel collision this
-design rejected above. Without it, switching the axis
-on fails several repos at once on day one, and an axis that cannot be adopted incrementally gets
-turned off instead of obeyed — the lesson 015 already paid.
+The budget is **`--own-max N`**: fail only above it, and print the "lower it to N" nudge when the
+count drops. Without it, switching the axis on fails several repos at once on day one, and an axis
+that cannot be adopted incrementally gets turned off instead of obeyed — the lesson 015 already paid.
 
-**But the budget cannot be built the way `dangling_max` was, and that has to be said here or it will
-be discovered during implementation.** `dangling_max` works because the recipe re-counts the findings
-itself and computes the exit code. The web pass does the opposite: it runs `web-check` and takes its
-exit code verbatim, marking it final. And exit 4 is **shared** with `web_mismatch` / `web_not_found`,
-so from outside there is no way to tell a budgeted `web_own_no_uuid` from a genuinely dead link
-without re-running everything as `--json` and giving up the human-readable report.
+**The gate-recipe wiring is deliberately NOT in this spec.** Three review rounds spent their findings
+on it — on which config key shape avoids a sentinel collision, on what a `bail()` does to the axes
+after it, on the fact that the PowerShell recipe has drifted far enough that "both recipes" is not one
+requirement but two. None of that is about *this* feature: it is about how a gate consumes any
+darnlink exit code, it touches two shell surfaces this spec has no acceptance criteria for, and it is
+exactly how `dangling_max` was done — the axis landed first, the recipe key followed in its own change.
+Same here. What this spec owes the recipe is a CLI it can call and an exit contract it can trust;
+those are FR-012, FR-013 and FR-017.
 
-Therefore the budget lives in **darnlink**, not in the recipe: a `--own-max N` flag that suppresses
-`web_own_no_uuid`'s contribution to the exit code while the count is at or below `N` (the findings are
-still reported — a budget silences the *verdict*, never the *finding*). The recipe's keys are thin
-pass-throughs. See FR-012/FR-013/FR-015.
+**And the budget must live in darnlink, not in the gate — that part does belong here**, because it
+shapes the CLI. `dangling_max` could live in the recipe because the recipe re-counts those findings
+itself. The web pass cannot: it takes `web-check`'s exit code verbatim, and exit 4 is **shared** with
+`web_mismatch` / `web_not_found`, so from outside there is no way to tell a budgeted finding from a
+genuinely dead link without re-running everything as `--json` and giving up the human report. Hence a
+flag, not a key: `--own-max N` suppresses `web_own_no_uuid`'s contribution to the exit code while the
+count is at or below `N`, and the findings are still reported — a budget silences the *verdict*, never
+the *finding*. See FR-012/FR-013.
 
 ### Escape hatch (required, and it is not 005's)
 
@@ -262,9 +264,10 @@ Reviewed against `.specify/memory/constitution.md` v1.1.0.
 - **P-III Plain, Self-Contained:** nothing is stored in either repository **as a `uuid → path`
   index** — that, and only that, is what this principle forbids, and it is why 013 rejected the
   manifest. Two things this feature does put in a repo, and both are ordinary configuration the
-  principle has never covered: the owner list as the `own_web` key of the gate recipe's committed
-  config (FR-015), and the FR-011 exemption as a comment in the source Markdown. Neither is a location
-  database, neither rots into a stale index, and a darnlink-less repo still renders both. **Held.** ✅
+  principle has never covered: the FR-011 exemption is a comment in the source Markdown, and the owner
+  list will eventually be a key in a gate config (out of scope here — see §Adoption). Neither is a
+  location database, neither rots into a stale index, and a darnlink-less repo still renders the
+  Markdown unchanged. **Held.** ✅
 - **P-IV Deterministic:** with an explicit `--own`, output remains a function of *(tree + live
   responses)* — the same conditional determinism 013 already declared, with nothing added. With
   **`--own-from-origin` it also becomes a function of the clone's git configuration**: the same tree
@@ -291,11 +294,11 @@ convenience needs a named sentence in P-IV.
   what happens to be on disk.
 - **Exclude tags as well as SHAs from the failing rule.** Undecidable offline; rejected in
   §What fails above, with its failure direction.
-- **Fold it into `web: true`, with no key of its own.** Tempting, and it loses the one thing that
-  makes the rung adoptable: a **separate budget**. (Note what this alternative is *not* about:
-  reaching `mode: max` — the web pass already runs only inside the recipe's `max` branch, so
-  `own_web` is transitively mode=max-only whatever this bullet decides. The separate key buys the
-  budget, not the reachability.) Same shape as `dangling` beside `mode`.
+- **Make the rule unconditional whenever the web axis is on, with no way to budget it.** Tempting, and
+  it loses the one thing that makes the rung adoptable: a repo cannot cross from "several failures" to
+  zero in one step, so it turns the axis off instead. Hence `--own-max`. (What this is *not* about:
+  reaching the gate's `max` mode — the web pass already runs only there, so this rung inherits that
+  reachability whatever is decided here. The budget is the point.)
 
 ---
 
@@ -317,8 +320,11 @@ convenience needs a named sentence in P-IV.
   when explicit `--own` values were also given**, so the owner set would not have been empty. It is a
   request that either succeeds or is a usage error; it never silently narrows the question answered.
 - **FR-004** A link classified `web_unverifiable` **solely** because the fetched destination returned
-  200 with no frontmatter `uuid`, whose owner is owned, MUST instead be reported
-  **`web_own_no_uuid`**, and MUST set the exit code to **4** (subject to FR-012).
+  200 with **no frontmatter at all, or frontmatter without a `uuid`**, whose owner is owned, MUST
+  instead be reported **`web_own_no_uuid`**, and MUST set the exit code to **4** (subject to FR-012).
+  A destination whose frontmatter is present but **invalid YAML** MUST NOT produce it: today the
+  reader collapses "absent" and "invalid" into the same `None`, and telling someone to *add* a `uuid`
+  to a file whose frontmatter does not parse is the wrong instruction for a different defect.
 - **FR-005** FR-004 MUST NOT fire when the destination path does not end in `.md`, compared
   **case-insensitively** (`iter_markdown_files` already lowercases; `A.MD` is a Markdown file).
 - **FR-006** FR-004 MUST NOT fire when the URL's ref matches `^[0-9a-fA-F]{7,40}$` — a commit SHA,
@@ -353,7 +359,10 @@ convenience needs a named sentence in P-IV.
   `[text](url) <!-- web-uuid: X --> <!-- darnlink-own-exempt -->` — because both markers claim the
   position immediately after `)`. The link MUST still be reported, under the kind **`web_own_exempt`**,
   and MUST NOT contribute to the exit code: silently dropping it would hide the exemption from whoever
-  audits the repo later.
+  audits the repo later. The marker MUST be recognised **immediately after the `)`, or immediately
+  after a `web-uuid` anchor** — nowhere else. That is what makes the order enforceable rather than
+  decorative: an anchor written *after* the marker is not seen, the link reads as plain, and `--write`
+  appends a second one.
 - **FR-012** `web-check` MUST accept **`--own-max N`**. While the number of `web_own_no_uuid` findings
   is **at or below** `N`, they MUST NOT contribute to the exit code; above `N`, FR-004's exit 4
   applies. The count is of **findings, not destinations**: two links in different files pointing at
@@ -365,9 +374,11 @@ convenience needs a named sentence in P-IV.
 - **FR-013** When the count is at or below a non-zero `--own-max`, the report MUST print the count and
   say that lowering the budget to that number keeps the ratchet; when the count reaches **zero** it
   MUST say to drop the flag entirely. Both nudges, as `dangling_max` gives. A budget nobody is told to
-  lower is a budget that never goes down. The run's outcome word MUST also reflect the budget: today
-  exit 0 prints `clean`, and printing `clean` with findings on screen is exactly the misreading this
-  project's consumers have already paid for — under budget it MUST say so instead.
+  lower is a budget that never goes down. When the count is **above zero** and under budget, the run's
+  outcome word MUST also say so: today exit 0 prints `clean`, and printing `clean` with findings on
+  screen is exactly the misreading this project's consumers have already paid for. At **zero** it must
+  keep saying `clean` — an obsolete `--own-max 5` on an already-clean repo must not make a clean run
+  look qualified.
 - **FR-014** The new finding MUST compose with the file-level opt-outs: a file carrying
   `darnlink-ignore-file` (003) or `darnlink-ignore-links` (006) MUST NOT produce it. This is a filter
   **by kind**, applied to `web_own_no_uuid` only — it MUST NOT suppress `web_mismatch`,
@@ -376,23 +387,19 @@ convenience needs a named sentence in P-IV.
   entirely" the core gives them, and it is declared here rather than left to the implementer. Today
   `web-check` honours neither, so this is new work, not an existing guarantee (mirroring 015's
   FR-045).
-- **FR-014b** `--ignore-block` is **out of FR-014 and unchanged**. It already suppresses the link
+- **FR-015** `--ignore-block` is **out of FR-014 and unchanged**. It already suppresses the link
   *before any finding exists* (`find_web_links` skips the span), so it emits nothing at all today.
   Folding it into FR-014's by-kind rule would make links inside an ignored region start producing
   `web_not_found` — a behaviour change FR-007 forbids. Stated because the natural reading of "compose
   with the existing opt-outs" gets this backwards.
-- **FR-015** **Both** gate recipes — the bash `darnlink-gate` and its PowerShell twin, which carries
-  the same web pass and the same verbatim-exit-code contract — MUST expose `own_web` (a list of owner
-  names), `own_web_from_origin` (bool) and `own_web_max` (int), passing them through as `--own` /
-  `--own-from-origin` / `--own-max`. A single-surface implementation is how the two recipes have
-  already drifted (`dangling_max` exists in one and not the other).
-- **FR-016** Because FR-003 and FR-012 make **exit 1 reachable from a configuration typo**, the
-  recipes MUST treat exit 1 from `web-check` as a *usage* error and MUST NOT report it as a repository
-  verdict. It MUST NOT be routed to the recipe's `bail()` helper, which **exits the whole script**: a
-  forgotten `own_web` beside an `own_web_max` would then produce a green gate that also silently skips
-  the create-readme and dangling axes — the precise bug the recipe already documents and fixed once
-  with `RC_IS_FINAL`. The required shape is the create-readme axis's: warn, preserve any already
-  failing `rc`, and let every remaining axis run.
+- **FR-016** The **text report** — not only `--json` — MUST carry both new kinds: counted in the
+  summary line beside the existing five, and listed like any other actionable finding. FR-011's
+  promise ("never silent, so whoever audits the repo can see the exemption") is not kept by a JSON
+  mode nobody reads in a gate log.
+- **FR-017** `--own`, `--own-from-origin` or `--own-max` **without `--online`** MUST be a usage error
+  (exit 1), by the same argument as FR-003 and following the precedent `--write` already sets. The
+  offline branch ignores them entirely, so accepting them silently would report a green run that never
+  applied the rule it was asked for.
 
 ### Key Entities
 
@@ -407,15 +414,32 @@ convenience needs a named sentence in P-IV.
 
 ### Precedence, when several rules apply to the same link
 
-Evaluated in this order, first match wins, so every combination has one answer:
+**Two axes, not one.** An earlier draft of this section was a single "first match wins" list, and it
+was wrong in both directions: it made an exempt link whose destination 404s report `web_own_exempt`,
+which FR-011 forbids four lines earlier, and it left the entire status-based classification out — the
+layer that in fact decides most verdicts.
 
-1. **`--ignore-block` / code fence** — the link is never seen (FR-014b).
-2. **FR-014's file markers** — `web_own_no_uuid` is filtered; other web kinds survive.
-3. **FR-011's exemption** — `web_own_exempt`. It wins over FR-005/FR-006, so an exempt link to a
-   `.py` or to a SHA-pinned path reports `web_own_exempt`, not `web_unverifiable`: the author said
-   "leave this link alone", which is the more specific statement.
-4. **FR-005 / FR-006** — `web_unverifiable`, unchanged.
-5. **FR-004** — `web_own_no_uuid`, subject to FR-012's budget.
+**Axis 1 — visibility, before any fetch:**
+
+1. `--ignore-block` region or code fence → the link is **never seen**; nothing is emitted (FR-015).
+2. A file carrying `darnlink-ignore-file` / `darnlink-ignore-links` → the link is fetched and
+   classified as today, but `web_own_no_uuid` is filtered out of the result (FR-014).
+
+**Axis 2 — classification, after the fetch. Status decides first:**
+
+3. Anything other than 200 — 401/403, the `-2` unreadable-repo sentinel, 404, a transport error —
+   keeps **exactly** today's kind, for every link, exempt or not (FR-007). In particular an exempt
+   link whose destination 404s is `web_not_found`, because a dead link is dead either way.
+4. On **200 only**, in this order: FR-011's exemption → `web_own_exempt`, which also covers the
+   `web_mismatch` and `web_anchor` cases it lists; then FR-005/FR-006 → `web_unverifiable`; then
+   FR-004 → `web_own_no_uuid`, subject to FR-012's budget; otherwise today's `web_ok` / `web_anchor` /
+   `web_mismatch`.
+
+Two consequences worth stating because they are the ones a reader gets wrong: an exempt link that
+verifies fine (200, anchored, uuid matches) reports **`web_own_exempt`, not `web_ok`** — the marker
+describes the *link*, not the outcome of one run; and an exempt link to a `.py` or on a SHA-pinned ref
+also reports `web_own_exempt`, because the author's explicit "leave this alone" is the more specific
+statement.
 
 ## Acceptance
 
@@ -450,23 +474,26 @@ resolves through `git config`.
     markers in the normative order the anchor is still recognised and the file is byte-identical after
     `--write`. **And the corruption case**: with the anchor written *after* the exemption, `--write`
     must not append a second anchor — the file ends with exactly one.
-11b. **Exempt beats the other exclusions.** An exempt link to a `.py`, and an exempt link on a
-    SHA-pinned ref, both report `web_own_exempt` rather than `web_unverifiable` (§Precedence).
-12. **Owner case.** `--own OWNED` against a `owned/repo/…` URL is owned, and vice versa (FR-001).
-13. **Budget.** With two owned uuid-less destinations: `--own-max 2` → both reported, exit **0**, the
+12. **Exempt, and precedence.** An exempt link to a `.py` and one on a SHA-pinned ref both report
+    `web_own_exempt` rather than `web_unverifiable`; an exempt link that verifies cleanly reports
+    `web_own_exempt`, **not** `web_ok`; and an exempt link whose destination **404s** reports
+    `web_not_found`, exit 4 — status decides before the exemption (§Precedence).
+13. **Owner case.** `--own OWNED` against a `owned/repo/…` URL is owned, and vice versa (FR-001).
+14. **Budget.** With two owned uuid-less destinations: `--own-max 2` → both reported, exit **0**, the
     outcome word is not `clean`, and the report says to lower the budget to 2; `--own-max 1` → exit
     **4**; `--own-max 2` with an additional real `web_not_found` → exit **4** (FR-012). `--own-max`
     with no owner set → exit 1. Two links in **different files** pointing at the **same** uuid-less
     destination count as **2** (FR-012 counts findings, not destinations).
-14. **Composition.** The same failing link is silent when its file carries `darnlink-ignore-file` and
+15. **Composition.** The same failing link is silent when its file carries `darnlink-ignore-file` and
     when it carries `darnlink-ignore-links`, while a `web_not_found` in that same file is **still
     reported** (FR-014's by-kind filter). A link inside an `--ignore-block` region produces **nothing
-    at all**, as today — including no `web_not_found` (FR-014b).
-15. **JSON shape.** `--json` carries every `web_own_no_uuid` in `findings` with that literal `kind`,
-    plus a `web_own_no_uuid` count in the summary object (FR-010).
-16. **The message does not lie.** The `web_own_no_uuid` text contains the owner, the repo, the path,
+    at all**, as today — including no `web_not_found` (FR-015).
+16. **Both kinds surface.** `--json` carries every `web_own_no_uuid` **and** every
+    `web_own_exempt` in `findings` under those literal kinds, with a count of each in the summary
+    object (FR-010); the **text** report counts both in its summary line and lists them (FR-016).
+17. **The message does not lie.** The `web_own_no_uuid` text contains the owner, the repo, the path,
     and the word `frontmatter`, and does **not** contain `--write` (FR-008).
-17. **Other classifications untouched (FR-007).** With an owner set, an owned destination that returns
+18. **Other classifications untouched (FR-007).** With an owner set, an owned destination that returns
     401/403, one that returns the `-2` unreadable-repo sentinel, one that returns the transport-error
     sentinel, and a non-GitHub URL each keep exactly the kind and exit contribution they have today.
 
