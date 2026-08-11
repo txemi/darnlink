@@ -18,10 +18,12 @@ here. No new dependencies: `urllib` (stdlib). The fetcher is injected so tests n
 """
 from __future__ import annotations
 
+import http.client
 import os
 import re
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from functools import lru_cache
@@ -51,6 +53,15 @@ _GITHUB_BLOB_RE = re.compile(
 )
 
 
+#: Exactly what `http.client` refuses to put on the wire (`_contains_disallowed_url_pchar_re`). An
+#: href carrying any of these is not a URL: mirrored third-party content arrives with two truncated
+#: URLs separated by a space, with control characters from OCR, with a CommonMark title glued on by
+#: `MD_LINK_RE`. Matching http.client's own set rather than the narrower `\s` is deliberate — anything
+#: that slips past here reaches the fetch layer and takes a different route to a different verdict for
+#: the same defect.
+_DISALLOWED_URL_CHARS_RE = re.compile(r"[\x00-\x20\x7f]")
+
+
 @dataclass(frozen=True)
 class GithubUrl:
     owner: str
@@ -60,14 +71,33 @@ class GithubUrl:
 
     def contents_api_url(self) -> str:
         """GitHub Contents API URL for this file. With `Accept: application/vnd.github.raw` it returns
-        the raw bytes and works for BOTH public (no token) and private (token) repos — one code path."""
-        return f"https://api.github.com/repos/{self.owner}/{self.repo}/contents/{self.path}?ref={self.ref}"
+        the raw bytes and works for BOTH public (no token) and private (token) repos — one code path.
+
+        Every field is percent-encoded, because `http.client` encodes the request line as ASCII and
+        raises `UnicodeEncodeError` on anything else: without this an ordinary accented filename killed
+        the whole run. All four, not just the path — an owner or a repo can carry non-ASCII as easily.
+        `safe="/%"` on the path leaves an href that is already encoded alone, so a link written with
+        `%20` does not become `%2520`."""
+        q = urllib.parse.quote
+        return (f"https://api.github.com/repos/{q(self.owner, safe='%')}/{q(self.repo, safe='%')}"
+                f"/contents/{q(self.path, safe='/%')}?ref={q(self.ref, safe='%')}")
 
 
 def parse_github_url(url: str) -> Optional[GithubUrl]:
     """Pure textual parse of a GitHub blob/raw URL into (owner, repo, ref, path). No network (FR-007).
-    Returns None for any unrecognised shape — the caller reports it `web_unverifiable`, never crashes."""
-    m = _GITHUB_BLOB_RE.match(url.strip())
+    Returns None for any unrecognised shape — the caller reports it `web_unverifiable`, never crashes.
+
+    **An href carrying a character `http.client` would refuse is rejected outright**, which is the
+    conservative half of this fix and the reason it is safe. The tempting alternative — forbid those
+    characters only INSIDE the regex groups, so more links can still be resolved — silently truncates
+    the path at the first offending character, fetches a DIFFERENT file, and reports its 404 as a real
+    break. A false `web_not_found` in a blocking gate is worse than the crash this replaces, and worse
+    than admitting the link could not be verified. Recovering the links this rejects (a CommonMark
+    title glued to the href, a space inside a `#fragment`) is a separate, riskier change."""
+    url = url.strip()
+    if _DISALLOWED_URL_CHARS_RE.search(url):
+        return None
+    m = _GITHUB_BLOB_RE.match(url)
     if not m:
         return None
     return GithubUrl(m["owner"], m["repo"], m["ref"], m["path"].rstrip("/"))
@@ -131,7 +161,21 @@ def _fetch_once(gu: GithubUrl, token: Optional[str]) -> Tuple[int, Optional[str]
             return (resp.status, resp.read().decode("utf-8", errors="replace"))
     except urllib.error.HTTPError as e:
         return (e.code, None)
-    except (urllib.error.URLError, TimeoutError, OSError):
+    except (http.client.InvalidURL, ValueError):
+        # A URL WE built and urllib refuses to send: a darnlink defect, not the network's fault. Its
+        # own sentinel, deliberately OUTSIDE `_TRANSIENT_STATUSES` — retrying a deterministic
+        # client-side rejection spends real sleeps and can never succeed, and folding it into the
+        # network sentinel would bury our own bug under "network error" forever. Two clauses because
+        # they escape by two different doors: `InvalidURL` descends from `HTTPException`, and
+        # `UnicodeEncodeError` from `ValueError`; neither is an `OSError`.
+        return (-3, None)
+    except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException):
+        # `HTTPException` covers the genuine transport failures (BadStatusLine, IncompleteRead,
+        # RemoteDisconnected, …). It descends from Exception, NOT OSError, so it escaped this clause
+        # entirely and propagated. Note 013 forbids that only by implication: FR-008 covers an
+        # *unrecognised* URL shape, and FR-009 is worded for *transport* errors — a client-side
+        # validation error is neither, so the crash fell through the gap between two requirements each
+        # written assuming the other covered it.
         return (-1, None)
 
 
@@ -142,7 +186,9 @@ def _repo_accessible(owner: str, repo: str, token: Optional[str]) -> bool:
     a client org our RO PAT has no access to) — there a file 404 is ambiguous, not a break. Cached per
     (owner, repo, token) so a repo linked N times is probed once. On a network blip, returns True
     (fall back to the plain 404=broken behaviour rather than hide a real break). Never raises."""
-    req = urllib.request.Request(f"https://api.github.com/repos/{owner}/{repo}", headers={
+    url = (f"https://api.github.com/repos/{urllib.parse.quote(owner, safe='%')}"
+           f"/{urllib.parse.quote(repo, safe='%')}")
+    req = urllib.request.Request(url, headers={
         "Accept": "application/vnd.github+json",
         "User-Agent": "darnlink-web-check",
     })
@@ -155,7 +201,7 @@ def _repo_accessible(owner: str, repo: str, token: Optional[str]) -> bool:
         if e.code in (403, 404):
             return False  # genuinely not readable with this token (private cross-org repo)
         return True       # 5xx/429/other: an outage/throttle, NOT inaccessible -> fall back to 404-is-broken
-    except (urllib.error.URLError, TimeoutError, OSError):
+    except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException, ValueError):
         return True   # network blip: don't downgrade a persistent 404 to unverifiable on a transient error
 
 
@@ -226,6 +272,10 @@ def _classify(link: WebLink, gu: Optional[GithubUrl], status: int, dest_uuid: Op
                               "cannot see, not necessarily moved); a token is needed to call it broken")
         return WebFinding("web_not_found", f, link.href,
                           "destination URL 404s; darnlink does not search where it moved (LLM layer's job)")
+    if status == -3:
+        return WebFinding("web_unverifiable", f, link.href,
+                          "malformed URL — the client refused to send it; nothing was fetched, and it "
+                          "was not retried because a client-side rejection cannot clear on a retry")
     if status != 200:
         return WebFinding("web_unverifiable", f, link.href, f"fetch failed (status {status})")
     # status 200: we have the destination content and its uuid (may be None)

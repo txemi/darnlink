@@ -7,6 +7,7 @@ an anchored one, fail on mismatch/404, stay honest (web_unverifiable) on a priva
 and never fire in the core / offline mode.
 """
 import hashlib
+import http.client
 import json
 from pathlib import Path
 
@@ -179,6 +180,110 @@ def test_online_network_error_is_unverifiable(tmp_path):
     fetch = _fetcher({URL: (-1, None)})  # URLError/timeout mapped to -1
     findings, _ = check_web_links_online(tmp_path, None, fetch)
     assert findings[0].kind == "web_unverifiable"
+
+
+# --- an href we cannot send: rejected, never fetched, never a crash ---
+
+#: The real shape, from a scraped report mirrored into a docs repo: the "href" is two truncated URLs
+#: with a space between them. It reached urllib and raised http.client.InvalidURL.
+_SPACED_HREF = ("https://github.com/cli/cli/blob/30066b0042d0c5928d959e288144300cb28196c9/"
+                "internal/codespaces/rpc/inv... https://github.com/cli/cli/blob/"
+                "30066b0042d0c5928d959e288144300cb28196c9/internal/codespaces/rpc/invoker.go")
+
+
+def test_parse_rejects_an_href_the_client_would_refuse():
+    """The second assert is the one that matters: forbidding these characters only INSIDE the regex
+    groups would parse this into a TRUNCATED path (`…/rpc/inv...`), whose 404 is then reported as a
+    real break. A false `web_not_found` is worse than an honest `web_unverifiable`.
+
+    The set is http.client's own, not the narrower whitespace class: scraped and OCR'd content carries
+    0x7f and C0 characters, and any of them slipping past here reaches the fetch layer and produces a
+    different verdict for the same defect."""
+    assert parse_github_url(_SPACED_HREF) is None
+    assert parse_github_url("https://github.com/o/r/blob/main/a b.md") is None
+    for ch in ("\x7f", "\x01", "\x0e", "\t"):
+        assert parse_github_url(f"https://github.com/o/r/blob/main/a{ch}b.md") is None
+
+
+def test_online_unsendable_href_is_unverifiable_and_never_fetched(tmp_path):
+    _w(tmp_path / "mirror" / "report.md", f"GitHub CLI [retrieves details]( {_SPACED_HREF})\n")
+
+    def exploding_fetcher(gu, token):
+        raise AssertionError(f"fetched an href we cannot send: {gu!r}")
+
+    findings, edits = check_web_links_online(tmp_path, None, exploding_fetcher)
+    assert [f.kind for f in findings] == ["web_unverifiable"]
+    assert edits == {}
+
+
+def test_contents_api_url_encodes_all_four_fields():
+    """Not just the path: an owner or repo can carry non-ASCII as easily. http.client encodes the
+    request line as ASCII and raises UnicodeEncodeError -- a ValueError, which escapes even an
+    HTTPException belt -- so an ordinary accented filename killed the run."""
+    url = GithubUrl("\xf3wner", "r\xe9po", "m\xe1in", "d\xf3cs/x.md").contents_api_url()
+    url.encode("ascii")  # would raise before
+    assert "%C3%B3wner" in url and "r%C3%A9po" in url
+
+
+def test_already_encoded_path_is_not_double_encoded():
+    """safe='/%' — a link written with %20 must not become %2520."""
+    assert "a%20b.md" in GithubUrl("o", "r", "main", "a%20b.md").contents_api_url()
+
+
+@pytest.mark.parametrize("exc", [
+    http.client.InvalidURL("bad"),
+    UnicodeEncodeError("ascii", "x", 0, 1, "ordinal not in range"),
+])
+def test_fetch_once_never_propagates_a_client_side_url_error(monkeypatch, exc):
+    """Both escape `except (URLError, TimeoutError, OSError)` by a different route -- InvalidURL from
+    HTTPException, UnicodeEncodeError from ValueError -- and both used to propagate and kill the run.
+    Injected rather than provoked: with the URL encoded, provoking it would make the request VALID and
+    this test would hit the network, which no test here may do."""
+    from darnlink.weblinks import _fetch_once
+    monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: (_ for _ in ()).throw(exc))
+    assert _fetch_once(GithubUrl("o", "r", "main", "a.md"), None) == (-3, None)
+
+
+def test_a_client_side_url_error_is_not_retried(monkeypatch):
+    """Deterministic: retrying spends real sleeps and can never succeed. -3 must stay OUT of
+    _TRANSIENT_STATUSES -- that separation is the sentinel's whole purpose."""
+    from darnlink.weblinks import _TRANSIENT_STATUSES, default_fetcher
+    assert -3 not in _TRANSIENT_STATUSES
+    monkeypatch.setattr("urllib.request.urlopen",
+                        lambda *a, **k: (_ for _ in ()).throw(http.client.InvalidURL("bad")))
+    slept = []
+    assert default_fetcher(GithubUrl("o", "r", "main", "a.md"), None,
+                           attempts=3, sleep=slept.append) == (-3, None)
+    assert slept == []
+
+
+def test_fetch_once_maps_a_transport_http_exception_to_the_network_sentinel(monkeypatch):
+    """The other half of the widened except: a genuine transport HTTPException must still be -1, the
+    RETRYABLE sentinel. If the two ever collapse, a flaky connection stops being retried or a
+    malformed URL starts being."""
+    from darnlink.weblinks import _TRANSIENT_STATUSES, _fetch_once
+    monkeypatch.setattr("urllib.request.urlopen",
+                        lambda *a, **k: (_ for _ in ()).throw(http.client.BadStatusLine("")))
+    assert _fetch_once(GithubUrl("o", "r", "main", "a.md"), None) == (-1, None)
+    assert -1 in _TRANSIENT_STATUSES
+
+
+def test_repo_accessible_encodes_and_never_raises(monkeypatch):
+    """Its twin was the one that crashed, so this one was left unencoded and its own docstring's
+    'never raises' was false. Its real body runs in no other test in the suite."""
+    from darnlink.weblinks import _repo_accessible
+    seen = {}
+
+    def capture(req, timeout=None):
+        seen["url"] = req.full_url
+        raise http.client.BadStatusLine("")
+
+    _repo_accessible.cache_clear()
+    monkeypatch.setattr("urllib.request.urlopen", capture)
+    assert _repo_accessible("\xf3wner", "r\xe9po", None) is True
+    _repo_accessible.cache_clear()
+    seen["url"].encode("ascii")  # would raise before
+    assert "%C3%B3wner" in seen["url"]
 
 
 def test_online_unparseable_url_is_unverifiable(tmp_path):
