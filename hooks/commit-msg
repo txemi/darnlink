@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Versioned git commit-msg hook — the English-only rule, applied to the COMMIT MESSAGE.
+#
+# Activate ONCE per clone (git will not auto-run versioned hooks, by design — security):
+#   git config core.hooksPath hooks
+# (Or let the toolbelt's global dispatcher do it: it runs hooks/<name> and hooks/<name>.d/*.)
+#
+# Why this surface exists, and why it was the last one to get a wall.
+# CONTRIBUTING.md and CLAUDE.md have always said commit messages are English. Nothing checked it,
+# and the result is measurable and permanent: 7 commit subjects on `main` are in Spanish, on a
+# public repository, in the history of a tool whose whole promise is that the repo is portable.
+# A file gate cannot catch this — the message is not a file — so it needs its own hook.
+#
+# It runs BEFORE the commit exists, which is the only moment the message is still cheap to fix:
+# afterwards it takes an `--amend` (or, once pushed and merged, it is simply permanent).
+#
+# `--git-comments` drops git's own template lines (`#…`), which are written in the machine's locale
+# and would otherwise fail the gate on text the author never wrote, and stops at the `>8` scissors
+# so a `--verbose` commit does not get its own diff judged as prose.
+#
+# Bypass (discouraged): git commit --no-verify
+set -euo pipefail
+exec python3 "$(git rev-parse --show-toplevel)/tools/lang_gate.py" \
+    --prose "$1" --git-comments --label "commit message"

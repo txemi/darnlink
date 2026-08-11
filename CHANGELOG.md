@@ -6,6 +6,29 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- **The English-only gate now covers the surfaces that are actually published**: commit messages,
+  PR titles/descriptions, issues, and `.md` documentation. Until now it judged one thing —
+  comment lines in `.py` files — while the rule it enforces has always covered far more. The gap was
+  not theoretical: with the gate green and the tree at zero, this public repo carried **2 of 2 open
+  issues written entirely in Spanish, 4 Spanish PR titles and 7 Spanish commit subjects on `main`**.
+  Files were the only surface anybody had wired, so files were the only surface that stayed clean.
+
+  New `lang_gate.py --prose FILE|-` judges free text (fenced blocks, inline `code` and URLs are
+  exempt, so pasting real output is safe), wired into four places: `hooks/commit-msg`, a CI step over
+  every commit a PR adds, a CI step on the PR title and body, and `.github/workflows/lang-issue.yml`.
+
+  **The issue surface cannot block and does not pretend to** — GitHub has no pre-publication hook for
+  issues, so that workflow labels `needs-english` and comments once. Worth knowing when you write
+  one: it tells you *after* the text is public.
+
+### Fixed
+- **`.md` prose was unjudgeable by construction.** The tree scan applied the Python rule to every
+  file, and that rule rejects any line containing `:` or `(` as "code" — which is most of a written
+  paragraph. Markdown is now judged with its own rule (everything is prose except fenced blocks),
+  which immediately surfaced five Spanish lines in this file, sitting under a green gate since
+  v0.6.0. Translated here; the baseline stays pinned at 0.
+
 ## [0.20.4] — 2026-08-10
 
 ### Added
@@ -452,12 +475,12 @@ the `recipes/` changes below live at a pinned tag that CI and hooks can fetch de
 - **Release automation via PyPI Trusted Publishing (OIDC)** — `.github/workflows/publish.yml` builds
   the sdist + wheel, runs `twine check`, and uploads on a published GitHub Release. **No API token
   is stored anywhere.**
-- **`recipes/darnlink-gate`: modo FAIL-CLOSED** (`DARNLINK_GATE_FAIL_CLOSED=1`, o `"fail_closed": true`
-  en `darnlink-gate.json`). La receta falla **abierta** por defecto —correcto en pre-commit: un commit
-  offline no debe quedar bloqueado— pero eso **en CI es peligroso**: el gate *es* el muro, y un fallo
-  transitorio de red/PyPI daba **build VERDE con cero ficheros validados**. Con el flag, esos casos
-  salen con código **4** (distinguible de los hallazgos: `2` integridad, `3` strict). Actívalo siempre
-  en CI. Detectado por una revisión adversarial de la propia receta.
+- **`recipes/darnlink-gate`: FAIL-CLOSED mode** (`DARNLINK_GATE_FAIL_CLOSED=1`, or `"fail_closed": true`
+  in `darnlink-gate.json`). The recipe fails **open** by default — right for pre-commit, where an
+  offline commit must not be blocked — but that is **dangerous in CI**: there the gate *is* the wall,
+  and a transient network/PyPI failure produced a **GREEN build with zero files validated**. With the
+  flag those cases exit with code **4**, distinguishable from findings (`2` integrity, `3` strict).
+  Always turn it on in CI. Found by an adversarial review of the recipe itself.
 
 ### Fixed
 - **Docs: stale version pins.** The README's quality-gate examples still pinned `rev: v0.1.1` /

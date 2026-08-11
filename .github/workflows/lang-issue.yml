@@ -1,0 +1,84 @@
+# English-only, applied to ISSUES — the surface where the rule leaked worst.
+#
+# WHY THIS IS A SEPARATE, WEAKER MECHANISM. Every other surface has a wall: a hook refuses the
+# commit, a red check blocks the merge. An issue has neither — GitHub has no pre-receive equivalent
+# for issues, so by the time any automation runs, the text is already published. The honest design
+# is therefore not a gate but a SIGNAL: label the issue and say so once, in a comment.
+#
+# It still earns its place. On 2026-08-11 both open issues in this public repo were written entirely
+# in Spanish — title and body — and had been for days, with CI green the whole time, because
+# nothing anywhere was looking at that surface. A visible label the owner sees in the issue list is
+# the difference between "found in three days" and "found never".
+#
+# Note for people arriving from outside: this is a house rule about the language the project is
+# written in, not a filter on who may report a bug. A report in another language is welcome and
+# will be translated — the label is a to-do, not a rejection.
+name: lang-issue
+
+on:
+  issues:
+    types: [opened, edited]
+
+permissions:
+  issues: write
+
+jobs:
+  english:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Judge the issue title and body
+        id: check
+        # Through the environment, never through the shell: an issue title on a public repo is
+        # written by anyone at all, and `run: echo "${{ github.event… }}"` is script injection.
+        env:
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          printf '%s\n\n%s\n' "$ISSUE_TITLE" "$ISSUE_BODY" > "$RUNNER_TEMP/issue.txt"
+          if python3 tools/lang_gate.py --prose "$RUNNER_TEMP/issue.txt" --label "issue"; then
+            echo "english=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "english=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Flag it
+        if: steps.check.outputs.english == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+          # Already labelled means this issue was already commented on: an `edited` event fires on
+          # every keystroke-batch GitHub sends, and a bot that repeats itself gets muted.
+          ALREADY: ${{ contains(github.event.issue.labels.*.name, 'needs-english') }}
+        run: |
+          gh label create needs-english -R "$REPO" \
+            --color D93F0B --description "Written in another language; needs translating" || true
+          gh issue edit "$NUMBER" -R "$REPO" --add-label needs-english
+          if [ "$ALREADY" != "true" ]; then
+            # Heredoc + --body-file, not an inline --body: an indented multi-line shell string
+            # carries its own indentation into the comment, and four leading spaces are a code
+            # block in Markdown.
+            cat > "$RUNNER_TEMP/comment.md" <<EOF
+          This project is written in English throughout — code, docs, commit messages, PR titles and
+          issues (see [CONTRIBUTING.md](https://github.com/$REPO/blob/main/CONTRIBUTING.md)). This
+          issue looks like it is in another language, so it has been labelled \`needs-english\`.
+
+          Nothing is wrong with the report itself and it will be read as it stands; the label only
+          marks that the text still needs translating. Posted automatically by
+          \`.github/workflows/lang-issue.yml\`.
+          EOF
+            gh issue comment "$NUMBER" -R "$REPO" --body-file "$RUNNER_TEMP/comment.md"
+          fi
+          # Fail on purpose: the red run in the Actions tab is the durable record. The label can be
+          # removed by hand, a comment scrolls away, but the run stays attached to the event.
+          exit 1
+
+      - name: Clear the flag once it is translated
+        if: steps.check.outputs.english == 'true' && contains(github.event.issue.labels.*.name, 'needs-english')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+        run: gh issue edit "$NUMBER" -R "$REPO" --remove-label needs-english

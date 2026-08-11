@@ -16,15 +16,26 @@ uses: legacy lines sit in
 a baseline whose count can only DECREASE, while new or modified lines must be English from now on.
 A repo that starts clean pins its baseline at 0, which is fail-closed with no extra machinery.
 
-Two modes:
+Modes:
 
     lang_gate.py --diff [REF]     # pre-commit / PR: only ADDED lines (default REF: staged)
     lang_gate.py --baseline       # CI: whole tree; fails if the count GREW vs the baseline file
     lang_gate.py --update-baseline  # after translating: write the new (lower) count
+    lang_gate.py --prose FILE|-   # free prose: a commit message, an issue/PR title+body
+
+WHY A PROSE MODE, AND WHY IT IS THE ONE THAT WAS MISSING (2026-08-11). The three modes above judge
+only what git tracks, and only lines that look like comments. But the rule has always covered
+commit messages, PR titles/descriptions and issues too -- and those are written straight into
+GitHub, where no file gate can ever see them. Measured on this repo the day the hole was found:
+the tree was clean while 2 of 2 open issues, 4 PR titles and 7 commit subjects on `main` were in
+Spanish, permanently, on a public repository. A gate that guards only the surface nobody publishes
+on is not a gate, it is a decoration. `--prose` reads that text from a file (or stdin) so a
+`commit-msg` hook and a CI workflow can feed it what GitHub is about to show the world.
 
 The detector is deliberately a heuristic: Spanish function words plus accented characters, looked
-for only in comments and docstrings. It cannot be exact -- `no`, `final` and `total` are valid in
-both languages -- so a genuine false positive is silenced with a trailing `# lang-ok`.
+for only in comments, docstrings and prose. It cannot be exact -- `no`, `final` and `total` are
+valid in both languages -- so a genuine false positive is silenced with a trailing `# lang-ok`
+(`<!-- lang-ok -->` in Markdown, where a `#` is a heading and not a comment).
 
 Prior art was evaluated and rejected before writing this (2026-08-09): `flake8-only-english`
 detects `ord(ch) > 127`, which misses a third of the Spanish in these repos because a third of it
@@ -65,8 +76,21 @@ _WORDS = (
 )
 _SPANISH = re.compile(rf"\b(?:{_WORDS})\b|[áéíóúñ¿¡]", re.IGNORECASE)
 _ESCAPE = "lang-ok"
-_EXTS = (".py",)
+
+# Two families, judged by different rules -- see `_is_prose`.
+#   CODE: only comment/docstring lines are prose; the rest is code and must not be read as language.
+#   DOC : the whole file is prose, minus fenced code blocks and inline `code` spans.
+# Docs were outside the gate until 2026-08-11 even though the rule always covered them ("code,
+# comments, docstrings, documentation"). The cost of closing it was measured before doing it: five
+# lines, all in one CHANGELOG entry. A rule that is stated and not measured is a rule nobody knows
+# is being broken.
+_CODE_EXTS = (".py",)
+_DOC_EXTS = (".md",)
+_EXTS = _CODE_EXTS + _DOC_EXTS
 _SKIP_DIRS = {".git", ".venv", "node_modules", "__pycache__", "_build", "backup", "dist", "build"}
+_FENCE = re.compile(r"^\s*(?:```|~~~)")
+_INLINE_CODE = re.compile(r"`[^`]*`")
+_URL = re.compile(r"https?://\S+")
 _BASELINE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lang_gate_baseline.json")
 
 
@@ -91,10 +115,48 @@ def _is_commentish(line: str) -> bool:
     return bool(s) and not re.search(r"[=(){}\[\];:]|^\s*(def|class|import|from|return|del)\b", s)
 
 
-def _offending(line: str) -> bool:
+def _strip_verbatim(line: str) -> str:
+    """Drop the parts of a prose line that are not language: inline `code` spans and URLs.
+
+    Without this, documentation is unjudgeable: a path like `docs/investigacion.md` or a URL with a
+    Spanish slug is not prose in another language, it is an identifier that happens to spell one --
+    and a gate that fires on identifiers is a gate that gets bypassed.
+    """
+    return _URL.sub("", _INLINE_CODE.sub("", line))
+
+
+def _is_prose(path: str, line: str, in_fence: bool) -> bool:
+    """Whether this line should be read as language at all, by file family.
+
+    Docs invert the default: in a `.md` everything is prose EXCEPT fenced blocks, whereas in a
+    `.py` everything is code EXCEPT comments and docstrings. Judging a `.md` with the code rule
+    silently misses most of it -- `_is_commentish` rejects any line carrying `:` or `(`, which is
+    most of a written paragraph. That is how the five Spanish lines in this repo's own CHANGELOG
+    sat under a green gate.
+    """
+    if path.endswith(_DOC_EXTS):
+        return not in_fence and bool(_strip_verbatim(line).strip())
+    return _is_commentish(line)
+
+
+def _offending(line: str, path: str = "x.py", in_fence: bool = False) -> bool:
     if _ESCAPE in line:
         return False
-    return _is_commentish(line) and bool(_SPANISH.search(line))
+    if not _is_prose(path, line, in_fence):
+        return False
+    return bool(_SPANISH.search(_strip_verbatim(line) if path.endswith(_DOC_EXTS) else line))
+
+
+def _scan_lines(path: str, lines: list[str]) -> list[tuple[int, str]]:
+    """Offending lines of one file's content, tracking fenced code blocks for docs."""
+    hits, in_fence = [], False
+    for i, ln in enumerate(lines, 1):
+        if path.endswith(_DOC_EXTS) and _FENCE.match(ln):
+            in_fence = not in_fence
+            continue
+        if _offending(ln, path, in_fence):
+            hits.append((i, ln.strip()))
+    return hits
 
 
 def scan_tree(root: str) -> list[tuple[str, int, str]]:
@@ -105,14 +167,35 @@ def scan_tree(root: str) -> list[tuple[str, int, str]]:
             if not fn.endswith(_EXTS):
                 continue
             p = os.path.join(dirpath, fn)
+            rel = os.path.relpath(p, root)
             try:
                 lines = open(p, encoding="utf-8").read().splitlines()
             except (OSError, UnicodeDecodeError):
                 continue
-            for i, ln in enumerate(lines, 1):
-                if _offending(ln):
-                    hits.append((os.path.relpath(p, root), i, ln.strip()))
+            hits.extend((rel, i, text) for i, text in _scan_lines(rel, lines))
     return hits
+
+
+def _fenced_lines(path: str) -> set[int]:
+    """Line numbers of `path` that sit inside a fenced code block, read from the working tree.
+
+    A unified diff carries no fence state -- an added line inside a ``` block looks exactly like an
+    added paragraph -- so a doc file has to be re-read to know. The post-image on disk is the right
+    approximation for the two callers that matter (pre-commit and a PR range), and when the file is
+    not readable the caller simply falls back to judging the line as prose, which errs toward MORE
+    findings rather than fewer. That is the correct direction for a gate.
+    """
+    inside, fenced, n = False, set(), 0
+    try:
+        for n, ln in enumerate(open(path, encoding="utf-8").read().splitlines(), 1):
+            if _FENCE.match(ln):
+                inside = not inside
+                fenced.add(n)
+            elif inside:
+                fenced.add(n)
+    except (OSError, UnicodeDecodeError):
+        return set()
+    return fenced
 
 
 def scan_diff(ref: str | None) -> list[tuple[str, int, str]]:
@@ -124,10 +207,11 @@ def scan_diff(ref: str | None) -> list[tuple[str, int, str]]:
     except (OSError, subprocess.CalledProcessError) as exc:
         print(f"lang-gate: cannot read the diff ({exc}) -> SKIPPING", file=sys.stderr)
         return []
-    hits, path, lineno = [], None, 0
+    hits, path, lineno, fenced = [], None, 0, set()
     for ln in out.splitlines():
         if ln.startswith("+++ b/"):
             path = ln[6:]
+            fenced = _fenced_lines(path) if path.endswith(_DOC_EXTS) else set()
             continue
         m = re.match(r"^@@ -\d+(?:,\d+)? \+(\d+)", ln)
         if m:
@@ -135,9 +219,39 @@ def scan_diff(ref: str | None) -> list[tuple[str, int, str]]:
             continue
         if ln.startswith("+") and not ln.startswith("+++"):
             body = ln[1:]
-            if path and path.endswith(_EXTS) and _offending(body):
+            if path and path.endswith(_EXTS) and _offending(body, path, lineno in fenced):
                 hits.append((path, lineno, body.strip()))
             lineno += 1
+    return hits
+
+
+def scan_prose(text: str, *, git_comments: bool = False) -> list[tuple[int, str]]:
+    """Offending lines of free prose: a commit message, or an issue/PR title+body.
+
+    Judged with the DOC rule -- everything is language except fenced blocks, inline `code` and
+    URLs -- because that is what these texts are. Two deliberate details:
+
+    * `git_comments` drops lines starting with `#`. In a commit message those are git's own
+      template, which is written in the user's LOCALE and would fire the detector on text the
+      author never wrote and git is about to strip anyway. In Markdown a `#` is a heading, i.e.
+      prose that must be judged, so the two cases cannot share a default.
+    * A scissors line (`# ------------------------ >8 ------------------------`) ends the message:
+      everything below it is the diff `git commit --verbose` pastes in, and judging somebody's
+      code as prose is how a gate earns a reputation for lying.
+    """
+    hits, in_fence = [], False
+    for i, ln in enumerate(text.splitlines(), 1):
+        if git_comments and ln.startswith("# ------------------------ >8"):
+            break
+        if git_comments and ln.startswith("#"):
+            continue
+        if _FENCE.match(ln):
+            in_fence = not in_fence
+            continue
+        if in_fence or _ESCAPE in ln:
+            continue
+        if _SPANISH.search(_strip_verbatim(ln)):
+            hits.append((i, ln.strip()))
     return hits
 
 
@@ -162,8 +276,38 @@ def main() -> int:
                    help="whole tree; fail if the count grew vs the baseline")
     g.add_argument("--update-baseline", action="store_true",
                    help="record the current (lower) count after translating")
+    g.add_argument("--prose", metavar="FILE",
+                   help="judge free prose (commit message, issue/PR title+body); '-' reads stdin")
+    ap.add_argument("--git-comments", action="store_true",
+                    help="with --prose: drop '#' lines and everything after the scissors (commit message)")
+    ap.add_argument("--label", default="text",
+                    help="with --prose: what to call the text in the error message")
     args = ap.parse_args()
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    if args.prose:
+        try:
+            text = sys.stdin.read() if args.prose == "-" else open(args.prose, encoding="utf-8").read()
+        except (OSError, UnicodeDecodeError) as exc:
+            # Fail CLOSED. An unreadable message is not an English message, and the whole point of
+            # this mode is the surfaces where nothing else is watching.
+            print(f"lang-gate: cannot read {args.prose} ({exc})", file=sys.stderr)
+            return 1
+        hits = scan_prose(text, git_comments=args.git_comments)
+        if hits:
+            print(f"lang-gate: this {args.label} does not look like English:", file=sys.stderr)
+            for lineno, line in hits[:25]:
+                print(f"  line {lineno}: {line[:110]}", file=sys.stderr)
+            if len(hits) > 25:
+                print(f"  ... and {len(hits) - 25} more", file=sys.stderr)
+            print("\nCommit messages, PR titles/descriptions and issues are public, permanent and "
+                  "part of this repo's documentation -- they are English like everything else.",
+                  file=sys.stderr)
+            print(f"A genuine false positive is silenced with `{_ESCAPE}` on that line.",
+                  file=sys.stderr)
+            return 1
+        print(f"lang-gate: OK -- the {args.label} is English.")
+        return 0
 
     if args.diff is not None or "--diff" in sys.argv:
         hits = scan_diff(args.diff)
