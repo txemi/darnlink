@@ -102,6 +102,39 @@ def test_tree_scan_covers_both_families():
     assert ".py" in lang_gate._EXTS and ".md" in lang_gate._EXTS
 
 
+# --- widening coverage is an adoption, not a regression -----------------------------------------
+
+def test_a_baseline_from_an_older_coverage_says_so_instead_of_blaming_the_repo():
+    """This tool is vendored verbatim into other repos. The day it starts judging a new file family
+    every consumer's count jumps through nobody's fault, and reporting that as "the count GREW —
+    do NOT raise the baseline" would be advice that is exactly backwards."""
+    baseline = REPO / "tools" / "lang_gate_baseline.json"
+    original = baseline.read_text(encoding="utf-8")
+    try:
+        baseline.write_text('{"count": 0, "scanned_exts": [".py"], "files": {}}\n', encoding="utf-8")
+        r = _run("--baseline")
+        assert r.returncode == 1
+        assert "COVERAGE CHANGED" in r.stderr
+        assert "ADOPTION, not a regression" in r.stderr
+        assert ".md" in r.stderr
+    finally:
+        baseline.write_text(original, encoding="utf-8")
+
+
+def test_a_baseline_predating_the_field_is_not_treated_as_a_coverage_change():
+    """Consumers on the old format have no `scanned_exts`. Absent must mean "unknown", not "empty",
+    or every one of them fails on a field they have never heard of."""
+    baseline = REPO / "tools" / "lang_gate_baseline.json"
+    original = baseline.read_text(encoding="utf-8")
+    try:
+        baseline.write_text('{"count": 0, "files": {}}\n', encoding="utf-8")
+        r = _run("--baseline")
+        assert r.returncode == 0, r.stderr
+        assert "COVERAGE CHANGED" not in r.stderr
+    finally:
+        baseline.write_text(original, encoding="utf-8")
+
+
 # --- the repo's own state ----------------------------------------------------------------------
 
 def test_this_repo_is_clean():

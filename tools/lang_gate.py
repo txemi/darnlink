@@ -331,22 +331,52 @@ def main() -> int:
         with open(_BASELINE, "w", encoding="utf-8") as fh:
             json.dump({"count": n,
                        "note": "Legacy Spanish lines. This number may only DECREASE.",
+                       # What the number counts. Without it, widening coverage in this file is
+                       # indistinguishable from a repo getting worse -- see below.
+                       "scanned_exts": sorted(_EXTS),
                        "files": dict(sorted(per_file.items()))}, fh, indent=2)
             fh.write("\n")
-        print(f"lang-gate: baseline updated to {n} across {len(per_file)} file(s).")
+        print(f"lang-gate: baseline updated to {n} across {len(per_file)} file(s) "
+              f"(covering {', '.join(sorted(_EXTS))}).")
         return 0
 
     try:
-        base = json.load(open(_BASELINE, encoding="utf-8"))["count"]
+        baseline = json.load(open(_BASELINE, encoding="utf-8"))
+        base = baseline["count"]
     except (OSError, ValueError, KeyError):
         print(f"lang-gate: no readable baseline; current count is {n}. "
               f"Create it with --update-baseline.", file=sys.stderr)
         return 1
+
+    # COVERAGE CHANGED is not the same failure as THE REPO GOT WORSE, and conflating them is a lie
+    # the ratchet tells on its own behalf. This file is vendored verbatim into every repo that runs
+    # the gate, so the day it starts judging a new file family (`.md`, on 2026-08-11) every consumer
+    # sees its count jump — through no fault of anyone's commit. Reported as "the count GREW", with
+    # "do NOT raise the baseline" underneath, that message is actively wrong: raising it once IS the
+    # correct move, exactly as when a repo adopts the rule late. So it gets its own message, and it
+    # still fails, because a coverage change that nobody notices is how a gate silently loosens.
+    covered = baseline.get("scanned_exts")
+    if covered is not None and sorted(covered) != sorted(_EXTS):
+        gained = sorted(set(_EXTS) - set(covered))
+        lost = sorted(set(covered) - set(_EXTS))
+        print(f"lang-gate: COVERAGE CHANGED -- the baseline counts {', '.join(sorted(covered))} "
+              f"but this version judges {', '.join(sorted(_EXTS))}.", file=sys.stderr)
+        if gained:
+            print(f"  now also judged: {', '.join(gained)}  (current total: {n} line(s))",
+                  file=sys.stderr)
+        if lost:
+            print(f"  NO LONGER judged: {', '.join(lost)} -- coverage went DOWN, which the ratchet "
+                  f"exists to prevent. Do not accept this without knowing why.", file=sys.stderr)
+        print("\nThis is an ADOPTION, not a regression: re-seed once with --update-baseline and "
+              "then the number may only fall, as usual. (Adding a family is the same move as "
+              "adopting the rule late, which is what the baseline was built for.)", file=sys.stderr)
+        return 1
+
     if n > base:
         # Name the files that GREW, not the first 25 hits in the tree.
         base_files = {}
         try:
-            base_files = json.load(open(_BASELINE, encoding="utf-8")).get("files") or {}
+            base_files = baseline.get("files") or {}
         except (OSError, ValueError):
             pass
         if base_files:
