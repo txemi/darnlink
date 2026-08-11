@@ -200,8 +200,10 @@ the exemption second.
 ```
 
 **Measured, because the obvious rationale for this is wrong and was written down once already.** With
-the exemption first and no anchor, `--write` inserts the anchor *before* the untouched exemption, so
-the line **self-heals into the normative order** — no corruption. The corruption is a different case:
+the exemption first and no anchor, today's `--write` inserts the anchor *before* the untouched
+exemption, so the line **self-heals into the normative order** — no corruption. (Once FR-011 ships
+that self-heal is no longer observable, because an exempt link is never anchored at all; the point
+survives as the reason the *other* order is the dangerous one.) The corruption is a different case:
 an anchor that already sits **after** the exemption,
 
 ```
@@ -308,23 +310,30 @@ convenience needs a named sentence in P-IV.
 
 - **FR-001** `web-check` MUST accept `--own OWNER`, repeatable. A destination whose parsed owner
   equals any given value (ASCII case-insensitive; the parser preserves the case it found, so the
-  comparison must fold it) is **owned**. With no owner set, behaviour MUST be byte-identical to today.
+  comparison must fold it) is **owned**. With no owner set, behaviour MUST be byte-identical to today
+  **for every link that does not carry the FR-011 marker** — see FR-011 for why that marker is the one
+  exception.
 - **FR-002** `web-check` MUST accept `--own-from-origin`, which adds the owner of the scanned
   repository's `origin` remote to the owner set, accepting both the
   `https://github.com/<owner>/<repo>` and `git@github.com:<owner>/<repo>` forms. It MUST compose with
   explicit `--own` values (union). Resolution MUST use `git config --get remote.origin.url` executed
   in the scanned root, **not** a hand parse of `.git/config`: in a worktree `.git` is a *file*, not a
   directory, so a naive parse fails in the project's own development environment.
-- **FR-003** If `--own-from-origin` cannot resolve an owner (no repository, no `origin`, non-GitHub
-  remote, `git` not on `PATH`), the run MUST exit **1** with a message naming the reason — **including
+- **FR-003** If `--own-from-origin` cannot resolve an owner — no repository, no `origin`, a
+  non-GitHub remote, `git` not on `PATH`, or `git` refusing the repository as dubiously owned
+  (`safe.directory`, the failure mode of any tool run over someone else's checkout) — the run MUST
+  exit **1** with a message naming the reason — **including
   when explicit `--own` values were also given**, so the owner set would not have been empty. It is a
   request that either succeeds or is a usage error; it never silently narrows the question answered.
 - **FR-004** A link classified `web_unverifiable` **solely** because the fetched destination returned
   200 with **no frontmatter at all, or frontmatter without a `uuid`**, whose owner is owned, MUST
   instead be reported **`web_own_no_uuid`**, and MUST set the exit code to **4** (subject to FR-012).
-  A destination whose frontmatter is present but **invalid YAML** MUST NOT produce it: today the
-  reader collapses "absent" and "invalid" into the same `None`, and telling someone to *add* a `uuid`
-  to a file whose frontmatter does not parse is the wrong instruction for a different defect.
+  A destination whose frontmatter is present but **invalid YAML** MUST NOT produce it — it stays
+  `web_unverifiable` — because telling someone to *add* a `uuid` to a file whose frontmatter does not
+  parse is the wrong instruction for a different defect. Note where the work is: the frontmatter reader
+  **already** distinguishes absent from invalid; it is the caller that throws the distinction away by
+  taking only the second element of its result. Keeping it is a one-character change, not a new
+  parser.
 - **FR-005** FR-004 MUST NOT fire when the destination path does not end in `.md`, compared
   **case-insensitively** (`iter_markdown_files` already lowercases; `A.MD` is a Markdown file).
 - **FR-006** FR-004 MUST NOT fire when the URL's ref matches `^[0-9a-fA-F]{7,40}$` — a commit SHA,
@@ -359,7 +368,14 @@ convenience needs a named sentence in P-IV.
   `[text](url) <!-- web-uuid: X --> <!-- darnlink-own-exempt -->` — because both markers claim the
   position immediately after `)`. The link MUST still be reported, under the kind **`web_own_exempt`**,
   and MUST NOT contribute to the exit code: silently dropping it would hide the exemption from whoever
-  audits the repo later. The marker MUST be recognised **immediately after the `)`, or immediately
+  audits the repo later.
+
+  **The marker is honoured whether or not an owner set was given, and whether or not the destination is
+  owned.** It states a property of the *link* — "this destination regenerates, never anchor it" —
+  not of the run's configuration, and a marker that stopped working when someone dropped `--own` would
+  let `--write` rewrite exactly the files it was placed to protect. This is the single, deliberate
+  exception to FR-001's "byte-identical with no owner set". The marker MUST be recognised
+  **immediately after the `)`, or immediately
   after a `web-uuid` anchor** — nowhere else. That is what makes the order enforceable rather than
   decorative: an anchor written *after* the marker is not seen, the link reads as plain, and `--write`
   appends a second one.
@@ -380,7 +396,11 @@ convenience needs a named sentence in P-IV.
   keep saying `clean` — an obsolete `--own-max 5` on an already-clean repo must not make a clean run
   look qualified.
 - **FR-014** The new finding MUST compose with the file-level opt-outs: a file carrying
-  `darnlink-ignore-file` (003) or `darnlink-ignore-links` (006) MUST NOT produce it. This is a filter
+  `darnlink-ignore-file` (003) or `darnlink-ignore-links` (006) MUST NOT produce it. The link is still
+  fetched and still reported — it degrades to `web_unverifiable`, it does not vanish — because
+  "never silent" is the same promise FR-011 makes, and a link that disappears from the report is one
+  nobody can audit. Filtered links do not count toward FR-012's budget: they are not findings of that
+  kind any more. This is a filter
   **by kind**, applied to `web_own_no_uuid` only — it MUST NOT suppress `web_mismatch`,
   `web_not_found` or any other web finding in that file, which would silently violate FR-007. That is
   a **third** semantics for those markers, narrower than the "removed from the darnlink graph
@@ -430,10 +450,18 @@ layer that in fact decides most verdicts.
 3. Anything other than 200 — 401/403, the `-2` unreadable-repo sentinel, 404, a transport error —
    keeps **exactly** today's kind, for every link, exempt or not (FR-007). In particular an exempt
    link whose destination 404s is `web_not_found`, because a dead link is dead either way.
-4. On **200 only**, in this order: FR-011's exemption → `web_own_exempt`, which also covers the
-   `web_mismatch` and `web_anchor` cases it lists; then FR-005/FR-006 → `web_unverifiable`; then
-   FR-004 → `web_own_no_uuid`, subject to FR-012's budget; otherwise today's `web_ok` / `web_anchor` /
-   `web_mismatch`.
+4. On **200 only**: FR-011's exemption → `web_own_exempt`, which also covers the `web_mismatch` and
+   `web_anchor` cases it lists. Otherwise FR-004 → `web_own_no_uuid` (subject to FR-012's budget) —
+   **but only when FR-005 and FR-006 both allow it**, and only when the destination's frontmatter is
+   absent or lacks a uuid rather than being invalid YAML. In every other case the verdict is today's,
+   unchanged: `web_ok`, `web_anchor`, `web_mismatch` or `web_unverifiable`.
+
+**FR-005 and FR-006 are carve-outs, never verdicts.** They say when FR-004 must *not* fire; they do
+not turn a link into `web_unverifiable`. An earlier draft of this section listed them as a producing
+step, which silently changed behaviour FR-007 forbids changing: a plain link on a SHA-pinned ref whose
+destination *does* carry a uuid is `web_anchor` today, exit 3, and `--write` anchors it — reading them
+as terminal made it `web_unverifiable`, exit 0, nothing written. Different kind, different exit,
+different file on disk.
 
 Two consequences worth stating because they are the ones a reader gets wrong: an exempt link that
 verifies fine (200, anchored, uuid matches) reports **`web_own_exempt`, not `web_ok`** — the marker
@@ -457,7 +485,9 @@ resolves through `git config`.
    exit 0. And `owned/repo/blob/main/A.MD` **is** treated as Markdown (FR-005's case folding).
 6. **Owned, SHA-pinned.** `blob/<40-hex>/a.md` and `blob/<7-hex>/a.md`, 200 without uuid → both
    `web_unverifiable`, exit 0. **And the negative that guards FR-006:** `blob/v1.2.3/a.md` — a ref
-   that looks like a tag — **does** produce `web_own_no_uuid`, exit 4.
+   that looks like a tag — **does** produce `web_own_no_uuid`, exit 4. **And the carve-out is not a
+   verdict:** the same SHA-pinned link whose destination *does* carry a uuid is still `web_anchor`,
+   exit 3, and `--write` still anchors it.
 7. **Owned, 404.** With and without token → `web_not_found` / `web_unverifiable` exactly as today.
 8. **`--own-from-origin` resolves.** A repo whose `origin` is `git@github.com:owned/src.git` behaves
    as `--own owned`; the `https://` form parses identically; and `--own other --own-from-origin`
@@ -484,7 +514,8 @@ resolves through `git config`.
     **4**; `--own-max 2` with an additional real `web_not_found` → exit **4** (FR-012). `--own-max`
     with no owner set → exit 1. Two links in **different files** pointing at the **same** uuid-less
     destination count as **2** (FR-012 counts findings, not destinations).
-15. **Composition.** The same failing link is silent when its file carries `darnlink-ignore-file` and
+15. **Composition.** The same failing link degrades to `web_unverifiable` — reported, not silent, and
+    not counted against the budget — when its file carries `darnlink-ignore-file` and
     when it carries `darnlink-ignore-links`, while a `web_not_found` in that same file is **still
     reported** (FR-014's by-kind filter). A link inside an `--ignore-block` region produces **nothing
     at all**, as today — including no `web_not_found` (FR-015).
@@ -497,6 +528,17 @@ resolves through `git config`.
     401/403, one that returns the `-2` unreadable-repo sentinel, one that returns the transport-error
     sentinel, and a non-GitHub URL each keep exactly the kind and exit contribution they have today.
 
+19. **Usage errors.** `--own o`, `--own-from-origin` and `--own-max 1`, each **without `--online`**,
+    exit 1 with no fetch (FR-017).
+20. **The budget at zero.** With no owned uuid-less destinations and `--own-max 5` still set: exit 0,
+    the outcome word is `clean`, and the report says to drop the flag (FR-013's zero clauses).
+21. **Invalid frontmatter is a different defect.** An owned destination returning 200 whose frontmatter
+    is present but unparseable → `web_unverifiable`, exit 0, and the message does **not** say to add a
+    `uuid` (FR-004).
+22. **The marker does not need an owner set.** A link carrying `<!-- darnlink-own-exempt -->` whose
+    destination has a uuid, run with **no `--own` at all**, is `web_own_exempt` and is **not**
+    rewritten by `--write` — the one deliberate exception to FR-001 (FR-011).
+
 ## Out of scope
 
 - **The second rung** (failing owned `web_unverifiable` for 404 / unreadable repo) — named above,
@@ -505,6 +547,8 @@ resolves through `git config`.
   sibling. Principle II; also 013's rejected alternative (c).
 - **Non-GitHub forges** — ownership is parsed from the GitHub URL shape, as in 013.
 - **Push-permission-based ownership** — rejected above.
+- **The gate-recipe wiring** (`own_web*` keys, and how a recipe should treat this feature's exit 1).
+  Cut deliberately — see §Adoption. What this spec owes a gate is a CLI and an exit contract.
 - **`raw.githubusercontent.com` URLs.** 013's parser does not recognise that host at all (only
   `github.com/<owner>/<repo>/{blob,raw}/…`), so such a link never yields an owner and stays
   `web_unverifiable`. The measurement above counts only what the parser recognises.
@@ -541,5 +585,4 @@ No other principle changes: the base rule is a pure textual predicate over data 
   requirement.
 - **P-II is untouched by the letter of this spec but not by its spirit**: `--own-from-origin` makes
   darnlink spawn an external process for the first time. Worth a sentence when the constitution is
-  amended for P-IV, along with the `safe.directory` failure mode (`git` refusing a repo it considers
-  dubiously owned), which FR-003 should list among its exit-1 reasons.
+  amended for P-IV.
