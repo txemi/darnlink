@@ -72,6 +72,13 @@ def test_inline_code_and_urls_are_not_judged():
     assert _run("--prose", "-", stdin=body).returncode == 0
 
 
+def test_solo_is_an_english_word_and_does_not_fire():
+    """Measured, not assumed: this exact sentence is from a real PR description in this repo and was
+    1 of the 8 hits in the first sweep. The accented form is still caught."""
+    assert _run("--prose", "-", stdin="Fine solo; with several sessions it is not.\n").returncode == 0
+    assert _run("--prose", "-", stdin="sólo se comprueba al escribir\n").returncode == 1
+
+
 def test_escape_hatch_silences_a_line():
     assert _run("--prose", "-", stdin="quoting the original report: no funciona  lang-ok\n").returncode == 0
 

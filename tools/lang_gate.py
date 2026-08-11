@@ -66,11 +66,17 @@ import sys
 # It is also a Python keyword, but that collision is handled where it belongs -- `_is_commentish`
 # refuses to read a `del x` statement as prose -- rather than by blunting the dictionary.  # lang-ok
 #
+# `solo` was dropped on 2026-08-11 for the same reason as `sin`, and again only after measuring: it  # lang-ok
+# is an ordinary English word ("fine solo; with several sessions it is not"), and that sentence --
+# impeccable English in a PR description -- was 1 of the 8 hits in the first sweep of this repo's
+# pull requests. Nothing is lost that matters: the ACCENTED form is still caught by the accent
+# class, and unaccented Spanish prose containing it reliably trips some other word in the list.
+#
 # The list below trips the detector on itself, so every line carries the escape hatch. That the
 # gate has to exempt its own dictionary is a good smoke test that the escape hatch works at all.
 _WORDS = (
     r"que|para|con|los|las|del|por|una|como|pero|desde|cuando|porque|sobre|hasta|"  # lang-ok
-    r"solo|s[oó]lo|as[ií]|aqu[ií]|esto|esta|este|ese|esa|cada|hay|ser|est[aá]n?|son|"  # lang-ok
+    r"as[ií]|aqu[ií]|esto|esta|este|ese|esa|cada|hay|ser|est[aá]n?|son|"  # lang-ok
     r"tiene|hace|puede|debe|siempre|nunca|tambi[eé]n|adem[aá]s|entonces|aunque|mientras|"  # lang-ok
     r"antes|despu[eé]s|ahora|luego|donde|qui[eé]n|cu[aá]l|nada|algo|otro|otra|mismo|misma"  # lang-ok
 )
