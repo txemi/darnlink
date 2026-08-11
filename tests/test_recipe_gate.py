@@ -42,7 +42,7 @@ pytestmark = pytest.mark.skipif(
 _LEAKY_ENV = (
     "DARNLINK_REF", "DARNLINK_GATE_MODE", "DARNLINK_GATE_SCOPE", "DARNLINK_GATE_FAIL_CLOSED",
     "DARNLINK_GATE_WEB", "DARNLINK_GATE_CREATE_README", "DARNLINK_GATE_TOKEN_FILE",
-    "DARNLINK_GATE_DANGLING",
+    "DARNLINK_GATE_DANGLING", "DARNLINK_GATE_DANGLING_MAX",
     # ⚠️ And git's own. `git` exports these to every hook it runs, so when this suite is executed
     # FROM the repo's pre-commit hook (`tools/check.sh`), an un-scrubbed `git` in a test inherits
     # GIT_DIR from the outer repo while using the sandbox as its work tree. That combination is not
@@ -382,6 +382,115 @@ def test_repo_scope_fails_on_any_dangling_link(sandbox):
 
     assert r.returncode != 0
     assert "gone.md" in (r.stdout + r.stderr)
+
+
+# --- (c-bis) `dangling_max`: the budget that makes `repo` adoptable before you reach zero ----------
+#
+# Without it there is no rung between `added-lines` and `repo`, and `added-lines` needs a staged diff
+# — so a repo carrying old debt has NO server-side dangling wall at all until the day it hits exactly
+# zero. The budget buys the wall today and ratchets down with each cleanup.
+
+def _repo_with_n_danglers(repo: Path, n: int) -> None:
+    """A committed file carrying exactly `n` links to paths that never existed."""
+    body = "".join(f"[d{i}](gone{i}.md)\n\n" for i in range(n))
+    (repo / "doc.md").write_text(f"---\nuuid: {U}\n---\n\n# doc\n\n{body}")
+    _commit(repo, "base")
+
+
+def test_budget_defaults_to_zero_so_an_upgrade_changes_no_verdict(sandbox):
+    """No `dangling_max` key must behave exactly as before: `repo` fails on any finding."""
+    repo, run = sandbox
+    _repo_with_n_danglers(repo, 2)
+
+    r = run({"dangling": "repo"})
+
+    assert r.returncode != 0
+    # and it must not start talking about a budget nobody set. Match the phrases, not the bare word:
+    # the sandbox path carries this test's name, so "budget" appears in every line of output.
+    out = r.stdout + r.stderr
+    assert "the budget" not in out
+    assert "dangling_max" not in out
+
+
+def test_count_over_the_budget_still_fails_and_names_the_budget(sandbox):
+    repo, run = sandbox
+    _repo_with_n_danglers(repo, 2)
+
+    r = run({"dangling": "repo", "dangling_max": 1})
+
+    assert r.returncode != 0
+    assert "over the budget of 1" in (r.stdout + r.stderr)
+
+
+def test_count_at_the_budget_passes(sandbox):
+    """The whole point: a repo with known debt gets a real wall at its current number."""
+    repo, run = sandbox
+    _repo_with_n_danglers(repo, 2)
+
+    r = run({"dangling": "repo", "dangling_max": 2})
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "exactly at the budget" in (r.stdout + r.stderr)
+
+
+def test_coming_in_under_budget_asks_for_the_budget_to_be_lowered(sandbox):
+    """A budget that is never lowered is an allowance. Nothing else would notice it went stale, so
+    the gate has to say it here — in front of whoever just did the cleanup."""
+    repo, run = sandbox
+    _repo_with_n_danglers(repo, 2)
+
+    r = run({"dangling": "repo", "dangling_max": 5})
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "lower dangling_max to 2" in (r.stdout + r.stderr)
+
+
+def test_reaching_zero_with_a_budget_still_asks_for_it_to_be_dropped(sandbox):
+    """The milestone case, and the one that is easiest to get wrong.
+
+    If the reminder lives inside `there are findings`, the gate goes SILENT exactly when the last
+    dangler dies — the one moment the stale budget is both visible and free to remove. A ratchet
+    whose reminder disappears on success is not a ratchet, it is an allowance with a grace period.
+    """
+    repo, run = sandbox
+    _repo_with_n_danglers(repo, 0)   # a clean repo: the cleanup finished
+
+    r = run({"dangling": "repo", "dangling_max": 5})
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "drop dangling_max" in (r.stdout + r.stderr)
+
+
+def test_a_clean_repo_without_a_budget_says_nothing(sandbox):
+    """The mirror of the above: no budget set, nothing to nag about."""
+    repo, run = sandbox
+    _repo_with_n_danglers(repo, 0)
+
+    r = run({"dangling": "repo"})
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "dangling_max" not in (r.stdout + r.stderr)
+
+
+def test_a_junk_budget_is_treated_as_zero_not_as_infinite(sandbox):
+    """A typo must never silently WIDEN an allowance — it fails closed, and says why."""
+    repo, run = sandbox
+    _repo_with_n_danglers(repo, 2)
+
+    r = run({"dangling": "repo", "dangling_max": "muchos"})
+
+    assert r.returncode != 0
+    assert "not a non-negative integer" in (r.stdout + r.stderr)
+
+
+def test_budget_does_not_leak_into_the_warn_rung(sandbox):
+    """Only `repo` has a wall, so a budget there must not turn `warn` into something that fails."""
+    repo, run = sandbox
+    _repo_with_n_danglers(repo, 2)
+
+    r = run({"dangling": "warn", "dangling_max": 1})
+
+    assert r.returncode == 0, r.stdout + r.stderr
 
 
 def test_staged_scope_survives_a_payload_bigger_than_one_env_var(sandbox):

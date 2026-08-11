@@ -147,7 +147,25 @@ case "${CREATE_README,,}" in ""|0|false|no|off) CREATE_README="" ;; *) CREATE_RE
 #                one line of a README that carries old danglers would block the commit, and a gate
 #                people bypass gates nothing;
 #   repo         fails on ANY finding. The wall, for a repo already at zero.
+#
+# `dangling_max` (int, default 0) turns `repo` into a BUDGET: fail only above that count. It exists
+# because between `added-lines` and `repo` there is no rung — and `added-lines` needs a staged diff,
+# so it only ever bites in pre-commit. A repo with old debt therefore has NO server-side dangling
+# wall at all, on any surface, until the day it reaches exactly zero. That is a long time with no
+# wall, and it is precisely when a regression slips in unseen.
+# With a budget you get the wall TODAY at your current number, and every cleanup lowers it. Same
+# shape as a coverage floor: the number is a receipt of where you are, not permission to stay.
+# To keep it a ratchet and not a permanent allowance, the gate SAYS SO when you come in under
+# budget — an unlowered budget is the failure mode, and nothing else would catch it.
+# Only `repo` has a wall, so the budget only applies there. A non-numeric value is treated as 0
+# (strictest) on purpose: a typo must never silently WIDEN an allowance.
 DANGLING="${DARNLINK_GATE_DANGLING:-$(read_cfg dangling off)}"
+DANGLING_MAX="${DARNLINK_GATE_DANGLING_MAX:-$(read_cfg dangling_max 0)}"
+case "$DANGLING_MAX" in
+  ''|*[!0-9]*)
+    echo "darnlink-gate: dangling_max='$DANGLING_MAX' is not a non-negative integer — using 0." >&2
+    DANGLING_MAX=0 ;;
+esac
 case "${DANGLING,,}" in
   off|""|0|false|no) DANGLING=off ;;
   warn) DANGLING=warn ;;
@@ -398,9 +416,30 @@ if [ "$SCOPE" != "staged" ]; then
       printf '%s\n' "$dl_out" | while IFS=$'\t' read -r df dline ddet; do
         echo "  [dangling] $df: $ddet" >&2
       done
+    fi
+    # The budget verdict runs even at dl_n=0. Nesting it under "there are findings" would make the
+    # gate go SILENT exactly when the last dangler dies — the one moment the stale budget is both
+    # visible and free to lower. A ratchet whose reminder disappears on success is not a ratchet.
+    if [ "$dl_n" -gt 0 ] || { [ "$DANGLING" = repo ] && [ "$DANGLING_MAX" -gt 0 ]; }; then
       if [ "$DANGLING" = repo ]; then
-        echo "darnlink-gate: $dl_n link(s) point at a path that does not exist (dangling axis)." >&2
-        [ "$rc" -eq 0 ] && rc=1
+        if [ "$dl_n" -gt "$DANGLING_MAX" ]; then
+          if [ "$DANGLING_MAX" -gt 0 ]; then
+            echo "darnlink-gate: $dl_n link(s) point at a path that does not exist — over the budget of $DANGLING_MAX (dangling axis)." >&2
+          else
+            echo "darnlink-gate: $dl_n link(s) point at a path that does not exist (dangling axis)." >&2
+          fi
+          [ "$rc" -eq 0 ] && rc=1
+        elif [ "$dl_n" -lt "$DANGLING_MAX" ]; then
+          # The whole point of a budget is that it goes down. Nothing else would ever notice that it
+          # is stale, so say it here, where whoever just lowered the count is looking.
+          if [ "$dl_n" -eq 0 ]; then
+            echo "darnlink-gate: no dangling links left — drop dangling_max (still $DANGLING_MAX) so the wall is a wall again." >&2
+          else
+            echo "darnlink-gate: $dl_n dangling link(s), under the budget of $DANGLING_MAX — lower dangling_max to $dl_n to keep the ratchet." >&2
+          fi
+        else
+          echo "darnlink-gate: $dl_n dangling link(s) — exactly at the budget (dangling_max=$DANGLING_MAX)." >&2
+        fi
       else
         echo "darnlink-gate: $dl_n dangling link(s) — informational (dangling=$DANGLING; does not fail the gate)." >&2
       fi
