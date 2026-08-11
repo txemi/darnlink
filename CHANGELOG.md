@@ -24,6 +24,13 @@ All notable changes to darnlink are documented here. The format is based on
   `web_not_found` in a blocking gate is worse than the crash it replaces. Recovering the links this
   rejects is deliberately left to a separate change.
 
+  **The one true regression, stated plainly:** an href whose offending character sits at or after the
+  first `#` or `?` — `…/a.md#a b`, `…/a.md#s "Title"`, `…/a.md?plain=1 "Title"` — used to verify,
+  because the path group stops there and the URL that went on the wire was clean. It is now
+  `web_unverifiable`. Everything else this rejects **crashed** before, so it is not a regression.
+  And `web_unverifiable` cannot fail a gate, so the change can turn a green run into a quieter one,
+  never into a red one.
+
   Client-side URL errors get their own sentinel, kept out of the retry set: retrying a deterministic
   rejection spends real sleeps and can never succeed, and folding it into the network sentinel would
   bury darnlink's own defect under "network error". Strictly, 013 forbade neither crash — FR-008
