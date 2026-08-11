@@ -6,6 +6,38 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+- **`web-check --online` no longer dies on an href it cannot send.** Two routes took the whole run
+  down, and each escaped `_fetch_once`'s `except (URLError, TimeoutError, OSError)` by a different
+  door: **whitespace or control characters in the href** — mirrored third-party content carries two
+  truncated URLs with a space between them, and `http.client.InvalidURL` descends from
+  `HTTPException`, not `OSError` — and **a non-ASCII path**, where `http.client` encodes the request
+  line as ASCII and raises `UnicodeEncodeError`, a `ValueError`. An accented filename was enough.
+
+  Every URL field is now percent-encoded (`safe="/%"` on the path, so an href already written with
+  `%20` is left alone), and an href carrying a character the client would refuse is reported
+  `web_unverifiable` instead of being sent.
+
+  **The conservative half is the point.** The tempting alternative — forbid those characters only
+  *inside* the parsed groups, so more links can still be resolved — truncates the path at the first
+  offending character, fetches a *different* file, and reports its 404 as a real break. A false
+  `web_not_found` in a blocking gate is worse than the crash it replaces. Recovering the links this
+  rejects is deliberately left to a separate change.
+
+  **The one true regression, stated plainly:** an href whose offending character sits at or after the
+  first `#` or `?` — `…/a.md#a b`, `…/a.md#s "Title"`, `…/a.md?plain=1 "Title"` — used to verify,
+  because the path group stops there and the URL that went on the wire was clean. It is now
+  `web_unverifiable`. Everything else this rejects **crashed** before, so it is not a regression.
+  And `web_unverifiable` cannot fail a gate, so the change can turn a green run into a quieter one,
+  never into a red one.
+
+  Client-side URL errors get their own sentinel, kept out of the retry set: retrying a deterministic
+  rejection spends real sleeps and can never succeed, and folding it into the network sentinel would
+  bury darnlink's own defect under "network error". Strictly, 013 forbade neither crash — FR-008
+  covers an *unrecognised* URL shape (this one the regex accepts) and FR-009 is worded for *transport*
+  errors — so they fell through the gap between two requirements each written assuming the other
+  covered it.
+
 ## [0.20.4] — 2026-08-10
 
 ### Added
