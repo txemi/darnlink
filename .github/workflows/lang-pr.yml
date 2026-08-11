@@ -1,0 +1,38 @@
+# English-only, applied to the PR TITLE and DESCRIPTION.
+#
+# WHY THIS IS NOT A STEP IN `ci.yml`. It has to re-run when the *text* changes, and the text is not
+# the code: `on: pull_request` defaults to `[opened, synchronize, reopened]`, none of which fires
+# when somebody edits a title. Living in `ci.yml` it would have two failure modes, and the second
+# one is the bad one:
+#
+#   * open the PR with a non-English title -> red, fix the title -> still red, because nothing
+#     re-ran. The only way out is an empty commit, which is how a check teaches people to route
+#     around it;
+#   * open it in English and rename it afterwards -> never checked again. The gate would be
+#     satisfiable by waiting.
+#
+# Adding `edited` to `ci.yml`'s trigger instead would re-run the whole 16-job matrix (tests on four
+# Pythons x two OSes, plus smoke) on every typo fix in a description. This job is pure stdlib and
+# needs no toolchain, so it costs seconds — and the billing on this account has been the thing that
+# stops CI before, which makes "cheap" a correctness property here, not an aesthetic one.
+name: lang-pr
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+jobs:
+  title-and-body:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: English-only gate — PR title and description
+        # The text travels through the environment, never interpolated into the shell. A PR title
+        # on a public repo is written by anyone at all, and `run: echo "${{ github.event… }}"` is
+        # script injection.
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          printf '%s\n\n%s\n' "$PR_TITLE" "$PR_BODY" > "$RUNNER_TEMP/pr.txt"
+          python3 tools/lang_gate.py --prose "$RUNNER_TEMP/pr.txt" --label "PR title/description"

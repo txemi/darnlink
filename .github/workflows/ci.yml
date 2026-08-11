@@ -47,11 +47,11 @@ jobs:
       - name: English-only gate — tracked files (fail-closed, baseline pinned at 0)
         run: python3 tools/lang_gate.py --baseline
 
-      # The two steps below guard the surfaces no file gate can ever see: the text that goes
-      # straight into GitHub. They live here, and not only in the local hooks, because hooks are
-      # opt-in per clone and one `--no-verify` away — and because what leaks here is public and
-      # permanent. Measured on 2026-08-11, with the file gate green: 4 PR titles and 7 commit
-      # subjects on `main` in Spanish.
+      # Commit messages: a surface no file gate can see, and one the local `hooks/commit-msg` cannot
+      # be trusted to have covered — hooks are opt-in per clone and one `--no-verify` away. Measured
+      # on 2026-08-11 with the file gate green: 7 Spanish commit subjects on `main`.
+      # It rides in this job (and not in `lang-pr.yml` with the title check) because it is tied to
+      # the COMMITS, so `synchronize` — already a trigger here — is exactly when it must re-run.
       - name: English-only gate — commit messages added by this PR
         if: github.event_name == 'pull_request'
         run: |
@@ -59,17 +59,6 @@ jobs:
             "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}" \
             > "$RUNNER_TEMP/msgs.txt"
           python3 tools/lang_gate.py --prose "$RUNNER_TEMP/msgs.txt" --label "set of commit messages"
-
-      - name: English-only gate — PR title and description
-        if: github.event_name == 'pull_request'
-        # The text travels through the environment, never through the shell. A PR title on a public
-        # repo is attacker-controlled, and `run: echo "${{ github.event… }}"` is script injection.
-        env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_BODY: ${{ github.event.pull_request.body }}
-        run: |
-          printf '%s\n\n%s\n' "$PR_TITLE" "$PR_BODY" > "$RUNNER_TEMP/pr.txt"
-          python3 tools/lang_gate.py --prose "$RUNNER_TEMP/pr.txt" --label "PR title/description"
 
   # Exercises the commands users actually run (packaging + entry point + the literal README
   # one-liner) on Linux AND Windows — so the copy-paste one-liner is proven on both.
