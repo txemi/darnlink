@@ -97,7 +97,35 @@ _SKIP_DIRS = {".git", ".venv", "node_modules", "__pycache__", "_build", "backup"
 _FENCE = re.compile(r"^\s*(?:```|~~~)")
 _INLINE_CODE = re.compile(r"`[^`]*`")
 _URL = re.compile(r"https?://\S+")
-_BASELINE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lang_gate_baseline.json")
+
+
+def _baseline_path() -> str:
+    """Where the baseline lives. Resolved against the REPO, never against this file.
+
+    WHY (2026-08-11). It used to be `dirname(__file__)/lang_gate_baseline.json` — i.e. next to the
+    tool. That works only because the tool happens to sit inside the repo it checks: the moment it
+    is installed anywhere else (a venv, `uvx`, a shared bin) the gate reads and writes a baseline in
+    a directory that has nothing to do with the project, and silently reports a clean tree. It was
+    correct by accident of location, which is not a property you want under a gate.
+
+    Resolution order: `LANG_GATE_BASELINE` (explicit wins) -> `<git root>/tools/lang_gate_baseline.json`
+    -> next to this file, only if there is no git repo at all. The default keeps the file exactly
+    where every consumer already has it, so this fix moves nothing and breaks no one.
+    """
+    env = os.environ.get("LANG_GATE_BASELINE")
+    if env:
+        return os.path.abspath(env)
+    try:
+        r = subprocess.run(["git", "rev-parse", "--show-toplevel"],
+                           capture_output=True, text=True, timeout=10)
+        if r.returncode == 0 and r.stdout.strip():
+            return os.path.join(r.stdout.strip(), "tools", "lang_gate_baseline.json")
+    except Exception:
+        pass
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "lang_gate_baseline.json")
+
+
+_BASELINE = _baseline_path()
 
 
 def _is_commentish(line: str) -> bool:
