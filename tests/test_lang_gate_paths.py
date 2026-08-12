@@ -25,6 +25,18 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOOL = os.path.join(REPO, "tools", "lang_gate.py")
 EXTS = [".md", ".py"]
 
+# Every subprocess here runs with the git environment scrubbed. These tests build throwaway repos
+# and assert what the tool resolves inside them, so an inherited GIT_DIR / GIT_WORK_TREE /
+# GIT_INDEX_FILE makes both `git init` and `git rev-parse` talk about the REAL repo and the
+# assertions stop measuring anything. Not hypothetical: all of these passed from a shell and four
+# failed under the pre-commit hook, which exports git variables.
+_CLEAN = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+_CLEAN.pop("LANG_GATE_BASELINE", None)
+
+
+def _git_init(path):
+    subprocess.run(["git", "init", "-q"], cwd=str(path), check=True, env=_CLEAN)
+
 
 def _baseline(count: int, files: dict) -> str:
     return json.dumps({"count": count, "scanned_exts": EXTS, "files": files})
@@ -41,13 +53,12 @@ def _repo(tmp_path, spanish_lines: int, baseline_count: int | None):
     if baseline_count is not None:
         (repo / "tools" / "lang_gate_baseline.json").write_text(
             _baseline(baseline_count, {"src/legacy.py": baseline_count}), encoding="utf-8")
-    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    _git_init(repo)
     return repo
 
 
 def _run(args, cwd, tool=TOOL, env=None):
-    e = dict(os.environ)
-    e.pop("LANG_GATE_BASELINE", None)
+    e = dict(_CLEAN)
     e.update(env or {})
     p = subprocess.run([sys.executable, str(tool), *args], cwd=str(cwd),
                        capture_output=True, text=True, env=e)
@@ -121,18 +132,41 @@ def test_explicit_env_baseline_still_wins(tmp_path):
     assert "unchanged" in out, out
 
 
-def test_no_git_repo_falls_back_to_the_cwd_and_says_so(tmp_path):
-    """Degrading is allowed; degrading in silence, or onto someone else's tree, is not.
+def test_no_git_repo_judges_the_cwds_tree_not_the_tools(tmp_path):
+    """Degrading is allowed; degrading onto someone else's tree is not.
 
-    The fallback must be the directory the user ran the tool from, never the tool's own location:
-    a shared-bin install would otherwise judge the tool's repo (or `$HOME`) and report OK about a
-    project it never looked at.
+    THIS TEST WAS WRONG ONCE, and the way it was wrong is the point. It used to assert only that
+    the words "falling back to the current directory" appeared. Swapping the fallback back to the
+    tool's own directory -- the exact hole this branch exists to close -- left all 24 tests green
+    while the gate reported "0 legacy lines" about a project it had never opened. A message is not
+    a behaviour. So this asserts the COUNT: the number can only be right if the tree that was
+    walked is the one the user was standing in.
     """
     plain = tmp_path / "plain"
-    (plain / "src").mkdir(parents=True)
-    (plain / "src" / "a.py").write_text("x = 1\n", encoding="utf-8")
-    _, out = _run(["--baseline"], cwd=plain, tool=_installed_elsewhere(tmp_path))
+    (plain / "tools").mkdir(parents=True)
+    (plain / "src").mkdir()
+    (plain / "src" / "legacy.py").write_text(
+        "".join(f"# esto es una linea con comentario en castellano numero {i}\n" for i in range(6)),
+        encoding="utf-8")
+    (plain / "tools" / "lang_gate_baseline.json").write_text(
+        _baseline(6, {"src/legacy.py": 6}), encoding="utf-8")
+
+    rc, out = _run(["--baseline"], cwd=plain, tool=_installed_elsewhere(tmp_path))
+    assert "6 legacy line" in out, f"did not count the cwd's tree: {out}"
+    assert rc == 0, out
     assert "falling back to the current directory" in out, out
+
+
+def test_the_degradation_notice_goes_to_stderr(tmp_path):
+    """Pin the channel. `_run` merges the two streams, so nothing else would notice it moving --
+    and a CI reading only stdout would take a degraded run for a clean one."""
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    (plain / "a.py").write_text("x = 1\n", encoding="utf-8")
+    p = subprocess.run([sys.executable, str(_installed_elsewhere(tmp_path)), "--baseline"],
+                       cwd=str(plain), capture_output=True, text=True, env=_CLEAN)
+    assert "falling back" in p.stderr, p.stderr
+    assert "falling back" not in p.stdout, p.stdout
 
 
 def test_a_vendored_baseline_inside_the_tree_is_never_adopted(tmp_path):
@@ -151,7 +185,7 @@ def test_a_vendored_baseline_inside_the_tree_is_never_adopted(tmp_path):
     shutil.copy(TOOL, vendored / "lang_gate.py")
     (vendored / "lang_gate_baseline.json").write_text(_baseline(1242, {"z.py": 1242}),
                                                      encoding="utf-8")
-    subprocess.run(["git", "init", "-q"], cwd=host, check=True)
+    _git_init(host)
 
     rc, out = _run(["--baseline"], cwd=host, tool=vendored / "lang_gate.py")
     assert "went DOWN" not in out, f"adopted a foreign baseline: {out}"
@@ -160,6 +194,13 @@ def test_a_vendored_baseline_inside_the_tree_is_never_adopted(tmp_path):
     rc, out = _run(["--update-baseline"], cwd=host, tool=vendored / "lang_gate.py")
     kept = json.loads((vendored / "lang_gate_baseline.json").read_text(encoding="utf-8"))
     assert kept["count"] == 1242, f"clobbered a foreign tracked baseline: {kept}"
+    # Assert HOW it declined. This half used to pass because the process crashed with a traceback
+    # before reaching the write -- a green test resting on a bug, which would have gone red the day
+    # the bug was fixed, for a reason unrelated to what it claims to check.
+    assert rc == 0, f"writing its own baseline should succeed: {out}"
+    assert "Traceback" not in out, out
+    own = json.loads((host / "tools" / "lang_gate_baseline.json").read_text(encoding="utf-8"))
+    assert own["count"] == 0, own
 
 
 def test_a_baseline_outside_the_tree_is_announced_on_read(tmp_path):
@@ -169,3 +210,26 @@ def test_a_baseline_outside_the_tree_is_announced_on_read(tmp_path):
     elsewhere.write_text(_baseline(5, {"src/legacy.py": 5}), encoding="utf-8")
     _, out = _run(["--baseline"], cwd=repo, env={"LANG_GATE_BASELINE": str(elsewhere)})
     assert "points outside the tree being scanned" in out, out
+
+
+def test_relative_env_baseline_is_relative_to_the_project(tmp_path):
+    """`LANG_GATE_BASELINE=config/x.json` must mean the same thing from the root and from a
+    subdirectory. Against the cwd it did not, which is the dependency this change removes."""
+    repo = _repo(tmp_path, spanish_lines=3, baseline_count=None)
+    (repo / "config").mkdir()
+    (repo / "config" / "lang.json").write_text(_baseline(3, {"src/legacy.py": 3}), encoding="utf-8")
+    env = {"LANG_GATE_BASELINE": "config/lang.json"}
+    assert _run(["--baseline"], cwd=repo, env=env) == _run(["--baseline"], cwd=repo / "src", env=env)
+
+
+def test_update_baseline_reports_instead_of_crashing_when_tools_is_missing(tmp_path):
+    """The adoption path the tool itself recommends ("Create it with --update-baseline") used to
+    answer with a Python traceback. Round 1's pattern: a message inviting a command that misbehaves."""
+    repo = tmp_path / "fresh"
+    (repo / "src").mkdir(parents=True)
+    (repo / "src" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    _git_init(repo)
+    rc, out = _run(["--update-baseline"], cwd=repo)
+    assert "Traceback" not in out, out
+    assert rc == 0, out
+    assert (repo / "tools" / "lang_gate_baseline.json").exists(), out

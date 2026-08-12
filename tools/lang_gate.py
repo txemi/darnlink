@@ -100,7 +100,6 @@ _URL = re.compile(r"https?://\S+")
 
 
 _BASELINE_NAME = "lang_gate_baseline.json"
-_TOOL_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def _project_root() -> str:
@@ -127,7 +126,8 @@ def _project_root() -> str:
                            capture_output=True, text=True, timeout=10)
         if r.returncode == 0 and r.stdout.strip():
             return os.path.realpath(r.stdout.strip())
-        why = "not inside a git repo"
+        why = (r.stderr.strip().splitlines()[0] if r.stderr.strip()
+               else "not inside a git repo")
     except Exception as exc:  # git missing, timeout, anything
         why = f"cannot ask git for the repo root ({exc.__class__.__name__})"
     # FALL BACK TO THE CWD, NOT TO THE TOOL. Where the tool sits says nothing about what the user
@@ -166,7 +166,11 @@ def _baseline_path(root: str) -> str:
     """
     env = os.environ.get("LANG_GATE_BASELINE")
     if env:
-        path = os.path.abspath(env)
+        # Relative means "relative to the project", not to wherever you happened to `cd`. Against
+        # the cwd, the same command gives a different verdict from the root and from a subdirectory
+        # -- exactly the dependency this whole change exists to remove.
+        path = env if os.path.isabs(env) else os.path.join(root, env)
+        path = os.path.abspath(path)
         # Reads are not guarded (the whole point of the escape hatch is pointing somewhere odd),
         # but comparing a count from `root` against a baseline from elsewhere is exactly the #49
         # failure, so it does not get to happen quietly.
@@ -175,7 +179,14 @@ def _baseline_path(root: str) -> str:
                   f"comparison spans two projects.\n  scanned : {root}\n  baseline: {path}",
                   file=sys.stderr)
         return path
-    return os.path.join(root, "tools", _BASELINE_NAME)
+    default = os.path.join(root, "tools", _BASELINE_NAME)
+    # Check the DEFAULT too. It looks impossible to leave the tree from `<root>/tools/`, but a
+    # symlinked `tools/` (or a symlinked baseline file) does exactly that, with no env var and no
+    # user action at run time -- the only remaining silent path across projects.
+    if os.path.exists(default) and not _is_within(default, root):
+        print(f"lang-gate: {default} resolves outside the tree being scanned (symlink?). The "
+              f"comparison spans two projects.\n  scanned : {root}", file=sys.stderr)
+    return default
 
 
 def _is_commentish(line: str) -> bool:
@@ -421,7 +432,14 @@ def main() -> int:
                   f"scanned, so the count would describe a different project.\n"
                   f"  scanned : {root}\n  baseline: {baseline_path}", file=sys.stderr)
             return 1
-        with open(baseline_path, "w", encoding="utf-8") as fh:
+        try:
+            os.makedirs(os.path.dirname(baseline_path) or ".", exist_ok=True)
+            fh = open(baseline_path, "w", encoding="utf-8")
+        except OSError as exc:
+            print(f"lang-gate: cannot write the baseline at {baseline_path}: {exc}",
+                  file=sys.stderr)
+            return 1
+        with fh:
             json.dump({"count": n,
                        "note": "Legacy Spanish lines. This number may only DECREASE.",
                        # What the number counts. Without it, widening coverage in this file is
@@ -492,6 +510,11 @@ def main() -> int:
                                f"ones -- re-seed with --update-baseline from a GREEN commit.)")
         return 1
     if n < base:
+        if not _is_within(baseline_path, root):
+            print(f"lang-gate: the count ({n}) is BELOW the baseline ({base}), but they describe "
+                  f"different projects -- see the warning above. Not treating this as a win.",
+                  file=sys.stderr)
+            return 1
         print(f"lang-gate: OK -- and it went DOWN ({n} < {base}). "
               f"Lock the win in with --update-baseline.")
         return 0
