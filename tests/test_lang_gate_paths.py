@@ -121,12 +121,51 @@ def test_explicit_env_baseline_still_wins(tmp_path):
     assert "unchanged" in out, out
 
 
-def test_no_git_repo_falls_back_and_says_so(tmp_path):
-    """Degrading is allowed; degrading in silence is what let the bug in."""
-    plain = tmp_path / "plain" / "tools"
-    plain.mkdir(parents=True)
-    shutil.copy(TOOL, plain / "lang_gate.py")
-    (plain.parent / "src").mkdir()
-    (plain.parent / "src" / "a.py").write_text("x = 1\n", encoding="utf-8")
-    _, out = _run(["--baseline"], cwd=plain, tool=plain / "lang_gate.py")
-    assert "falling back" in out or "not inside a git repo" in out, out
+def test_no_git_repo_falls_back_to_the_cwd_and_says_so(tmp_path):
+    """Degrading is allowed; degrading in silence, or onto someone else's tree, is not.
+
+    The fallback must be the directory the user ran the tool from, never the tool's own location:
+    a shared-bin install would otherwise judge the tool's repo (or `$HOME`) and report OK about a
+    project it never looked at.
+    """
+    plain = tmp_path / "plain"
+    (plain / "src").mkdir(parents=True)
+    (plain / "src" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    _, out = _run(["--baseline"], cwd=plain, tool=_installed_elsewhere(tmp_path))
+    assert "falling back to the current directory" in out, out
+
+
+def test_a_vendored_baseline_inside_the_tree_is_never_adopted(tmp_path):
+    """The hole a first attempt at this fix opened, and the reason there is no `beside` fallback.
+
+    A vendored copy or submodule (tool AND its baseline) lives inside the scanned tree, so any
+    "is it inside root?" test says yes while it belongs to a different project. Measured before
+    removing it: rc=0, "OK -- and it went DOWN (0 < 1242)", and --update-baseline then overwrote
+    that tracked 1242 with 0.
+    """
+    host = tmp_path / "host"
+    (host / "src").mkdir(parents=True)
+    (host / "src" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    vendored = host / "third_party" / "dep" / "tools"
+    vendored.mkdir(parents=True)
+    shutil.copy(TOOL, vendored / "lang_gate.py")
+    (vendored / "lang_gate_baseline.json").write_text(_baseline(1242, {"z.py": 1242}),
+                                                     encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=host, check=True)
+
+    rc, out = _run(["--baseline"], cwd=host, tool=vendored / "lang_gate.py")
+    assert "went DOWN" not in out, f"adopted a foreign baseline: {out}"
+    assert rc == 1, out
+
+    rc, out = _run(["--update-baseline"], cwd=host, tool=vendored / "lang_gate.py")
+    kept = json.loads((vendored / "lang_gate_baseline.json").read_text(encoding="utf-8"))
+    assert kept["count"] == 1242, f"clobbered a foreign tracked baseline: {kept}"
+
+
+def test_a_baseline_outside_the_tree_is_announced_on_read(tmp_path):
+    """The escape hatch may point anywhere -- but a two-project comparison is said out loud."""
+    repo = _repo(tmp_path, spanish_lines=5, baseline_count=None)
+    elsewhere = tmp_path / "custom.json"
+    elsewhere.write_text(_baseline(5, {"src/legacy.py": 5}), encoding="utf-8")
+    _, out = _run(["--baseline"], cwd=repo, env={"LANG_GATE_BASELINE": str(elsewhere)})
+    assert "points outside the tree being scanned" in out, out

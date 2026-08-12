@@ -127,15 +127,16 @@ def _project_root() -> str:
                            capture_output=True, text=True, timeout=10)
         if r.returncode == 0 and r.stdout.strip():
             return os.path.realpath(r.stdout.strip())
+        why = "not inside a git repo"
     except Exception as exc:  # git missing, timeout, anything
-        # Say it. This file announces every other degradation it makes; a gate that silently picks
-        # a different tree is how the bug above got in.
-        print(f"lang-gate: cannot ask git for the repo root ({exc.__class__.__name__}) "
-              f"-> falling back to the tool's own location", file=sys.stderr)
-        return os.path.realpath(os.path.dirname(_TOOL_DIR))
-    print("lang-gate: not inside a git repo -> falling back to the tool's own location",
-          file=sys.stderr)
-    return os.path.realpath(os.path.dirname(_TOOL_DIR))
+        why = f"cannot ask git for the repo root ({exc.__class__.__name__})"
+    # FALL BACK TO THE CWD, NOT TO THE TOOL. Where the tool sits says nothing about what the user
+    # asked to check; the directory they ran it from does. Falling back to `dirname(__file__)` is
+    # how a shared-bin install ends up judging the tool's own repo -- or `$HOME` -- and reporting
+    # OK about a project it never looked at. And say it out loud: this file announces every other
+    # degradation it makes, and a gate that silently picks a different tree is the bug above.
+    print(f"lang-gate: {why} -> falling back to the current directory", file=sys.stderr)
+    return os.path.realpath(os.getcwd())
 
 
 def _is_within(path: str, root: str) -> bool:
@@ -148,24 +149,33 @@ def _is_within(path: str, root: str) -> bool:
 
 
 def _baseline_path(root: str) -> str:
-    """Where the baseline lives, DERIVED FROM `root` so the two can never disagree.
+    """Where the baseline lives: `<root>/tools/`, derived from `root` and from nothing else.
 
-    `LANG_GATE_BASELINE` wins when set -- the escape hatch for odd layouts, and a path you are
-    declaring you are happy to have written to. Otherwise `<root>/tools/`, where every known
-    consumer keeps it. One concession for anyone who vendored the tool outside `tools/`: if the
-    default is absent but a baseline sits beside the tool AND the tool is inside `root`, use that.
-    It is still the same project, so the two paths still agree.
+    NO FALLBACK TO THE TOOL'S OWN DIRECTORY, and the reason is worth writing down because a first
+    attempt at this fix had one. It looked harmless -- "if there is no baseline at the default but
+    one sits beside the tool, and the tool is inside `root`, it must be the same project" -- and it
+    reopened the exact hole this function exists to close. A vendored copy or a submodule (tool AND
+    its baseline) lives inside `root` and satisfies that test while belonging to a different
+    project. Measured: a host repo with no baseline of its own, carrying `third_party/x/tools/`
+    whose baseline said 1242, reported "OK -- and it went DOWN (0 < 1242)" with rc=0 and then let
+    `--update-baseline` overwrite that tracked 1242 with 0.
+
+    "Inside the tree" is not the same question as "belongs to this project", and no cheap predicate
+    tells them apart. So there is one location, and a consumer with an unusual layout uses
+    `LANG_GATE_BASELINE` -- an explicit choice, not a guess made on their behalf.
     """
     env = os.environ.get("LANG_GATE_BASELINE")
     if env:
-        return os.path.abspath(env)
-    default = os.path.join(root, "tools", _BASELINE_NAME)
-    if os.path.exists(default):
-        return default
-    beside = os.path.join(_TOOL_DIR, _BASELINE_NAME)
-    if os.path.exists(beside) and _is_within(beside, root):
-        return beside
-    return default
+        path = os.path.abspath(env)
+        # Reads are not guarded (the whole point of the escape hatch is pointing somewhere odd),
+        # but comparing a count from `root` against a baseline from elsewhere is exactly the #49
+        # failure, so it does not get to happen quietly.
+        if not _is_within(path, root):
+            print(f"lang-gate: LANG_GATE_BASELINE points outside the tree being scanned. The "
+                  f"comparison spans two projects.\n  scanned : {root}\n  baseline: {path}",
+                  file=sys.stderr)
+        return path
+    return os.path.join(root, "tools", _BASELINE_NAME)
 
 
 def _is_commentish(line: str) -> bool:
