@@ -38,10 +38,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: the commit-message step below ranges over the commits this PR adds,
+          # and with the default depth of 1 there is no range to walk.
+          fetch-depth: 0
       # No setup step on purpose: the gate is pure stdlib, so it cannot fail for reasons
       # unrelated to what it guards — which is how a gate keeps its credibility.
-      - name: English-only gate (fail-closed — baseline pinned at 0)
+      - name: English-only gate — tracked files (fail-closed, baseline pinned at 0)
         run: python3 tools/lang_gate.py --baseline
+
+      # Commit messages: a surface no file gate can see, and one the local `hooks/commit-msg` cannot
+      # be trusted to have covered — hooks are opt-in per clone and one `--no-verify` away. Measured
+      # on 2026-08-11 with the file gate green: 7 Spanish commit subjects on `main`.
+      # It rides in this job (and not in `lang-pr.yml` with the title check) because it is tied to
+      # the COMMITS, so `synchronize` — already a trigger here — is exactly when it must re-run.
+      - name: English-only gate — commit messages added by this PR
+        if: github.event_name == 'pull_request'
+        run: |
+          git log --format=%B \
+            "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}" \
+            > "$RUNNER_TEMP/msgs.txt"
+          python3 tools/lang_gate.py --prose "$RUNNER_TEMP/msgs.txt" --label "set of commit messages"
 
   # Exercises the commands users actually run (packaging + entry point + the literal README
   # one-liner) on Linux AND Windows — so the copy-paste one-liner is proven on both.

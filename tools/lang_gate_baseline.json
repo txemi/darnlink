@@ -1,5 +1,9 @@
 {
   "count": 0,
   "note": "Legacy Spanish lines. This number may only DECREASE.",
+  "scanned_exts": [
+    ".md",
+    ".py"
+  ],
   "files": {}
 }

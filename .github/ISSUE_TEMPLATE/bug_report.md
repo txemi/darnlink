@@ -5,6 +5,10 @@ title: ''
 labels: bug
 ---
 
+<!-- This project is written in English throughout, issues included. A report in another
+language is welcome and will be read as it stands, but it gets labelled `needs-english`
+until it is translated (.github/workflows/lang-issue.yml). -->
+
 **What happened**
 A clear description of the bug.
 

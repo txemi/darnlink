@@ -36,10 +36,21 @@ CI (`.github/workflows/ci.yml`) runs on every PR; please make sure it's green. A
 `hooks/pre-commit` is available — activate it with `bash setup.sh` (sets `core.hooksPath`).
 
 **Everything in this repo is written in English** — code, comments, docstrings, docs, spec files,
-commit messages and PR titles/descriptions. A gate enforces it (`tools/lang_gate.py`, run by
-`tools/check.sh` and by the `lang` CI job), so a comment in another language fails the build. The
-detector is a heuristic and can be wrong; silence a genuine false positive with a trailing
-`# lang-ok` on that line.
+commit messages, PR titles/descriptions, and issues. `tools/lang_gate.py` enforces it on four
+surfaces:
+
+- **tracked files** (`.py` comments and docstrings, `.md` prose) — `tools/check.sh` and the `lang`
+  CI job;
+- **commit messages** — `hooks/commit-msg`, plus a CI step over every commit the PR adds;
+- **PR title and description** — a CI step, so a non-English title blocks the merge;
+- **issues** — `.github/workflows/lang-issue.yml`. GitHub offers no way to gate an issue before it
+  is published, so this one cannot block: it labels the issue `needs-english` and says so once in a
+  comment. A report in another language is welcome and will be read as it stands — the label marks
+  translation as pending, it is not a rejection.
+
+The detector is a heuristic and can be wrong; silence a genuine false positive with a trailing
+`# lang-ok` on that line (`<!-- lang-ok -->` in Markdown, where `#` is a heading). Code inside
+fenced blocks, inline `code` spans and URLs are never judged, so pasting real output is safe.
 
 ## Pull requests
 
