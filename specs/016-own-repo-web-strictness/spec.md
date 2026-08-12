@@ -112,8 +112,9 @@ the same false pass by a smaller door.
 
 ### What fails, and the two things that deliberately do not
 
-The new finding fires **only** for: destination fetched 200 · destination has no `uuid` · owner is in
-the owner set. Two exclusions:
+The new finding fires **only** for: destination fetched 200 · its frontmatter has no `uuid` and is not
+rejected by the reader · owner is in the owner set. Two exclusions on top of that (a third, free one —
+an href that cannot be sent has no owner at all — is in §Prerequisite):
 
 - **A destination that is not `.md`** (compared case-insensitively, as `iter_markdown_files` already
   does) never fails. It cannot carry frontmatter, so demanding a `uuid` is incoherent. This mirrors
@@ -128,7 +129,8 @@ identical**, so honouring it would require `GET /repos/{o}/{r}/git/refs` — a n
 FR-009 and against the "no extra fetch" acceptance — and its failure direction is the worst one: a
 maintenance branch (`v2`, `release-1.2`) would be excluded for *looking like* a tag, producing a
 false green, which is the exact failure this feature exists to remove. The rule is therefore
-`^[0-9a-f]{7,40}$` and nothing else. A tag-pinned link that genuinely cannot be fixed uses the FR-011
+`^[0-9a-fA-F]{7,40}$` and nothing else — case-folded, like FR-001 and FR-005. A tag-pinned link
+that genuinely cannot be fixed uses the FR-011
 marker, which is what it is for.
 
 That rule has its own small false-green — a branch named `deadbeef` — accepted knowingly: it is
@@ -232,20 +234,24 @@ the 003 and 006 file-level markers entirely (it only skips `--ignore-block` regi
 
 ---
 
-## Prerequisite (external to this spec)
+## Prerequisite — resolved upstream while this spec was in review
 
-`web-check --online` currently **crashes** — it does not fail, it raises — when a Markdown href
-contains whitespace: `_GITHUB_BLOB_RE` accepts spaces in its path group, and `http.client.InvalidURL`
-derives from `HTTPException`, not `OSError`, so it escapes `_fetch_once`'s `except` clause. Any
-repository that mirrors third-party content is liable to contain such an href.
+`web-check --online` used to **crash** — not fail, raise — on an href containing whitespace or a
+control character, and again on a non-ASCII path. **Fixed in `main`**: the href is now rejected before
+the parse, every URL field is percent-encoded, and a client-side URL error maps to its own
+non-retryable sentinel rather than escaping the `except` clause. This spec no longer waits on it.
 
-**And 013 does not actually forbid it — which is worse than a violation.** FR-008 covers an
-*unrecognised* URL shape, and this one **is** recognised: the regex matches it happily and the run
-dies later, at the fetch. FR-009 covers *"network/transport errors (timeout, DNS, connection reset)"*,
-and a client-side URL validation error is none of those. So the crash falls through the gap between
-two requirements that were each written assuming the other covered it. The fix therefore also wants
-FR-009 restated as *"no error raised by the fetch layer — transport **or** client-side validation —
-propagates as an exception"*. Fixed separately; this axis is not adoptable before it.
+Two things survive the fix and belong here:
+
+- **A third exclusion, free and already in place.** An href that cannot be sent yields no
+  `GithubUrl` at all, so it has no owner and can therefore never be `web_own_no_uuid`. It is not
+  listed beside FR-005 and FR-006 because it is not a rule this feature applies — it is a consequence
+  of the parser refusing the input — but an implementer should know why that path never reaches the
+  new finding.
+- **013's wording is still wrong**, even though its code is now right: FR-008 covers an *unrecognised*
+  URL shape (the regex accepted these) and FR-009 is worded for *transport* errors (this was
+  client-side validation), so the crash fell through the gap between two requirements each written
+  assuming the other covered it. See §Housekeeping.
 
 ---
 
@@ -328,7 +334,8 @@ convenience needs a named sentence in P-IV.
 - **FR-004** A link classified `web_unverifiable` **solely** because the fetched destination returned
   200 with **no frontmatter at all, or frontmatter without a `uuid`**, whose owner is owned, MUST
   instead be reported **`web_own_no_uuid`**, and MUST set the exit code to **4** (subject to FR-012).
-  A destination whose frontmatter is present but **invalid YAML** MUST NOT produce it — it stays
+  A destination whose frontmatter is present but **rejected by the canonical reader** — unparseable
+  YAML, or a `uuid` that is not a string scalar — MUST NOT produce it — it stays
   `web_unverifiable` — because telling someone to *add* a `uuid` to a file whose frontmatter does not
   parse is the wrong instruction for a different defect. Note where the work is: the frontmatter reader
   **already** distinguishes absent from invalid; it is the caller that throws the distinction away by
@@ -385,8 +392,9 @@ convenience needs a named sentence in P-IV.
   the same uuid-less file cost 2, and one edit at the destination clears both. `web_own_exempt` never
   counts. Other exit-4 causes are unaffected: one budgeted finding plus one real `web_not_found`
   still exits 4. The findings are always reported — the budget silences the *verdict*, never the
-  *finding*. Omitting the flag MUST be distinguishable from `--own-max 0` (default `None`), and
-  `--own-max` without any owner set MUST be a usage error (exit 1).
+  *finding*. Omitting the flag MUST be distinguishable from `--own-max 0` (default `None`); the observable
+  difference is FR-013's message, not the exit code, which is the same for both. `--own-max` without
+  any owner set MUST be a usage error (exit 1).
 - **FR-013** When the count is at or below a non-zero `--own-max`, the report MUST print the count and
   say that lowering the budget to that number keeps the ratchet; when the count reaches **zero** it
   MUST say to drop the flag entirely. Both nudges, as `dangling_max` gives. A budget nobody is told to
@@ -406,7 +414,10 @@ convenience needs a named sentence in P-IV.
   a **third** semantics for those markers, narrower than the "removed from the darnlink graph
   entirely" the core gives them, and it is declared here rather than left to the implementer. Today
   `web-check` honours neither, so this is new work, not an existing guarantee (mirroring 015's
-  FR-045).
+  FR-045). **And it goes no further than that:** FR-007 keeps `web_anchor` alive in such a file, so
+  `--write` still anchors its plain web links. That sits uneasily beside 006's FR-033 ("left untouched
+  by every operation"), and deliberately so — closing it is a change against 006's contract, not a
+  corner of this one, and it must not be smuggled in here.
 - **FR-015** `--ignore-block` is **out of FR-014 and unchanged**. It already suppresses the link
   *before any finding exists* (`find_web_links` skips the span), so it emits nothing at all today.
   Folding it into FR-014's by-kind rule would make links inside an ignored region start producing
@@ -447,7 +458,7 @@ layer that in fact decides most verdicts.
 
 **Axis 2 — classification, after the fetch. Status decides first:**
 
-3. Anything other than 200 — 401/403, the `-2` unreadable-repo sentinel, 404, a transport error —
+3. Anything other than 200 — 401/403, the `-2` unreadable-repo sentinel, the `-3` unsendable-URL sentinel, 404, a transport error —
    keeps **exactly** today's kind, for every link, exempt or not (FR-007). In particular an exempt
    link whose destination 404s is `web_not_found`, because a dead link is dead either way.
 4. On **200 only**: FR-011's exemption → `web_own_exempt`, which also covers the `web_mismatch` and
@@ -483,8 +494,9 @@ resolves through `git config`.
    anchors it (the existing path is untouched by ownership).
 5. **Owned, non-`.md` destination.** `owned/repo/blob/main/tool.py`, 200, no uuid → `web_unverifiable`,
    exit 0. And `owned/repo/blob/main/A.MD` **is** treated as Markdown (FR-005's case folding).
-6. **Owned, SHA-pinned.** `blob/<40-hex>/a.md` and `blob/<7-hex>/a.md`, 200 without uuid → both
-   `web_unverifiable`, exit 0. **And the negative that guards FR-006:** `blob/v1.2.3/a.md` — a ref
+6. **Owned, SHA-pinned.** `blob/<40-hex>/a.md`, `blob/<7-hex>/a.md` and the same 40-hex ref in
+   **UPPERCASE**, 200 without uuid → all three `web_unverifiable`, exit 0. The uppercase case is the
+   guard: a rule that did not fold case would make such a link an unfixable failure. **And the negative that guards FR-006:** `blob/v1.2.3/a.md` — a ref
    that looks like a tag — **does** produce `web_own_no_uuid`, exit 4. **And the carve-out is not a
    verdict:** the same SHA-pinned link whose destination *does* carry a uuid is still `web_anchor`,
    exit 3, and `--write` still anchors it.
@@ -495,7 +507,8 @@ resolves through `git config`.
 9. **`--own-from-origin` cannot resolve.** No `origin` → exit 1, message names the reason, no findings
    emitted — **and the same with `--own explicit --own-from-origin`**, where the owner set would not
    be empty (FR-003).
-10. **No extra fetch.** The mocked fetcher is called exactly as many times as without any owner set.
+10. **No extra fetch (FR-009).** The mocked fetcher is called exactly as many times as without any
+    owner set.
 11. **Opt-out.** A link followed by `<!-- darnlink-own-exempt -->` reports `web_own_exempt` and does
     not affect the exit code; the same link without the marker is `web_own_no_uuid`, exit 4. An exempt
     link whose destination **does** have a uuid is **not** reported `web_anchor` and is **not**
@@ -551,7 +564,7 @@ resolves through `git config`.
   Cut deliberately — see §Adoption. What this spec owes a gate is a CLI and an exit contract.
 - **`raw.githubusercontent.com` URLs.** 013's parser does not recognise that host at all (only
   `github.com/<owner>/<repo>/{blob,raw}/…`), so such a link never yields an owner and stays
-  `web_unverifiable`. The measurement above counts only what the parser recognises.
+  `web_unverifiable`. The measurement above counts only what the parser recognised at the time.
 - **Repository renames and transfers.** Ownership is the owner **written in the URL**, not the current
   owner after a transfer — and GitHub's redirect makes the divergence invisible, because the fetch
   still succeeds. A repo you transferred away keeps reading as yours (an unfixable finding); one
