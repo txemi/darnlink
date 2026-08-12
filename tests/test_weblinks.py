@@ -191,6 +191,24 @@ def test_online_network_error_is_unverifiable(tmp_path):
     assert findings[0].kind == "web_unverifiable"
 
 
+def test_an_unsendable_href_says_so_instead_of_unrecognised(tmp_path):
+    """The case that motivated the whole change was getting the wrong diagnosis: a scraped two-URL
+    href IS a recognisable GitHub URL, it just cannot be sent. Asserted on the detail, because the
+    earlier test checked only the kind and so never noticed."""
+    href = ("https://github.com/cli/cli/blob/abc1234/internal/inv... "
+            "https://github.com/cli/cli/blob/abc1234/internal/invoker.go")
+    _w(tmp_path / "doc.md", f"see [x]({href})\n")
+    findings, _ = check_web_links_online(tmp_path, None, _fetcher({}))
+    assert len(findings) == 1 and findings[0].kind == "web_unverifiable"
+    assert "not sendable" in findings[0].detail
+    # a genuinely unrecognised URL keeps the other message
+    _w(tmp_path / "other.md", "see [y](https://example.com/whatever)\n")
+    findings, _ = check_web_links_online(tmp_path, None, _fetcher({}))
+    assert {f.detail.split(";")[0] for f in findings} == {
+        "href is not sendable as a URL (whitespace or control characters — often two truncated URLs "
+        "run together in mirrored content)", "not a recognised GitHub blob/raw URL"}
+
+
 def test_online_unparseable_url_is_unverifiable(tmp_path):
     _w(tmp_path / "conta.md", f"see [x](https://example.com/whatever) <!-- web-uuid: {UUID} -->\n")
     findings, _ = check_web_links_online(tmp_path, None, _fetcher({}))
@@ -310,7 +328,7 @@ def test_actionable_unverifiable_are_listed_before_the_environmental_ones(tmp_pa
     _run_web_check_cli([str(tmp_path), "--online"], fetcher=_fetcher({}))
     shown = [l for l in capsys.readouterr().out.splitlines() if "[web_unverifiable]" in l]
     assert len(shown) == UNVERIFIABLE_PREVIEW
-    assert "not a recognised" in shown[0]
+    assert shown[0].split("]")[1].lstrip().startswith(str(tmp_path)) and "not sendable" in shown[0]
     assert all("no token" in l for l in shown[1:])
 
 
@@ -376,8 +394,8 @@ def test_online_malformed_href_is_stopped_by_the_parser_not_by_the_fetcher(tmp_p
         raise AssertionError("must not fetch a malformed href")
 
     findings, _ = check_web_links_online(tmp_path, None, exploding_fetcher)
-    assert [(f.kind, f.detail) for f in findings] == \
-        [("web_unverifiable", "not a recognised GitHub blob/raw URL")]
+    assert [f.kind for f in findings] == ["web_unverifiable"]
+    assert findings[0].detail.startswith("href is not sendable")
 
 
 def test_classify_reports_the_minus_3_sentinel(tmp_path):

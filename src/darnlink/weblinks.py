@@ -225,7 +225,7 @@ def _fetch_once(gu: GithubUrl, token: Optional[str]) -> Tuple[int, Optional[str]
             return (resp.status, resp.read().decode("utf-8", errors="replace"))
     except urllib.error.HTTPError as e:
         return (e.code, None)
-    except (http.client.InvalidURL, ValueError):
+    except (http.client.InvalidURL, UnicodeError):
         # A URL WE built and urllib refuses to send: a darnlink defect, not the network's fault. It
         # gets its own sentinel, deliberately OUTSIDE `_TRANSIENT_STATUSES`, for two reasons: retrying
         # a deterministic client-side rejection buys 1.5s of sleeps per malformed href and can never
@@ -234,11 +234,13 @@ def _fetch_once(gu: GithubUrl, token: Optional[str]) -> Tuple[int, Optional[str]
         # IncompleteRead, RemoteDisconnected, LineTooLong, the ImproperConnectionState family), so -1
         # is right for them.
         #
-        # `ValueError` rides here for the same reason and is NOT redundant: `InvalidURL` does not
+        # `UnicodeError` rides here for the same reason and is NOT redundant: `InvalidURL` does not
         # descend from it, and http.client encodes the request line as ASCII, so a non-ASCII path
         # raises UnicodeEncodeError (a ValueError) from a completely different line. Percent-encoding
         # in `contents_api_url` means neither should reach here any more — which is exactly why this
-        # is a belt, kept and unit-tested rather than trusted.
+        # is a belt, kept and unit-tested rather than trusted. It is `UnicodeError`, not the whole of
+        # `ValueError`: a future `ValueError` raised anywhere else inside the `try` would be labelled
+        # "malformed URL", which would be a lie.
         return (-3, None)
     except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException):
         # `http.client.HTTPException` is the belt to `parse_github_url`'s braces: it descends from
@@ -271,7 +273,7 @@ def _repo_accessible(owner: str, repo: str, token: Optional[str]) -> bool:
         if e.code in (403, 404):
             return False  # genuinely not readable with this token (private cross-org repo)
         return True       # 5xx/429/other: an outage/throttle, NOT inaccessible -> fall back to 404-is-broken
-    except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException, ValueError):
+    except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException, UnicodeError):
         return True   # network blip: don't downgrade a persistent 404 to unverifiable on a transient error
 
 
@@ -318,6 +320,14 @@ class WebFinding:
 def _classify(link: WebLink, gu: Optional[GithubUrl], status: int, dest_uuid: Optional[str],
               have_token: bool, f: Path) -> WebFinding:
     if gu is None:
+        # Two very different reasons land here, and the frequent one used to read as the other. A
+        # scraped two-URL href IS a recognisable GitHub URL — it is simply not one we can send, and
+        # telling the operator it was "not recognised" points them at the wrong thing entirely.
+        if _WRECKAGE_RE.search(link.href.strip()) or _DISALLOWED_URL_CHARS_RE.search(link.href.strip()):
+            return WebFinding("web_unverifiable", f, link.href,
+                              "href is not sendable as a URL (whitespace or control characters — "
+                              "often two truncated URLs run together in mirrored content); nothing "
+                              "was fetched, and no file was guessed at")
         return WebFinding("web_unverifiable", f, link.href, "not a recognised GitHub blob/raw URL")
     if status in (401, 403):
         why = "private repo and no token provided" if not have_token else "token rejected (403/401)"
