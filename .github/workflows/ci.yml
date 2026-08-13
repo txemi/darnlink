@@ -77,7 +77,19 @@ jobs:
           while IFS= read -r sha; do
             [ -z "$sha" ] && continue
             git log -1 --format=%B "$sha" > "$RUNNER_TEMP/one.txt"
-            darnlang prose "$RUNNER_TEMP/one.txt" --strict \
+            # NO --strict. It was added here as the compensating control for the hook's known gap,
+            # and then measured: layer 3 classifies "hooks: apply darnlang to darnlang" as Tagalog
+            # at 0.86 confidence, and "ci: uv venv --clear, setup-uv makes one" as Estonian -- both
+            # perfectly English. A subject is mostly identifiers and two repetitions of an invented
+            # word dominate it; no threshold on confidence, length or word count separates those
+            # from real findings, which score identically. On a PUBLIC repo that means blocking a
+            # contributor's honest English commit, which is how a gate gets routed around.
+            #
+            # So the gap stays OPEN and stated: a short subject with no accent and none of the
+            # stopwords passes every surface here. A compensating control that does not work is
+            # worse than a hole you can see. Layer 3 keeps the surfaces where it was measured to
+            # work -- issue bodies and PR descriptions, which are prose.
+            darnlang prose "$RUNNER_TEMP/one.txt" \
               --label "commit message $sha" || fail=1
           done < <(git log --format=%H \
             "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}")
