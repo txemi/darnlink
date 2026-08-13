@@ -16,10 +16,15 @@ All notable changes to darnlink are documented here. The format is based on
 > never *candidates*, so a tree full of broken embeds reported `dangling: 0`. Making them visible can
 > only push the count up.
 >
-> Measured on one corpus, same command, only the version changing: **0 → 2**. A repo at
-> `dangling: "repo"` with `dangling_max` unset closes its push wall the moment the pin moves.
+> **How likely is it to be you?** Measured across a ten-repository fleet, each with its own config,
+> same command, only the version changing. Seven of them run `dangling: "repo"` with no ceiling — the
+> setting that turns a finding into a closed push wall — and **two go red: 0 → 7 and 0 → 1. The other
+> five stay at 0 and notice nothing.** One more, already at `warn`, moves 1704 → 1716.
 >
-> **Before you upgrade:** run the axis at `dangling: "warn"` to see your real number, then fix the
+> So: a minority, but not a rarity, and the size is unrelated to how big the repo is — it tracks how
+> many converted documents it carries.
+>
+> **Before you upgrade:** run the axis at `dangling: "warn"` to see your own number, then fix the
 > links or raise the ceiling. This is a fix uncovering debt you already had, not a new failure — but
 > it arrives as a red build either way, and being told afterwards is not being told.
 
@@ -70,7 +75,6 @@ All notable changes to darnlink are documented here. The format is based on
   a script that does not start. CI now parses it. Parsing is not testing — it never runs the gate —
   but it is the one failure mode a bash-only fleet cannot see at all.
 
-
 - **A link with empty text — `![](photo.jpg)`, what pandoc emits for every image in a converted
   `.docx`/`.odt` — was invisible to every axis, not merely unreported.** `MD_LINK_RE` required at
   least one character of link text (`[^\]]+`), so such a link never matched: it was not a finding
@@ -97,6 +101,7 @@ All notable changes to darnlink are documented here. The format is based on
   so an anchored empty-text link cannot be plain to one function and robust to another — a coupling
   that matters to the **repair** axis and has its own tests, since reverting that half alone leaves
   every `dangling` test green. FR-051.
+
 ### Known issues — read this before moving a pin
 
 None is introduced by this release, but they belong where a consumer deciding on an upgrade will
