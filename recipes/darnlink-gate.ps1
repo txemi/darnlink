@@ -67,7 +67,10 @@ $web = -not ([string]::IsNullOrWhiteSpace([string]$rawWeb) -or
 # has no uuid stops being "someone else's problem" and becomes a gate failure - feature 016. A LIST of
 # names, never a sentinel: `own_web_from_origin` is its own key precisely so an owner literally called
 # `origin` stays expressible, the same reason the CLI has a flag instead of `--own auto`.
-$ownWeb = @(CfgOr 'own_web' @())
+# Read by PRESENCE, not by truthiness, for the same reason as `own_web_max` below: PowerShell unwraps
+# a one-element array, so `["" ]` is $false to CfgOr and would come back as "absent" — losing the very
+# entry the empty-entry warning exists to name.
+$ownWeb = @(if ($cfg -and $cfg.PSObject.Properties.Name -contains 'own_web') { $cfg.own_web } else { @() })
 $rawOWFO = if ($null -ne $env:DARNLINK_GATE_OWN_WEB_FROM_ORIGIN) { $env:DARNLINK_GATE_OWN_WEB_FROM_ORIGIN } else { CfgOr 'own_web_from_origin' '' }
 $ownWebFromOrigin = -not ([string]::IsNullOrWhiteSpace([string]$rawOWFO) -or
                           ([string]$rawOWFO).Trim().ToLower() -in @('0','false','no','off'))
@@ -92,6 +95,15 @@ if (-not [string]::IsNullOrWhiteSpace([string]$rawOWM)) {
 $rawCR = if ($null -ne $env:DARNLINK_GATE_CREATE_README) { $env:DARNLINK_GATE_CREATE_README } else { CfgOr 'create_readme' '' }
 $createReadme = -not ([string]::IsNullOrWhiteSpace([string]$rawCR) -or
                       ([string]$rawCR).Trim().ToLower() -in @('0','false','no','off'))
+
+# F4: `own_web` rides on `web` and on mode=max. Configured where the pass never runs it is a silent
+# no-op that READS like protection - exactly what the CLI refuses to do with `--own-max` and no owners.
+if (($ownWeb.Count -gt 0 -or $ownWebFromOrigin -or -not [string]::IsNullOrEmpty($ownWebMax)) -and
+    ((-not $web) -or $mode -ne 'max')) {
+  $webShown = if ($web) { '1' } else { 'off' }
+  Write-Warning "darnlink-gate: own_web* is configured but the web pass does not run here (web=$webShown,"
+  Write-Warning "  mode=$mode - it needs web on AND mode=max). The 016 rule is NOT being applied."
+}
 
 # --- guard: read-only. Never pass --write through. ---
 if ($args -contains '--write') {
@@ -164,9 +176,18 @@ if ($scope -ne 'staged') {
       foreach ($e in $excludes)     { if ($e) { $webArgs += @('--exclude', $e) } }
       foreach ($b in $ignoreBlocks) { if ($b) { $webArgs += @('--ignore-block', $b) } }
       $ownPassed = $false
-      foreach ($o in $ownWeb)       { if ($o) { $webArgs += @('--own', $o); $ownPassed = $true } }
+      $ownWebUsed = 0
+      foreach ($o in $ownWeb) { if ($o) { $webArgs += @('--own', $o); $ownPassed = $true; $ownWebUsed++ } }
       if ($ownWebFromOrigin)               { $webArgs += '--own-from-origin'; $ownPassed = $true }
       if (-not [string]::IsNullOrEmpty($ownWebMax)) { $webArgs += @('--own-max', $ownWebMax); $ownPassed = $true }
+      # Same two warnings as the bash recipe, same wording: an owner entry that is present but empty
+      # is a typo that makes the axis enforce less than the config claims, and it would go green.
+      if ($ownWeb.Count -gt 0 -and $ownWebUsed -eq 0) {
+        Write-Warning "darnlink-gate: own_web is set but every entry is empty - no ownership was applied."
+      } elseif ($ownWebUsed -lt $ownWeb.Count) {
+        Write-Warning "darnlink-gate: own_web has $($ownWeb.Count - $ownWebUsed) empty entry/entries out of"
+        Write-Warning "  $($ownWeb.Count) - they were ignored, so fewer owners are enforced than the config lists."
+      }
       & uvx --from $ref darnlink web-check . --online @webArgs
       $webRc = $LASTEXITCODE
       # EXIT 1 IS A USAGE ERROR, NOT A VERDICT ABOUT THE REPO, and feature 016 makes it reachable from

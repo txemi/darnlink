@@ -37,6 +37,22 @@ All notable changes to darnlink are documented here. The format is based on
   verdict-based test cannot tell — and did not. Dropping the `--own` loop entirely left every other
   recipe test green until the shim started recording argv.
 
+  Two further silent no-ops closed while wiring it, both found by mutation rather than by reading:
+
+  - **An empty owner entry passed without a word.** `[""]` flattens to exactly what an absent key
+    gives, so the list length is now read separately from its value — and a *partially* empty list is
+    named too, the case where the config lists three owners and the gate enforces one.
+  - **`web-check`'s exit 4 had no test protecting it from the `rc>3` fail-open heuristic.** Its codes
+    are all in 0..4 and none of them means *unreachable*, which is why the web verdict is marked
+    final; remove that immunity and a genuine 4 — exactly how feature 016 reports an owned
+    destination with no uuid — turns into **0** under the default, with the suite green.
+
+### Fixed
+- **Nothing had ever parsed `recipes/darnlink-gate.ps1`.** The recipe tests skip on Windows and no CI
+  job ran `pwsh`, so a syntax error in the shipped PowerShell recipe would have reached consumers as
+  a script that does not start. CI now parses it. Parsing is not testing — it never runs the gate —
+  but it is the one failure mode a bash-only fleet cannot see at all.
+
 ## [0.21.0] — 2026-08-13
 
 ### Added

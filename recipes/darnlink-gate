@@ -124,6 +124,21 @@ print("\n".join(v) if isinstance(v, list) else (v if v is not None else default)
 PY
 }
 
+# How many entries a LIST key has — which `read_cfg` cannot tell you: it joins with newlines, so an
+# absent key, `[]` and `[""]` all arrive as the empty string. `[""]` is the likeliest typo of the
+# three (a template line left half-filled) and the only one that must be named out loud, so ask for
+# the length separately instead of trying to infer it from the flattened value.
+read_cfg_len() { python3 - "$cfg" "$1" <<'PY' 2>/dev/null || printf '0'
+import json, sys
+try:
+    d = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    d = {}
+v = d.get(sys.argv[2])
+print(len(v) if isinstance(v, list) else 0)
+PY
+}
+
 REF="${DARNLINK_REF:-$(read_cfg ref 'git+https://github.com/txemi/darnlink@v0.7.0')}"
 MODE="${DARNLINK_GATE_MODE:-$(read_cfg mode check)}"
 SCOPE="${DARNLINK_GATE_SCOPE:-$(read_cfg scope repo)}"
@@ -149,6 +164,7 @@ case "${WEB,,}" in ""|0|false|no|off) WEB="" ;; *) WEB=1 ;; esac
 # LIST of names, never a sentinel: `own_web_from_origin` is its own key precisely so an owner literally
 # called `origin` stays expressible, the same reason the CLI has a flag instead of `--own auto`.
 mapfile -t OWN_WEB < <(read_cfg own_web "")
+OWN_WEB_N="$(read_cfg_len own_web)"; [[ "$OWN_WEB_N" =~ ^[0-9]+$ ]] || OWN_WEB_N=0
 OWN_WEB_FROM_ORIGIN="${DARNLINK_GATE_OWN_WEB_FROM_ORIGIN:-$(read_cfg own_web_from_origin "")}"
 case "${OWN_WEB_FROM_ORIGIN,,}" in ""|0|false|no|off) OWN_WEB_FROM_ORIGIN="" ;; *) OWN_WEB_FROM_ORIGIN=1 ;; esac
 # A budget, so the rung is adoptable before a repo reaches zero. Non-numeric counts as ABSENT, never as
@@ -332,7 +348,8 @@ PY
 
 # F4: `own_web` rides on `web` and on mode=max. Configured where the pass never runs it is a silent
 # no-op that READS like protection — exactly what the CLI refuses to do with `--own-max` and no owners.
-if [ -n "${OWN_WEB[*]}$OWN_WEB_FROM_ORIGIN$OWN_WEB_MAX" ] && { [ -z "$WEB" ] || [ "$MODE" != "max" ]; }; then
+if { [ "$OWN_WEB_N" -gt 0 ] || [ -n "$OWN_WEB_FROM_ORIGIN$OWN_WEB_MAX" ]; } \
+   && { [ -z "$WEB" ] || [ "$MODE" != "max" ]; }; then
   echo "darnlink-gate: own_web* is configured but the web pass does not run here (web=${WEB:-off}," >&2
   echo "  mode=$MODE — it needs web on AND mode=max). The 016 rule is NOT being applied." >&2
 fi
@@ -399,14 +416,21 @@ if [ "$SCOPE" != "staged" ]; then
       WEB_ARGS=()
       for e in "${EXCLUDES[@]}";      do [ -n "$e" ] && WEB_ARGS+=(--exclude "$e"); done
       for b in "${IGNORE_BLOCKS[@]}"; do [ -n "$b" ] && WEB_ARGS+=(--ignore-block "$b"); done
-      OWN_PASSED=""
-      for o in "${OWN_WEB[@]}";       do [ -n "$o" ] && { WEB_ARGS+=(--own "$o"); OWN_PASSED=1; }; done
+      OWN_PASSED=""; OWN_WEB_USED=0
+      for o in "${OWN_WEB[@]}"; do
+        [ -n "$o" ] && { WEB_ARGS+=(--own "$o"); OWN_PASSED=1; OWN_WEB_USED=$((OWN_WEB_USED + 1)); }
+      done
       [ -n "$OWN_WEB_FROM_ORIGIN" ] && { WEB_ARGS+=(--own-from-origin); OWN_PASSED=1; }
       [ -n "$OWN_WEB_MAX" ]         && { WEB_ARGS+=(--own-max "$OWN_WEB_MAX"); OWN_PASSED=1; }
-      # An owner list that is present but entirely empty is a typo, and a silent one: the axis would
-      # run with no ownership at all and go green looking like it had checked.
-      if [ "${#OWN_WEB[@]}" -gt 0 ] && [ -n "${OWN_WEB[0]}${OWN_WEB[*]}" ] && [ -z "$OWN_PASSED" ]; then
+      # An owner entry that is present but empty is a typo, and a silent one: the axis would run with
+      # less ownership than the config claims and go green looking like it had checked all of it. It
+      # is counted, not inferred from the joined value — `[""]` flattens to exactly what an absent key
+      # gives, and `[""]` is the shape a half-filled template line actually takes.
+      if [ "$OWN_WEB_N" -gt 0 ] && [ "$OWN_WEB_USED" -eq 0 ]; then
         echo "darnlink-gate: own_web is set but every entry is empty — no ownership was applied." >&2
+      elif [ "$OWN_WEB_USED" -lt "$OWN_WEB_N" ]; then
+        echo "darnlink-gate: own_web has $((OWN_WEB_N - OWN_WEB_USED)) empty entry/entries out of" >&2
+        echo "  $OWN_WEB_N — they were ignored, so fewer owners are enforced than the config lists." >&2
       fi
       run web-check . --online "${WEB_ARGS[@]}"; rc=$?
       set -e

@@ -704,3 +704,100 @@ def test_own_web_configured_where_the_pass_never_runs_says_so(sandbox):
     r = run({"mode": "check", "web": True, "own_web": ["owned"]})
 
     assert "NOT being applied" in (r.stdout + r.stderr)
+
+
+def _uvx_forcing_web_check_to(tmp_path, code: int) -> Path:
+    """A uvx shim that makes ONLY the web pass exit with `code` and lets every other subcommand
+    through — the only way to exercise the recipe's reading of a code the real tool will not produce
+    on demand."""
+    d = tmp_path / f"uvx{code}"
+    d.mkdir()
+    (d / "uvx").write_text(
+        f'#!/usr/bin/env bash\ncase " $* " in *" web-check "*) exit {code};; esac\n'
+        'args=("$@"); [ "${args[0]:-}" = "--from" ] && args=("${args[@]:2}")\n'
+        '[ "${args[0]:-}" = "darnlink" ] && args=("${args[@]:1}")\n'
+        'exec "${DARNLINK_BIN:-darnlink}" "${args[@]}"\n')
+    (d / "uvx").chmod(0o755)
+    return d
+
+
+@pytest.mark.parametrize("cfg", [
+    {"mode": "max", "web": True, "own_web": ["me"]},
+    {"mode": "max", "web": True, "own_web_from_origin": True},
+    {"mode": "max", "web": True, "own_web_max": 5},
+])
+def test_each_own_flag_on_its_own_arms_the_config_reading_of_exit_1(sandbox, tmp_path, cfg):
+    """Only `own_web_max` was exercised, so a mutation that stopped `--own` or `--own-from-origin`
+    from arming the swallow survived: those two repos got the pre-016 behaviour and nothing said so."""
+    repo, run = sandbox
+    _owned_web_link_without_uuid(repo)
+
+    r = run(cfg, uvx_dir=_uvx_forcing_web_check_to(tmp_path, 1))
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "did NOT run" in (r.stdout + r.stderr)
+
+
+def test_a_genuine_web_4_is_not_re_read_as_a_network_hiccup(sandbox, tmp_path):
+    """web-check's codes are all in 0..4 and none of them means "unreachable", so its 4 — which is
+    exactly how feature 016 reports an owned destination with no uuid — must survive the rc>3
+    fail-open heuristic. Drop the RC_IS_FINAL immunity and this repo goes GREEN under the default."""
+    repo, run = sandbox
+    _owned_web_link_without_uuid(repo)
+
+    r = run({"mode": "max", "web": True, "own_web": ["owned"]},
+            uvx_dir=_uvx_forcing_web_check_to(tmp_path, 4))
+
+    assert r.returncode == 4, r.stdout + r.stderr
+
+
+def test_after_a_fail_closed_config_error_the_later_axes_still_run(sandbox):
+    """The 4 must be CARRIED, not bail()'d: bail exits the script and the create-readme / dangling
+    axes never speak. Asserting only the exit code cannot tell the two apart — both give 4."""
+    repo, run = sandbox
+    (repo / "docs").mkdir()
+    (repo / "docs" / "page.md").write_text("# page\n")
+    (repo / "A.md").write_text("# A\nthe [docs](docs/)\ngone [g](nope/missing.md)\n")
+
+    r = run({"mode": "max", "web": True, "own_web_max": 5, "fail_closed": True,
+             "create_readme": True, "create_readme_excludes": ["mirrors/**"],
+             "dangling": "repo"})
+    out = r.stdout + r.stderr
+
+    assert r.returncode == 4, out
+    assert "create-readme axis" in out, out
+    assert "dangling axis" in out, out
+
+
+def test_a_single_empty_owner_is_named_not_swallowed(sandbox):
+    """`["" ]` is the likeliest shape of the typo (a half-filled template line) and the one the
+    joined value cannot distinguish from an absent key — it went through silently, axis running with
+    no ownership at all and going green as if it had checked."""
+    repo, run = sandbox
+    _owned_web_link_without_uuid(repo)
+
+    r = run({"mode": "max", "web": True, "own_web": [""]})
+
+    assert "every entry is empty" in (r.stdout + r.stderr), r.stdout + r.stderr
+
+
+def test_some_empty_owners_among_good_ones_are_named_too(sandbox):
+    """The all-empty case was covered and this one was not, so the config could list three owners,
+    enforce one, and say nothing — fewer owners than the file claims, with a clean exit."""
+    repo, run = sandbox
+    _owned_web_link_without_uuid(repo)
+
+    r = run({"mode": "max", "web": True, "own_web": ["owned", "", ""]})
+
+    assert "2 empty entry/entries out of" in (r.stdout + r.stderr), r.stdout + r.stderr
+
+
+def test_own_web_of_only_empty_entries_still_trips_the_pass_never_runs_warning(sandbox):
+    """F4 read presence off the JOINED value, so an owner list of empty strings looked absent to it
+    too: configured under mode=check it said nothing at all."""
+    repo, run = sandbox
+    _owned_web_link_without_uuid(repo)
+
+    r = run({"mode": "check", "web": True, "own_web": [""]})
+
+    assert "NOT being applied" in (r.stdout + r.stderr), r.stdout + r.stderr

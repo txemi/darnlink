@@ -111,3 +111,22 @@ jobs:
         run: uvx --from . darnlink .
       - name: The exact README one-liner, end-to-end over git (pinned to this commit)
         run: uvx --from git+https://github.com/txemi/darnlink.git@${{ github.sha }} darnlink .
+
+  # The PowerShell recipe is SHIPPED and nothing has ever parsed it: the recipe tests skip on Windows
+  # (`pytestmark`), no job runs `pwsh`, and this PR adds new multi-line constructs to it. Parsing is
+  # not testing — it never runs the gate — but it is the cheapest wall against the one failure mode a
+  # bash-only fleet cannot see: a consumer on Windows getting a script that does not even start.
+  # Its own job on ubuntu (pwsh is preinstalled there), not a step in the 8-cell matrix: the file is
+  # OS-independent, so parsing it once is enough.
+  ps1-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse recipes/darnlink-gate.ps1
+        shell: pwsh
+        run: |
+          $errs = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path recipes/darnlink-gate.ps1).Path, [ref]$null, [ref]$errs)
+          if ($errs) { $errs | ForEach-Object { Write-Host "::error::$($_.ToString())" }; exit 1 }
+          Write-Host "recipes/darnlink-gate.ps1 parses clean"
