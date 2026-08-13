@@ -280,11 +280,11 @@ def test_write_leaves_any_pandoc_attribute_suffix_untouched(tmp_path):
 def test_repair_write_leaves_a_pandoc_attribute_suffix_untouched(tmp_path):
     """`ROBUST_LINK_RE` widened too, and it has its OWN write path: `repair`.
 
-    Two regexes were widened and two write paths exist, but only `robustify`'s was guarded. Seeding
-    `\\)(?:\\{[^}]*\\})?` into `ROBUST_LINK_RE` passes the whole suite while `repair --write` moves
-    the link and **deletes the attribute block on the way** — the same corruption as the robustify
-    case, reached through the other door. Round 1 found this half untested for *detection*; its
-    write side stayed untested two rounds longer.
+    Two regexes were widened and two write paths exist, but only `robustify`'s was guarded. This
+    pins that `repair` rewrites the href and leaves everything after the anchor byte-for-byte —
+    a splice whose end offset is one character off deletes the `{`, and the block stops being a
+    block. The shape where the attributes sit *before* the anchor is the sibling test below; the
+    two seeds are different and neither test catches the other's.
     """
     from darnlink.frontmatter_index import build_index
     from darnlink.repair import plan_repairs, apply_repairs
@@ -298,9 +298,11 @@ def test_repair_write_leaves_a_pandoc_attribute_suffix_untouched(tmp_path):
 
     apply_repairs(plan_repairs(tmp_path, build_index(tmp_path)))
 
+    # Assert the whole line. `'width="1.1in"' in a` is satisfied by `…-->width="1.1in"}` — the
+    # brace eaten and the block silently demoted to prose — which is exactly the splice-off-by-one
+    # this test exists to catch. Its sibling asserts `== original` for the same reason.
     a = (tmp_path / "A.md").read_text()
-    assert "new/B.md" in a, f"repair did not move the link: {a!r}"
-    assert 'width="1.1in"' in a, f"repair ate the attribute block: {a!r}"
+    assert a == f'![](new/B.md) <!-- uuid: {EXISTING} -->{{width="1.1in"}}\n', f"bad rewrite: {a!r}"
 
 
 def test_an_attribute_block_before_the_anchor_is_not_a_robust_link(tmp_path):
@@ -327,3 +329,26 @@ def test_an_attribute_block_before_the_anchor_is_not_a_robust_link(tmp_path):
     apply_repairs(plan_repairs(tmp_path, build_index(tmp_path)))
 
     assert (tmp_path / "A.md").read_text() == original
+
+
+def test_absorbing_a_stray_anchor_does_not_eat_an_attribute_block(tmp_path):
+    """The one place `robustify` DELETES text, guarded where the two features meet.
+
+    When a link is followed by a stray uuid comment, robustify absorbs it: it removes the stray and
+    re-emits the link anchored. Removing means walking back over the whitespace before the comment
+    — and a boundary that also walks over `}` eats the closing brace of an attribute block, leaving
+    `![](B.md) <!-- uuid: X -->{.cls` : the block silently becomes prose.
+
+    Attribute-block tests exist and detached-anchor tests exist; **no fixture combined them**, so
+    the deletion boundary had no guard at all. Seeded (a `_hspace_start` that steps over `}`) it
+    passes the whole suite. This is the last unguarded write path in the module.
+    """
+    _w(tmp_path / "B.md", f"---\nuuid: {EXISTING}\n---\n# B\n")
+    original = f"![](B.md){{.cls}} <!-- uuid: {EXISTING} -->\n"
+    _w(tmp_path / "A.md", original)
+
+    apply_robustify(plan_robustify(tmp_path))
+
+    a = (tmp_path / "A.md").read_text()
+    assert "{.cls}" in a, f"the attribute block lost a brace: {a!r}"
+    assert a.count("<!-- uuid:") == 1, f"the stray was duplicated rather than absorbed: {a!r}"

@@ -144,6 +144,16 @@ behaviour match the claim. Two notes on scope, both learned by being wrong about
   section argued that surrounding whitespace is not part of the destination. A rule whose stated
   reason covers a case its code does not is worse than a narrower rule honestly scoped: the gap
   reads as a decision nobody took.
+- **Scoped to `dangling`, deliberately, and the scope is written into FR-052 rather than left
+  implied.** The same reasoning applies to three more sites — `_anchor_target`, whose omission means
+  `check` reports "nothing to anchor" over `[x]( B.md )`; `_dir_link_missing_readme`; and `names_md`
+  on the `repair` axis, where the consequence is worst: a trailing space makes `names_md` false, the
+  link is classified as a *directory* link, and it becomes a `CONFLICT` diagnosed as *"path and uuid
+  disagree"* — which is untrue, and unlike a `repair`, `--write` never heals it, so the gate stays
+  red. **0 occurrences across thirteen repositories** (0 of 10.116 robust links), and fixing them
+  changes behaviour on three axes this feature does not own. Filed rather than folded in, for the
+  reason #65 was: a regression fix that also changes behaviour stops being reviewable. The sentence
+  above is narrowed so the gap is a decision on the record, not a silence.
 
 `ROBUST_LINK_RE` widens with `MD_LINK_RE` deliberately — leaving it narrow would make an anchored
 `[](path) <!-- uuid: … -->` plain to one function and robust to another, and the tool's uuid
@@ -227,8 +237,9 @@ be fixed, or the ceiling raised, *before* the pin moves — not after.
   the same terms as one with text. The link text is what a reader sees; it has no bearing on whether
   the destination is there, and requiring at least one character of it made such links invisible to
   every axis, not merely unreported. See below.
-- **FR-052**: The whitespace **surrounding** a link destination MUST NOT be treated as part of it —
-  CommonMark does not. So `[x]( B.md )` MUST be judged as `B.md`, and a destination that is *only*
+- **FR-052**: **Within the `dangling` axis**, the whitespace surrounding a link destination MUST NOT
+  be treated as part of it — CommonMark does not. So `[x]( B.md )` MUST be judged as `B.md`, and a
+  destination that is *only*
   whitespace MUST NOT be reported at all: it names nothing, and resolving it yields the linking
   file's own directory under a blank name, a finding that names nothing a reader can act on. The
   rule is applied to the **decoded path with the fragment removed**, on the same terms as FR-046 and

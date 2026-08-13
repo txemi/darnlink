@@ -52,10 +52,7 @@ All notable changes to darnlink are documented here. The format is based on
   non-empty text these shapes were reported before this release. Measured across thirteen local
   repositories: **0** whitespace-only destinations, and **6** with surrounding whitespace, none of
   which changes a verdict — only the path the finding names. No consumer's count moves.
-- **Known, not fixed here: `--write` detaches a pandoc attribute block** — the anchor lands between
-  the link and its `{…}`, so the block stops applying. Pre-existing (a non-empty text has always
-  done it) and 0 occurrences today, but this release routes many more links towards it. Tracked in
-  #65; the tests here pin that the block is never *deleted*, which is the worse neighbour.
+
 - **A tokenless `403` is the anonymous rate limit, not a private repo — and the web axis now says so
   instead of printing a quiet `clean`.** `web-check` reported *"cannot read destination: private repo
   and no token provided"* for any `403` without a token. That was wrong every time: GitHub answers
@@ -76,6 +73,20 @@ All notable changes to darnlink are documented here. The format is based on
   tokenless"* and *"never a false green"* are corrected — **give the axis a token even for public
   destinations**: private ones need it for permission, public ones for quota.
 
+### Known issues — read this before moving a pin
+
+Neither is introduced by this release and both are latent (**0 occurrences across thirteen
+repositories**), but this release routes more links towards the first, so they belong where a
+consumer deciding on an upgrade will see them — not buried under *Fixed*.
+
+- **`--write` detaches a pandoc attribute block** (#65). The anchor lands between the link and its
+  `{…}`, so the block stops applying. Pre-existing: a non-empty link text has always done it. The
+  tests added here pin that the block is never *deleted*, which is the worse neighbour of the two.
+- **Whitespace around a destination is stripped by `dangling` but not by `repair`, `robustify` or
+  `--create-readme`** (#67), so one link can get two verdicts. The `repair` case is the sharp one:
+  a trailing space makes `names_md` false, the link is classified as a directory link and becomes a
+  `CONFLICT` diagnosed as *"path and uuid disagree"* — which is untrue, and `--write` never heals
+  it, so the gate stays red. FR-052 is deliberately scoped to the `dangling` axis for now.
 ### Added
 - **The English-only gate now covers the surfaces that are actually published**: commit messages,
   PR titles/descriptions, issues, and `.md` documentation. Until now it judged one thing —
