@@ -104,7 +104,7 @@ whole-repo where it's the wall.
 
 ```json
 {
-  "ref": "git+https://github.com/txemi/darnlink@v0.7.0",
+  "ref": "git+https://github.com/txemi/darnlink@<latest-tag>",   // see /releases; a pin, never a branch
   "excludes": ["secrets", "external_repos"],
   "ignore_blocks": ["txmd-autogrid"],
   "mode": "check",
@@ -119,7 +119,7 @@ the mirror. Two keys make that expressible:
 
 ```json
 {
-  "ref": "git+https://github.com/txemi/darnlink@v0.18.0",
+  "ref": "git+https://github.com/txemi/darnlink@<latest-tag>",   // create_readme needs >= v0.18.0
   "mode": "check",
   "create_readme": true,
   "create_readme_excludes": ["mirrors"],
@@ -174,12 +174,41 @@ not snippets to assemble (assembling the CI one wrong yields a wall that fails *
 any CI can fetch it **without a token** (no private checkout, no cred):
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/txemi/darnlink/v0.7.0/recipes/darnlink-gate -o darnlink-gate
+VER=$(jq -re '.ref | split("@") | last' darnlink-gate.json)   # THE pin, read from the json
+curl -fsSL "https://raw.githubusercontent.com/txemi/darnlink/$VER/recipes/darnlink-gate" -o darnlink-gate
 chmod +x darnlink-gate
 ```
 
-Pin the tag (`v0.7.0`) so the gate is deterministic. Windows agents fetch `darnlink-gate.ps1` the same
+The tag comes from your `darnlink-gate.json`, so the gate is deterministic and there is only ever
+one place to bump. **A moving ref (`main`, or a major alias like `v1`) is not a pin** — both resolve
+and both fetch different code over time. Do not grep the json for a version either: a regex happily
+matches one inside some OTHER key and fetches a real-but-wrong tag with no error at all. Windows agents fetch `darnlink-gate.ps1` the same
 way. Locally, drop it on your `PATH` (e.g. `~/.local/bin`).
+
+## If your CI reuses its workspace, clean up after every other stage
+
+The gate scans the tree **recursively** from `git rev-parse --show-toplevel`. On hosted runners that
+never matters — the workspace is fresh each run. On a **self-hosted agent it persists between
+builds**, so anything another stage leaves behind (a report directory, a clone of some other repo)
+is inside your tree by the time the gate looks, and the gate fails on files that are not yours.
+
+Two habits fix it, and both belong to the stages that create the mess, not to this one:
+
+- **clone foreign repos OUTSIDE the workspace** — a sibling directory, not a subdirectory;
+- **remove generated directories after archiving them** (in Jenkins, `post { always { … } }`).
+
+⚠️ **Do not reach for `excludes` here** — and note this is the one case where it is wrong, which is
+why the distinction matters:
+
+| What it is | Lives in | Right tool |
+|---|---|---|
+| **Vendored** — a foreign repo or generated tree you **committed** on purpose | in git, every clone | `excludes` ✅ (that is what the examples above do) |
+| **CI litter** — what another stage wrote into the workspace this build | nowhere, only on that agent | **clean it up** ❌ not `excludes` |
+
+Excluding litter silences *this* gate and leaves every other tree-scanning check in your pipeline
+broken: you have not removed the foreign files, only stopped one tool from mentioning them. And the
+exclude then sits in the config of every clone, describing a mess that only ever existed on one
+agent.
 
 ## Notes
 
