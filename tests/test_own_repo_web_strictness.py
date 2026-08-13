@@ -145,6 +145,24 @@ def test_a_ref_that_merely_ends_in_hex_is_not_a_commit(tmp_path, ref):
     assert kinds == ["web_own_no_uuid"]
 
 
+def test_a_ref_longer_than_a_sha_is_not_one(tmp_path):
+    """`{7,40}` is a range with a ceiling for a reason: 41 hex characters is not a commit id, and
+    treating it as immutable would suppress a finding that is perfectly fixable."""
+    url = "https://github.com/owned/repo/blob/" + "a" * 41 + "/a.md"
+    _w(tmp_path / "src.md", f"see [x]({url})\n")
+    kinds, _, _ = _kinds(tmp_path, _fetcher({url: _no_uuid()}))
+    assert kinds == ["web_own_no_uuid"]
+
+
+def test_a_run_with_only_exempt_links_still_counts_them(tmp_path, capsys):
+    """FR-016 asks for both kinds in the summary line. Keying the extra counters on the FAILING kind
+    alone would drop them from a run that has only exemptions — the audit trail the marker promises."""
+    _w(tmp_path / "src.md", f"see [x]({OWNED}) <!-- darnlink-own-exempt -->\n")
+    _run_web_check_cli([str(tmp_path), "--online", "--own", "owned"],
+                       fetcher=_fetcher({OWNED: _no_uuid()}))
+    assert "own-exempt 1" in capsys.readouterr().out
+
+
 def test_the_carve_out_is_not_a_verdict(tmp_path):
     """FR-005/FR-006 say when FR-004 must NOT fire; they do not turn a link into anything. Read as a
     terminal step they would silently change behaviour FR-007 freezes: this link is `web_anchor`."""
@@ -152,6 +170,28 @@ def test_the_carve_out_is_not_a_verdict(tmp_path):
     _w(tmp_path / "src.md", f"see [x]({url})\n")
     kinds, _, edits = _kinds(tmp_path, _fetcher({url: _with_uuid()}))
     assert kinds == ["web_anchor"] and edits
+
+
+def test_a_bom_in_the_destination_does_not_hide_its_uuid(tmp_path):
+    """A Windows-authored destination arrives with a BOM. Read as plain utf-8 it sits in front of the
+    `---`, the frontmatter reader sees none, and 016 then reports a file that HAS a uuid as lacking
+    one — exit 4 over an instruction nobody can follow. `tests/test_bom.py` already declares this
+    invariant for the LOCAL path; the web path was left out of it."""
+    _w(tmp_path / "src.md", f"see [x]({OWNED})\n")
+    bom = (200, "\ufeff" + f"---\nuuid: {UUID}\n---\n# dest\n")
+    kinds, _, edits = _kinds(tmp_path, _fetcher({OWNED: bom}))
+    assert kinds == ["web_anchor"] and edits          # NOT web_own_no_uuid
+    assert _run_web_check_cli([str(tmp_path), "--online", "--own", "owned"],
+                              fetcher=_fetcher({OWNED: bom})) == 3
+
+
+def test_a_bom_does_not_invent_a_uuid_either(tmp_path):
+    """The other direction, so the fix cannot be 'strip anything that looks like a BOM': a destination
+    with a BOM and NO uuid is still the finding it always was."""
+    _w(tmp_path / "src.md", f"see [x]({OWNED})\n")
+    bom = (200, "\ufeff# a destination with no frontmatter\n")
+    kinds, _, _ = _kinds(tmp_path, _fetcher({OWNED: bom}))
+    assert kinds == ["web_own_no_uuid"]
 
 
 # 7
@@ -299,15 +339,19 @@ def test_status_decides_before_the_exemption(tmp_path):
     assert findings[0].kind == "web_not_found"
 
 
-def test_origin_is_read_from_the_scanned_repo_even_under_a_git_hook(tmp_path, monkeypatch):
+@pytest.mark.parametrize("leaked", [
+    ("GIT_DIR", "GIT_WORK_TREE"),
+    ("GIT_COMMON_DIR",),            # redirects on its own; dropping it from the strip list is silent
+])
+def test_origin_is_read_from_the_scanned_repo_even_under_a_git_hook(tmp_path, monkeypatch, leaked):
     """A git hook exports GIT_DIR/GIT_WORK_TREE, and inherited they OVERRIDE `-C`. The gate runs
     darnlink FROM a hook, so this is the normal case: without stripping them the answer is about the
     hook's repository, silently and with a plausible owner."""
     scanned = _git_repo(tmp_path / "scanned", "git@github.com:owned/src.git")
     other = _git_repo(tmp_path / "other", "git@github.com:hijacked/x.git")
     _w(scanned / "src.md", f"see [x]({OWNED})\n")
-    monkeypatch.setenv("GIT_DIR", str(other / ".git"))
-    monkeypatch.setenv("GIT_WORK_TREE", str(other))
+    for var in leaked:
+        monkeypatch.setenv(var, str(other / ".git") if var != "GIT_WORK_TREE" else str(other))
     # owner comes from `scanned` (owned/...), not from `other` (hijacked/...), so the link fails
     assert _run_web_check_cli([str(scanned), "--online", "--own-from-origin"],
                               fetcher=_fetcher({OWNED: _no_uuid()})) == 4
@@ -365,7 +409,9 @@ def test_the_budget_nudges_you_to_lower_it(tmp_path, capsys):
     _w(tmp_path / "src.md", f"see [x]({OWNED})\n")
     _run_web_check_cli([str(tmp_path), "--online", "--own", "owned", "--own-max", "3"],
                        fetcher=_fetcher({OWNED: _no_uuid()}))
-    assert "lower --own-max to 1" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "lower --own-max to 1" in out
+    assert "under budget)" in out      # not "at the budget": 1 finding, budget of 3
 
 
 def test_a_budgeted_finding_does_not_shield_a_real_break(tmp_path, monkeypatch):
@@ -515,6 +561,8 @@ def test_the_two_exit_zero_qualifiers_compose(tmp_path, capsys):
                        fetcher=_fetcher({OWNED: _no_uuid()}))
     out = capsys.readouterr().out
     assert "1 owned finding(s), at the budget" in out and "NOT verified" in out
+    # order matters: the budget qualifier first, then what could not be read
+    assert out.index("at the budget") < out.index("NOT verified")
 
 
 def test_a_padded_owner_still_owns(tmp_path):

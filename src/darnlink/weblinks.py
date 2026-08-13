@@ -181,7 +181,14 @@ def _fetch_once(gu: GithubUrl, token: Optional[str]) -> Tuple[int, Optional[str]
         req.add_header("Authorization", f"Bearer {token}")
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
-            return (resp.status, resp.read().decode("utf-8", errors="replace"))
+            # `utf-8-sig`, like every LOCAL read in this package (frontmatter_edit, frontmatter_index):
+            # a Windows-authored destination arrives with a BOM, plain utf-8 leaves it in front of the
+            # `---`, and the frontmatter reader then sees no frontmatter at all. Before feature 016
+            # that was merely an unhelpful `web_unverifiable`; with it, a destination that HAS a uuid
+            # gets reported as lacking one — exit 4, over an instruction nobody can follow, because
+            # adding a second `uuid:` fixes nothing. This repo already has a regression suite for the
+            # same defect on the local path (tests/test_bom.py); the web path was simply left out.
+            return (resp.status, resp.read().decode("utf-8-sig", errors="replace"))
     except urllib.error.HTTPError as e:
         return (e.code, None)
     except (http.client.InvalidURL, ValueError):
@@ -419,7 +426,11 @@ def check_web_links_online(
             if link.href not in cache:
                 cache[link.href] = fetcher(gu, token)
             status, text = cache[link.href]
-            dest_fm_status, dest_uuid = (read_frontmatter_uuid(text)
+            # `lstrip("\ufeff")` as well as the `utf-8-sig` decode in `_fetch_once`, and not instead of
+            # it: the decode fixes the wire, this fixes the TEXT, whatever produced it. A BOM in front
+            # of the `---` hides the frontmatter, and 016 turns that from an unhelpful
+            # `web_unverifiable` into an exit 4 telling you to add a uuid the file already has.
+            dest_fm_status, dest_uuid = (read_frontmatter_uuid(text.lstrip("\ufeff"))
                                          if (status == 200 and text is not None) else (None, None))
             fnd = _classify(link, gu, status, dest_uuid, have_token, f, owners, dest_fm_status, filtered)
             findings.append(fnd)
