@@ -12,14 +12,63 @@ from typing import List, Sequence, Tuple
 
 # A robust link: a Markdown link immediately followed (any whitespace) by a uuid HTML comment.
 ROBUST_LINK_RE = re.compile(
-    r"\[(?P<text>[^\]]*)\]\((?P<href>[^)]+)\)\s*<!--\s*uuid:\s*(?P<uuid>[0-9a-fA-F-]{36})\s*-->"
+    r"\[(?P<text>[^\]]*)\]\((?P<href>(?:[^()\s]|\((?:[^()\s]|\([^()\s]*\))*\))+|[^)]+)\)\s*<!--\s*uuid:\s*(?P<uuid>[0-9a-fA-F-]{36})\s*-->"
 )
 # Any inline Markdown link. `text` is `*`, not `+`: `[](dest)` is a link with empty text, and the
 # empty alt of `![](dest)` is what pandoc emits for every image in a converted .docx/.odt. Requiring
 # one character there made the whole link invisible -- not reported as bad, *absent* -- so a tree
 # full of broken image embeds passed the dangling axis as clean (FR-051). `href` stays `+`: a link
 # with no destination at all has nothing to check.
-MD_LINK_RE = re.compile(r"\[(?P<text>[^\]]*)\]\((?P<href>[^)]+)\)")
+#: The destination may contain BALANCED parentheses — CommonMark says so, and filenames from
+#: document systems are full of them (`Log%20Analysis%20(February).docx`). `[^)]+` stopped at
+#: the first `)`, truncating the path and reporting it dead while the file was on disk. Measured
+#: on the fleet: **266** links of that shape. The report concealed the cut, because its own
+#: `(resolves to …)` wrapper supplied the missing parenthesis and the path read as complete.
+#:
+#: ⚠️ **Bounded at two levels of nesting, and that bound is a known limit, not a property.**
+#: CommonMark allows arbitrary depth; a regex cannot. Adjudicated against the reference
+#: implementation: `[^)]+` agrees with `cmark` on 3 of 9 probe shapes, one level on 7, two on 8.
+#: The ninth is triple nesting, which no bounded pattern reaches — it needs the scanner tracked
+#: in #74, and it occurs 0 times in the fleet.
+#:
+#: ⚠️ **Two guards, and both exist because the first version of this change produced a FALSE
+#: GREEN — the outcome its own comment declared unacceptable.**
+#:
+#: * `[^()\s]`, not `[^()]`. A destination outside `<…>` cannot contain whitespace; CommonMark
+#:   says so, and without that exclusion the balanced branch pairs an *unmatched* `(` with the
+#:   link's own `)` and keeps running — across lines — until some later lone `)`. Everything
+#:   between is absorbed, and because `finditer` never restarts inside a match, a healthy link
+#:   caught in that span **ceases to exist for the tool**. Measured: `[a](f(x.md) blah [b](t.md)
+#:   tail)` lost `t.md` entirely. Excluding whitespace makes the branch fail at the first space,
+#:   so such input falls to the fallback and behaves exactly as it did before this change.
+#: * The trailing `|[^)]+`. Without it, a link nested past the bound stops matching at all —
+#:   invisible again, by the other route.
+#:
+#: Both restore the OLD truncating behaviour rather than silence: still wrong, still visible,
+#: still reported. **Never trade a false red for a false green.**
+#:
+#: ⚠️ **The swallow class is NARROWED, not closed, and saying otherwise would be the same kind of
+#: false claim this pattern exists to avoid.** Two producers survive, both handing an unmatched `(`
+#: with no whitespace in the absorbed span:
+#:
+#: * a **backslash-escaped** `\(` — CommonMark's own way to write a literal paren, which this
+#:   pattern has no escape handling for and reads as an opener;
+#: * an **angle-bracket destination** `(<…(…>)` — there is no `<…>` branch here at all, which is
+#:   awkward precisely because the whitespace rule above cites `<…>` as its exception.
+#:
+#: What bounds the harm: the merged destination never resolves, so the gate stays RED. It is an
+#: under-count with a mangled target name, not a green gate — N findings collapse to 1. The sharper
+#: cost is on the web axis, where the swallowed neighbours stop being fetched at all. Measured
+#: across 13.984 files in the gated fleet: **0 escaped-paren destinations, 0 angle destinations
+#: containing a paren, 0 adjacent-link shapes**. Closing it needs the scanner in #74.
+#:
+#: And the whitespace class is **wider than CommonMark's**: `\s` is Unicode-aware, while cmark
+#: terminates a destination only on ASCII space, tab and newline — it accepts NBSP, `\v`, `\f`,
+#: U+2000–200A and others as ordinary characters. So 12 characters are excluded needlessly. Kept
+#: because measured: with no parens the fallback returns those destinations byte-perfect (14/14),
+#: and with parens the result is exactly the old truncation. Nothing becomes invisible; the cost is
+#: precision, not safety.
+MD_LINK_RE = re.compile(r"\[(?P<text>[^\]]*)\]\((?P<href>(?:[^()\s]|\((?:[^()\s]|\([^()\s]*\))*\))+|[^)]+)\)")
 # A uuid comment that immediately follows a link (used to tell plain from robust).
 # No `^`: it is applied with .match(content, pos), which already anchors at pos.
 _TRAILING_UUID_RE = re.compile(r"\s*<!--\s*uuid:\s*[0-9a-fA-F-]{36}\s*-->")

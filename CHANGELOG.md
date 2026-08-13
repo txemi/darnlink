@@ -72,6 +72,30 @@ All notable changes to darnlink are documented here. The format is based on
     destination with no uuid — turns into **0** under the default, with the suite green.
 
 ### Fixed
+- **Balanced parentheses in a link destination are no longer truncated** (#71). CommonMark allows
+  them; `[^)]+` stopped at the first, so `[r](Log%20Analysis%20(February).docx)` was cut short and
+  reported dead while the file was on disk. The report **concealed the cut** — its own
+  `(resolves to …)` wrapper supplied the missing parenthesis, so the truncated path read as
+  complete, and a reader who checked found the file present and concluded the *gate* was broken.
+
+  Measured across the fleet, adjudicated against the reference CommonMark implementation: of 413
+  hrefs containing a `(`, **266** are the real case (balanced, spaces already `%20`-encoded), 141
+  carry raw spaces and are **not links at all** in CommonMark, 6 are unbalanced. Gate-scope
+  differential: **1867 → 1862** dangling — five false reds removed, **zero findings gained**.
+
+  ⚠️ **Two guards, both of which exist because the first version of this fix produced a false
+  green.** The destination class is `[^()\s]`, not `[^()]`: a destination outside `<…>` cannot
+  contain whitespace, and without that exclusion an *unmatched* `(` let the pattern run past the
+  link's own `)` — across lines — absorbing a following healthy link, which then ceased to exist
+  for the tool. And the pattern ends in `|[^)]+`, so a link nested past the bound degrades to the
+  old truncating behaviour rather than ceasing to match. Both restore *visible and wrong* rather
+  than *silent*.
+
+  ⚠️ **Bounded at two levels of nesting**, which is 0 times exceeded in the fleet; arbitrary depth
+  needs the scanner tracked in #74. And the swallow class is **narrowed, not closed**: a
+  backslash-escaped `\(` or an angle-bracket destination still hands the pattern an unmatched
+  opener. That cannot turn the gate green — the merged destination never resolves — but it collapses
+  N findings into 1 with a mangled name. 0 instances in the fleet.
 - **Nothing had ever parsed `recipes/darnlink-gate.ps1`.** The recipe tests skip on Windows and no CI
   job ran `pwsh`, so a syntax error in the shipped PowerShell recipe would have reached consumers as
   a script that does not start. CI now parses it. Parsing is not testing — it never runs the gate —
