@@ -317,15 +317,27 @@ def test_a_percent_encoded_space_is_content_not_a_delimiter(tmp_path):
     (`cmark`), which emits `href="%20"` here and `href="a.md"` for `[x]( a.md )` — it strips the one
     and keeps the other.
 
-    So `[](%20)` denotes a file literally named `" "`, and when that file is absent the link is dead
-    like any other. The version of this test that asserted "clean" was pinning a **false green**:
-    with the strip applied after decoding, `[x](%20a.md)` resolved to `a.md`, so a link to a missing
-    file was silently answered by an existing neighbour.
+    The version of this test that asserted "clean" was pinning a **false green**: with the strip
+    applied after decoding, `[x](%20x.md)` resolved to `x.md`, so a link to a missing file was
+    silently answered by an existing neighbour.
+
+    Both spellings are in one fixture so the *contrast* is what is pinned, not two separate facts.
+
+    ⚠️ The obvious fixture — a bare `[](%20)`, destination `" "` — is **not** used, and the reason is
+    worth writing down: Windows trims trailing spaces from a path component, so `dir/ ` normalises to
+    `dir`, which exists, and the link is not dangling **there**. That is the filesystem's answer, not
+    darnlink's, and this axis exists to ask the filesystem. A platform-dependent fixture would have
+    pinned Linux's answer as if it were the rule. It was caught by the Windows matrix in CI, not
+    here.
     """
-    _w(tmp_path / "doc.md", f"---\nuuid: {U_A}\n---\n\n[](%20)\n")
+    _w(tmp_path / "x.md", "# x\n")                                   # the neighbour, present
+    _w(tmp_path / "kept.md", f"---\nuuid: {U_A}\n---\n\n[a](%20x.md)\n")   # escape: content
+    _w(tmp_path / "gone.md", f"---\nuuid: {U_A}\n---\n\n[b]( x.md )\n")    # literal: delimiter
 
     found = _dangling(plan_robustify(tmp_path))
-    assert len(found) == 1 and "%20" in found[0].detail
+    assert len(found) == 1, f"the two spellings were conflated: {found}"
+    assert "%20x.md" in found[0].detail          # the encoded one is dead: it denotes " x.md"
+    assert found[0].file == tmp_path / "kept.md"  # …and the literal one is not
 
 
 def test_an_encoded_space_names_a_different_file_from_a_literal_one(tmp_path):
@@ -344,8 +356,11 @@ def test_an_encoded_space_names_a_different_file_from_a_literal_one(tmp_path):
 
     found = _dangling(plan_robustify(tmp_path / "one"))
     assert len(found) == 1, f"an encoded space was treated as a delimiter: {found}"
-    assert "%20a.md" in found[0].detail                      # the link as written
-    assert found[0].detail.rstrip(") ").endswith("/ a.md")   # the path it really denotes
+    assert "%20a.md" in found[0].detail                       # the link as written
+    # The path it really denotes. Built from `Path`, not spelled with a `/`: the detail carries a
+    # native path, so a hard-coded separator passes on Linux and fails on Windows — which is what
+    # the CI matrix caught here.
+    assert str(tmp_path / "one" / " a.md") in found[0].detail
 
 
 def test_whitespace_before_a_bare_fragment_is_not_a_dangling_target(tmp_path):
