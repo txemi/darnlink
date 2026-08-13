@@ -42,6 +42,26 @@ _TRAILING_WEB_UUID_RE = re.compile(
 )
 
 
+#: Feature 016 (FR-011). Placement is NORMATIVE: immediately after the `)`, or immediately after a
+#: `web-uuid` anchor — nowhere else. `[ \t]*`, NOT `\s*`: the latter crosses newlines, so a marker on
+#: its own line — the natural way to write it for the link BELOW — silently exempted the link ABOVE,
+#: suppressing a real `web_mismatch` and turning an exit 4 into a green run.
+_TRAILING_OWN_EXEMPT_RE = re.compile(r"[ \t]*<!--\s*darnlink-own-exempt\s*-->")
+
+#: FR-006. A commit SHA, long or short, in either case — GitHub accepts an uppercase SHA in `?ref=`,
+#: so a rule that did not fold case would make such a link an unfixable failure. Matched WHOLE:
+#: `release-deadbeef` is a branch and perfectly fixable. Purely textual, and it stops here — a TAG is
+#: textually indistinguishable from a branch of the same name, and telling them apart needs the
+#: network.
+_IMMUTABLE_REF_RE = re.compile(r"[0-9a-fA-F]{7,40}\Z")
+
+
+def owner_is_owned(owner: str, owners: frozenset) -> bool:
+    """FR-001. GitHub logins are ASCII case-insensitive and the parser preserves the case it found,
+    so the comparison — not the parse — folds it."""
+    return owner.casefold() in owners
+
+
 def emit_web_anchor(text: str, href: str, uuid: str) -> str:
     """`[text](href) <!-- web-uuid: uuid -->` — the cross-repo counterpart of the core's robust link.
     `web-uuid` (not `uuid`) keeps it invisible to the core's marker (see FR-002)."""
@@ -110,6 +130,7 @@ class WebLink:
     uuid: Optional[str]  # None => plain web link (not yet anchored); else the anchored uuid
     start: int
     end: int
+    exempt: bool = False  # FR-011: carries <!-- darnlink-own-exempt -->
 
 
 def find_web_links(content: str, ignore: Sequence[Span] = ()) -> List[WebLink]:
@@ -123,10 +144,12 @@ def find_web_links(content: str, ignore: Sequence[Span] = ()) -> List[WebLink]:
         if _in_spans(m.start(), ignore):
             continue
         tail = _TRAILING_WEB_UUID_RE.match(content, m.end())
-        if tail:
-            out.append(WebLink(m["text"], href, tail["uuid"].lower(), m.start(), tail.end()))
-        else:
-            out.append(WebLink(m["text"], href, None, m.start(), m.end()))
+        end = tail.end() if tail else m.end()
+        uuid = tail["uuid"].lower() if tail else None
+        # FR-011: recognised right after the `)` or right after the anchor, and nowhere else. `end`
+        # deliberately does NOT cover it, so an exempt link that is ever rewritten keeps its marker.
+        exempt = _TRAILING_OWN_EXEMPT_RE.match(content, end) is not None
+        out.append(WebLink(m["text"], href, uuid, m.start(), end, exempt))
     return out
 
 
@@ -240,6 +263,7 @@ def default_fetcher(gu: GithubUrl, token: Optional[str], *,
 @dataclass(frozen=True)
 class WebFinding:
     kind: str          # web_ok · web_anchor · web_mismatch · web_not_found · web_unverifiable
+                       # · web_own_no_uuid · web_own_exempt (feature 016)
     file: Path         # the linking file in the scanned tree
     href: str
     detail: str
@@ -254,7 +278,14 @@ class WebFinding:
 
 
 def _classify(link: WebLink, gu: Optional[GithubUrl], status: int, dest_uuid: Optional[str],
-              have_token: bool, f: Path) -> WebFinding:
+              have_token: bool, f: Path, owners: frozenset = frozenset(),
+              dest_fm_status: Optional[str] = None, filtered: bool = False) -> WebFinding:
+    """Feature 016 adds two kinds on top of 013's five. Two axes (§Precedence): visibility first —
+    `--ignore-block` and code fences never reach here, and a file carrying `darnlink-ignore-file` /
+    `darnlink-ignore-links` arrives with `filtered=True`, which suppresses ONLY the new finding
+    (FR-014), never `web_mismatch` or `web_not_found` (FR-007). Then classification, where **status
+    decides first**: anything other than 200 keeps exactly today's kind, exempt or not — a dead link
+    is dead either way. The exemption and the new finding live strictly inside the 200 branch."""
     if gu is None:
         return WebFinding("web_unverifiable", f, link.href, "not a recognised GitHub blob/raw URL")
     if status in (401, 403):
@@ -297,13 +328,36 @@ def _classify(link: WebLink, gu: Optional[GithubUrl], status: int, dest_uuid: Op
                           "was not retried because a client-side rejection cannot clear on a retry")
     if status != 200:
         return WebFinding("web_unverifiable", f, link.href, f"fetch failed (status {status})")
-    # status 200: we have the destination content and its uuid (may be None)
+    # --- status 200 from here on ---
+    if link.exempt:
+        # FR-011. Exempt from FR-004, from 013's FR-005 (anchoring) and from `web_mismatch`: a
+        # destination that regenerates is precisely one whose uuid drifts, so without the third the
+        # hatch would not escape. Honoured with or without an owner set — it states a property of the
+        # LINK, not of the run's configuration, and a marker that stopped working when someone dropped
+        # `--own` would let `--write` rewrite the very files it was placed to protect.
+        return WebFinding("web_own_exempt", f, link.href,
+                          "carries <!-- darnlink-own-exempt -->; never anchored, never called stale")
     if link.uuid is None:
         # plain web link -> anchor it if the destination has a uuid
         if dest_uuid:
             return WebFinding("web_anchor", f, link.href,
                               f"plain web link; destination uuid {dest_uuid} -> would anchor",
                               anchored_uuid=dest_uuid)
+        owned = gu is not None and owner_is_owned(gu.owner, owners)
+        if owned and dest_fm_status == "invalid":
+            # FR-004: a different defect. Telling someone to ADD a uuid to a file whose frontmatter
+            # does not parse points them at the wrong thing. Gated on `owned` so FR-001 holds for the
+            # message too: with the feature off this link keeps the wording it has today.
+            return WebFinding("web_unverifiable", f, link.href,
+                              "destination frontmatter is present but not readable (invalid YAML, or a "
+                              "uuid that is not a string) — a different defect from a missing uuid")
+        if (owned
+                and gu.path.lower().endswith(".md")           # FR-005
+                and not _IMMUTABLE_REF_RE.fullmatch(gu.ref)   # FR-006
+                and not filtered):                            # FR-014
+            return WebFinding("web_own_no_uuid", f, link.href,
+                              f"destination is yours ({gu.owner}/{gu.repo}) and {gu.path} has no uuid "
+                              f"in its frontmatter — add one there, then this link can be anchored")
         return WebFinding("web_unverifiable", f, link.href, "destination has no uuid to anchor to")
     # already anchored -> verify
     if dest_uuid is None:
@@ -321,6 +375,7 @@ def check_web_links_online(
     fetcher: Fetcher = default_fetcher,
     block_markers: tuple = (),
     excludes: Optional[set] = None,
+    owners: frozenset = frozenset(),
 ) -> Tuple[List[WebFinding], Dict[Path, str]]:
     """Fetch each web link's destination (once, cached per URL) and classify it. Returns the findings
     and the per-file rewritten content for any `web_anchor` (the caller writes it only under --write).
@@ -331,6 +386,7 @@ def check_web_links_online(
     fetched/anchored. Defaults to the shared `DEFAULT_EXCLUDES`."""
     from .frontmatter_index import iter_markdown_files, DEFAULT_EXCLUDES
     from .frontmatter_edit import read_text_keep_newlines
+    from .links import file_ignores_links, file_is_ignored
 
     if excludes is None:
         excludes = DEFAULT_EXCLUDES
@@ -344,6 +400,10 @@ def check_web_links_online(
             content = read_text_keep_newlines(f)
         except Exception:
             continue
+        # FR-014: the file-level opt-outs suppress the NEW finding only (by kind) — a third, narrower
+        # semantics than the core's "removed from the graph entirely", declared rather than left to the
+        # reader. `--ignore-block` is out of this and unchanged (FR-015).
+        filtered = file_is_ignored(content) or file_ignores_links(content)
         ignore = ignored_spans(content, block_markers) + code_spans(content)
         links = find_web_links(content, ignore)
         if not links:
@@ -354,13 +414,14 @@ def check_web_links_online(
         for link in links:
             gu = parse_github_url(link.href)
             if gu is None:
-                findings.append(_classify(link, None, 0, None, have_token, f))
+                findings.append(_classify(link, None, 0, None, have_token, f, owners))
                 continue
             if link.href not in cache:
                 cache[link.href] = fetcher(gu, token)
             status, text = cache[link.href]
-            dest_uuid = read_frontmatter_uuid(text)[1] if (status == 200 and text is not None) else None
-            fnd = _classify(link, gu, status, dest_uuid, have_token, f)
+            dest_fm_status, dest_uuid = (read_frontmatter_uuid(text)
+                                         if (status == 200 and text is not None) else (None, None))
+            fnd = _classify(link, gu, status, dest_uuid, have_token, f, owners, dest_fm_status, filtered)
             findings.append(fnd)
             if fnd.kind == "web_anchor" and fnd.anchored_uuid:
                 pieces.append(content[cursor:link.start])

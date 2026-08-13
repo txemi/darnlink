@@ -6,6 +6,37 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- **`web-check --online` can fail on a destination *you own* that has no `uuid`** — feature 016,
+  opt-in (`specs/016-own-repo-web-strictness/spec.md`). The web axis is forgiving by design: a
+  destination that fetches 200 without a `uuid` is `web_unverifiable` and the run still exits 0,
+  because the file lives in someone else's repository and cannot be fixed from here. When it is
+  **yours** that is not an external limitation — it is a missing two-line edit in a repo you control,
+  and nothing ever said so.
+
+  - **`--own OWNER`** (repeatable, stripped and case-folded) names the owners you control.
+    **`--own-from-origin`** adds this repo's `origin` owner — a separate flag rather than a magic
+    `--own auto`, so an owner literally called `auto` stays expressible. If it cannot resolve, the run
+    is a **usage error**, even when explicit owners were given: it is a request, not a fallback.
+  - **`web_own_no_uuid`** at exit **4**, not 3 — 3 promises "re-run with `--write`", and darnlink
+    cannot fix this one. The message names owner, repo and path, and never suggests `--write`.
+  - **`--own-max N`** budgets it so a repo can adopt the rule before reaching zero. The budget
+    silences the *verdict*, never the *finding*, and never shields another exit-4 cause. The report
+    says where the count stands in all four cases — including **over** the budget, because a budget
+    that goes silent exactly when it is exceeded is the one moment its number is worth reading.
+  - **`<!-- darnlink-own-exempt -->`** exempts a link whose destination is machine-regenerated, where
+    a `uuid` is futile — from the new finding, from anchoring, and from `web_mismatch`, since a
+    regenerating destination is precisely one whose uuid drifts. Honoured **with or without an owner
+    set**: it states a property of the link, not of the run.
+
+  Two exclusions, textual and offline: a destination that is not `.md` can never carry frontmatter,
+  and one pinned to a **commit SHA** can never be given one retroactively. Tags are deliberately not
+  excluded — a tag is textually indistinguishable from a branch of the same name.
+
+  With no owner set, behaviour is unchanged byte for byte in the **text report, the exit code and the
+  files on disk**, with two named departures: the exemption marker, and two zero counters that
+  `--json` gains unconditionally so a consumer can tell the axis ran.
+
 ## [0.20.5] — 2026-08-13
 
 ### Fixed

@@ -251,7 +251,6 @@ def _run_check(root: Path, excludes: set, as_json: bool, block_markers: tuple,
         # every finding for a consumer that wants them, and the gate recipe prints them when its
         # dangling axis is switched on.
         print(f"  -> exit {code} ({outcome})")
-
     return code
 
 
@@ -342,6 +341,18 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
                         help="directory-name glob to skip (fnmatch, case-sensitive; a plain name matches "
                              "exactly) (repeatable). Exclude vendored clones of foreign repos so their "
                              "internal web links aren't fetched/anchored.")
+    parser.add_argument("--own", action="append", default=[], metavar="OWNER",
+                        help="feature 016: a GitHub owner you control (repeatable). A destination "
+                             "owned by one of these whose .md has no uuid becomes a FAILURE — it is "
+                             "not an external limitation, it is a missing edit in a repo you control.")
+    parser.add_argument("--own-from-origin", action="store_true",
+                        help="also treat the owner of this repo's `origin` remote as yours. A separate "
+                             "flag rather than a magic --own value, so an owner literally called "
+                             "'auto' stays expressible.")
+    parser.add_argument("--own-max", type=int, default=None, metavar="N",
+                        help="budget: while there are N or fewer owned-without-uuid findings they are "
+                             "reported but do not fail the exit. Lets the axis be adopted before a "
+                             "repo reaches zero.")
     parser.add_argument("--json", action="store_true", help="machine-readable output")
     args = parser.parse_args(argv)
 
@@ -351,6 +362,39 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
         return 1
     if args.write and not args.online:
         print("error: --write requires --online (there is nothing to anchor without fetching)", file=sys.stderr)
+        return 1
+    # FR-017: the offline branch ignores these entirely, so accepting them silently would report a
+    # green run that never applied the rule it was asked for. Same argument as --write, above.
+    if (args.own or args.own_from_origin or args.own_max is not None) and not args.online:
+        print("error: --own/--own-from-origin/--own-max require --online (ownership is decided on a "
+              "fetched destination)", file=sys.stderr)
+        return 1
+    if args.own_max is not None and args.own_max < 0:
+        print("error: --own-max must be >= 0; a negative budget cannot be met and its messages would "
+              "arithmetically lie", file=sys.stderr)
+        return 1
+    # Stripped BEFORE folding, not merely tested: `--own " owned "` used to pass the emptiness check
+    # and then match nothing, so the run went green AND said the budget was stale — the false green
+    # this feature exists to remove, produced by a stray space.
+    owners = frozenset(s for s in (o.strip().casefold() for o in args.own) if s)
+    if args.own and not owners:
+        print("error: --own needs a non-empty owner name; an empty one owns nothing and would satisfy "
+              "the --own-max guard without switching any rule on", file=sys.stderr)
+        return 1
+    if args.own_from_origin:
+        # FR-002/FR-003. Through `git config`, not a hand parse of .git/config: in a worktree `.git`
+        # is a FILE, so a naive parse fails in this project's own development environment.
+        origin_owner = _github_owner_from_origin(root)
+        if origin_owner is None:
+            print("error: --own-from-origin could not resolve an owner (no repository, no 'origin', a "
+                  "non-GitHub remote, git not on PATH, or git refusing the repo as dubiously owned). "
+                  "It is a request, not a fallback: answering a narrower question than the one asked "
+                  "would be the false pass this flag exists to prevent.", file=sys.stderr)
+            return 1
+        owners = owners | {origin_owner.casefold()}
+    if args.own_max is not None and not owners:
+        print("error: --own-max needs an owner set (--own / --own-from-origin); budgeting a rule that "
+              "is not switched on is a no-op that reads like protection", file=sys.stderr)
         return 1
 
     block_markers = tuple(args.ignore_block)
@@ -386,12 +430,15 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
         return 0
 
     token = os.environ.get("GITHUB_TOKEN") or None
-    findings, edits = check_web_links_online(root, token, fetcher or default_fetcher, block_markers, excludes)
+    findings, edits = check_web_links_online(root, token, fetcher or default_fetcher, block_markers,
+                                             excludes, owners)
     ok = [x for x in findings if x.kind == "web_ok"]
     anchors = [x for x in findings if x.kind == "web_anchor"]
     mismatch = [x for x in findings if x.kind == "web_mismatch"]
     notfound = [x for x in findings if x.kind == "web_not_found"]
     unverifiable = [x for x in findings if x.kind == "web_unverifiable"]
+    own_no_uuid = [x for x in findings if x.kind == "web_own_no_uuid"]
+    own_exempt = [x for x in findings if x.kind == "web_own_exempt"]
 
     wrote = 0
     if args.write and edits:
@@ -400,7 +447,10 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
             write_text_keep_newlines(path, content)
             wrote += 1
 
-    integrity_fail = bool(mismatch or notfound)
+    # FR-012: the budget silences the VERDICT, never the finding. Other exit-4 causes are untouched,
+    # so one budgeted finding plus one real web_not_found still exits 4.
+    budgeted = args.own_max is not None and len(own_no_uuid) <= args.own_max
+    integrity_fail = bool(mismatch or notfound) or (bool(own_no_uuid) and not budgeted)
     anchors_pending = bool(anchors) and not args.write
     code = 4 if integrity_fail else (3 if anchors_pending else 0)
 
@@ -409,13 +459,25 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
             "web_check": True, "online": True, "exit_code": code, "wrote": wrote, "applied": args.write,
             "web_ok": len(ok), "web_anchor": len(anchors), "web_mismatch": len(mismatch),
             "web_not_found": len(notfound), "web_unverifiable": len(unverifiable),
+            "web_own_no_uuid": len(own_no_uuid), "web_own_exempt": len(own_exempt),
+            # FR-012 makes omitting the flag observably different from `--own-max 0`; without this key
+            # the two payloads were byte-identical, so the machine surface could not tell them apart.
+            "own_max": args.own_max,
             "findings": [{"kind": x.kind, "file": str(x.file), "href": x.href,
                           "detail": x.detail, "anchored_uuid": x.anchored_uuid} for x in findings],
         }, indent=2))
     else:
         print(f"darnlink web-check (EXPERIMENTAL, online) — root: {root}")
+        # FR-016: both new kinds are counted and listed in the TEXT report too. Printed only when
+        # non-zero, so a run without an owner set keeps today's line byte-for-byte (FR-001).
+        extra = (f" | own-no-uuid {len(own_no_uuid)} | own-exempt {len(own_exempt)}"
+                 if (own_no_uuid or own_exempt) else "")
         print(f"  ok {len(ok)} | anchor {len(anchors)} | mismatch {len(mismatch)} | "
-              f"not-found {len(notfound)} | unverifiable {len(unverifiable)}")
+              f"not-found {len(notfound)} | unverifiable {len(unverifiable)}{extra}")
+        for x in own_no_uuid:
+            print(f"  [web_own_no_uuid] {x.file}: {x.detail} ({x.href})")
+        for x in own_exempt:
+            print(f"  [web_own_exempt] {x.file}: {x.detail} ({x.href})")
         for x in mismatch:
             print(f"  [web_mismatch] {x.file}: {x.detail} ({x.href})")
         for x in notfound:
@@ -437,19 +499,78 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
         # axis went unnoticed for months. And it is not merely a missing measurement: an un-anchored
         # web link is only discoverable if the destination can be READ, so the same tree can exit 0
         # without a token and 3 with one. Say what was not looked at, right where the verdict is read.
+        at_ceiling = budgeted and args.own_max is not None and len(own_no_uuid) == args.own_max
         outcome = {0: "clean", 3: "anchors pending", 4: "integrity failure"}[code]
+        if code == 0 and own_no_uuid:
+            # FR-013. Two qualifiers can be true of the same exit 0 — findings held under budget, and
+            # links that could not be read at all — and they are about different things. Composing
+            # them is deliberate: keeping only one would silently revert the other's fix, and both
+            # exist for the same reason, that "clean" must never be printed over something unexamined.
+            where = "at the budget" if at_ceiling else "under budget"
+            outcome = f"{len(own_no_uuid)} owned finding(s), {where}"
         if code == 0 and unverifiable:
             # Only offer the token when the token would actually change something. `web_unverifiable`
             # has seven causes and credentials fix two; suggesting it over a non-GitHub URL or a
             # destination with no uuid is advice that cannot be taken, and advice that cannot be taken
             # is how this line becomes the next thing everyone scrolls past.
             fixable = sum(1 for x in unverifiable if x.token_would_help)
-            outcome = f"clean of what could be READ — {len(unverifiable)} unverifiable, NOT verified"
+            read_note = f"clean of what could be READ — {len(unverifiable)} unverifiable, NOT verified"
+            outcome = f"{outcome}; {read_note}" if own_no_uuid else read_note
             if fixable:
                 outcome += f"; {fixable} of them would resolve with GITHUB_TOKEN — export it"
         print(f"  -> exit {code} ({outcome})")
+        if args.own_max is not None:
+            # Four branches (FR-013). An earlier version had two; the third it then grew told you to
+            # lower the budget to the number it already was; and the fourth exists because a budget
+            # that goes silent exactly when it is exceeded is the one moment its number is worth
+            # reading. The nudges carry no exit-code condition — FR-013 attaches one only to the
+            # outcome word — because the runs most likely to be read are the failing ones.
+            n = len(own_no_uuid)
+            if not own_no_uuid:
+                tail = "so the rule is a rule again" if args.own_max else "it is doing nothing"
+                print(f"  no owned findings left — drop --own-max (still {args.own_max}), {tail}.")
+            elif n > args.own_max:
+                # No causal claim here: with a web_not_found alongside, "that is why this run fails"
+                # would name a cause that is not sufficient, and fixing the count would not go green.
+                print(f"  {n} owned finding(s), OVER the budget of {args.own_max} — "
+                      f"{n - args.own_max} more than allowed.")
+            elif at_ceiling:
+                print(f"  {n} owned finding(s) — exactly at the budget (--own-max {args.own_max}). "
+                      f"Fix one and lower it to {n - 1}.")
+            else:
+                print(f"  {n} owned finding(s), under the budget of {args.own_max} — "
+                      f"lower --own-max to {n} to keep the ratchet.")
+
 
     return code
+
+
+def _github_owner_from_origin(root: Path) -> Optional[str]:
+    """FR-002. The owner of `origin`, via `git config` — the only reading that survives a worktree,
+    where `.git` is a file rather than a directory. Returns None for every failure mode, which FR-003
+    turns into a usage error rather than a silent narrowing of the question."""
+    import os as _os
+    import re as _re
+    import subprocess
+    # `git` hooks export GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE, and the gate runs darnlink FROM a
+    # hook. Inherited, they override `-C` and answer about the hook's repository instead of the
+    # scanned one — silently, and with a plausible owner.
+    env = {k: v for k, v in _os.environ.items()
+           if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR")}
+    try:
+        out = subprocess.run(["git", "-C", str(root), "config", "--get", "remote.origin.url"],
+                             capture_output=True, text=True, timeout=10, env=env)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    # `_re.ASCII` matters: without it IGNORECASE folds U+0131 to `i`, so `gıthub.com/evil` resolved
+    # to owner `evil`. `ssh.github.com` and an explicit port are GitHub's own documented forms for
+    # networks that block 22; rejecting them printed "a non-GitHub remote", which was false.
+    m = _re.match(r"(?:(?:https?|ssh)://(?:[^/@]*@)?(?:www\.|ssh\.)?github\.com(?::\d+)?/"
+                  r"|(?:[^/@]*@)?github\.com:)(?P<owner>[^/]+)/",
+                  out.stdout.strip(), _re.IGNORECASE | _re.ASCII)
+    return m["owner"] if m else None
 
 
 def _make_stdio_encoding_safe() -> None:
