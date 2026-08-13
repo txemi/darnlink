@@ -48,6 +48,15 @@ All notable changes to darnlink are documented here. The format is based on
     destination with no uuid — turns into **0** under the default, with the suite green.
 
 ### Fixed
+- **`--write` no longer deletes a file's UTF-8 BOM** (#68). The read side uses `utf-8-sig`, which
+  consumes the mark so it cannot sit before the `---`; writing the resulting string back as plain
+  utf-8 removed it from the file, on **all four write paths**. This module's contract is byte
+  preservation — it keeps CRLF meticulously — so dropping the BOM contradicted it.
+
+  Worth recording *why it survived*: the CI Windows matrix exists for *"Windows-authored files
+  (BOM, CRLF, path separators)"* and could not see this, because every BOM fixture put the mark on
+  a file that gets **read**, never on one that gets **rewritten**. Coverage on the wrong side of an
+  operation still reads as coverage.
 - **Nothing had ever parsed `recipes/darnlink-gate.ps1`.** The recipe tests skip on Windows and no CI
   job ran `pwsh`, so a syntax error in the shipped PowerShell recipe would have reached consumers as
   a script that does not start. CI now parses it. Parsing is not testing — it never runs the gate —
