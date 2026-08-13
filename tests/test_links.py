@@ -124,3 +124,39 @@ def test_file_is_ignored_marker_inside_code_does_not_count():
     inline = "Use `<!-- darnlink-ignore-file -->` to opt out.\n"
     assert not file_is_ignored(fenced)
     assert not file_is_ignored(inline)
+
+
+def test_detects_a_robust_link_whose_text_is_empty():
+    """FR-051: `ROBUST_LINK_RE` widens with `MD_LINK_RE`, and that coupling needs its own test.
+
+    Reverting only the robust half leaves every dangling test green — measured — because those go
+    through `find_plain_links`. If the two disagree, an anchored `[](x) <!-- uuid: … -->` is plain to
+    one function and robust to the other: `find_plain_links` skips it (it sees the trailing anchor)
+    while `find_robust_links` never sees it, so its uuid drops out of the repair axis entirely and
+    a moved target stops being healed. That is a false green in `repair`, not in `dangling`.
+    """
+    c = f"x [](old/B.md) <!-- uuid: {U} --> y"
+    links = find_robust_links(c)
+    assert len(links) == 1
+    assert links[0].text == "" and links[0].href == "old/B.md" and links[0].uuid == U
+
+
+def test_an_empty_text_image_anchor_is_robust_not_plain():
+    """The two finders must agree on the same input — the invariant the coupling exists to hold."""
+    c = f"![](media/photo.jpg) <!-- uuid: {U} -->"
+    assert len(find_robust_links(c)) == 1
+    assert find_plain_links(c) == []
+
+
+def test_emit_round_trips_an_empty_text_link():
+    """`emit_robust_link("")` must produce a link the grammar reads back identically.
+
+    Scope, stated because an earlier version of this test overreached: this is emit → parse for an
+    empty text, nothing more. Whether a *rewrite* keeps the `!` of an embed is span arithmetic in
+    `robustify`, which this never calls — it lives in
+    `test_robustify.test_write_preserves_the_bang_of_an_image_embed`.
+    """
+    out = emit_robust_link("", "new/B.md", U)
+    assert out.startswith("[](")
+    back = find_robust_links(out)
+    assert len(back) == 1 and back[0].href == "new/B.md" and back[0].text == ""

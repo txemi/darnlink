@@ -236,3 +236,83 @@ def test_missing_encoded_path_reports_the_decoded_target(tmp_path):
     assert len(found) == 1
     assert "my missing file.md" in found[0].detail   # decoded, not %20
     assert "my%20missing%20file.md" in found[0].detail  # and the link as written
+
+
+def test_image_embed_with_an_empty_alt_is_reported(tmp_path):
+    """FR-051: `![](gone.png)` — the shape pandoc emits for every image in a converted .docx/.odt.
+
+    `MD_LINK_RE` required at least one character of link text, so a link whose text is empty did not
+    match *at all*. That is the worst failure mode a gate has: the link was not reported as bad, it
+    was absent, and the axis printed `dangling: 0` over a tree full of broken embeds. Regression
+    #52 — measured on one real corpus in its own gate scope: 127 links with empty text, 7 of them
+    pointing at a target that does not exist, and the axis reported `dangling: 0`.
+    """
+    _w(tmp_path / "doc.md", f"---\nuuid: {U_A}\n---\n\n![](gone.png)\n")
+
+    found = _dangling(plan_robustify(tmp_path))
+    assert len(found) == 1 and "gone.png" in found[0].detail
+
+
+def test_empty_alt_image_that_exists_is_not_reported(tmp_path):
+    """The other half of the pin: widening the regex must not invent findings."""
+    _w(tmp_path / "doc.md", f"---\nuuid: {U_A}\n---\n\n![](there.png)\n")
+    _w(tmp_path / "there.png", "bytes\n")
+
+    assert _dangling(plan_robustify(tmp_path)) == []
+
+
+def test_pandoc_attribute_suffix_does_not_hide_the_target(tmp_path):
+    """#52 reported the `{width="…"}` suffix as the cause. It is not — but it must keep working.
+
+    `![alt](x){width="1.1in"}` was already visible: the regex stops at the `)` and never looks at
+    what follows. This pins that the suffix does not hide the target; that the suffix stays OUT of
+    the match span is a separate property, and it needs a separate test — see
+    `test_robustify.test_write_leaves_any_pandoc_attribute_suffix_untouched`, because detection
+    alone cannot tell the two apart.
+    """
+    _w(tmp_path / "doc.md", f'---\nuuid: {U_A}\n---\n\n![](gone.png){{width="1.1in"}}\n')
+
+    found = _dangling(plan_robustify(tmp_path))
+    assert len(found) == 1 and "gone.png" in found[0].detail
+
+
+def test_a_plain_link_with_empty_text_is_reported_too(tmp_path):
+    """Not an image-only bug: `[](gone.md)` was equally invisible, and is a link like any other."""
+    _w(tmp_path / "doc.md", f"---\nuuid: {U_A}\n---\n\n[](gone.md)\n")
+
+    found = _dangling(plan_robustify(tmp_path))
+    assert len(found) == 1 and "gone.md" in found[0].detail
+
+
+def test_a_non_empty_alt_with_the_pandoc_suffix_is_still_seen(tmp_path):
+    """The other half of the suffix pin: a link WITH text and a `{…}` suffix must keep working.
+
+    The old regex already matched this one, so it guards the direction the empty-alt cases cannot:
+    that widening the *text* did not disturb a link that was never affected.
+    """
+    _w(tmp_path / "doc.md", f'---\nuuid: {U_A}\n---\n\n![shot](gone.png){{width="1.1in"}}\n')
+
+    found = _dangling(plan_robustify(tmp_path))
+    assert len(found) == 1 and "gone.png" in found[0].detail
+
+
+def test_whitespace_around_a_destination_is_NOT_stripped_here(tmp_path):
+    """The absence of the whitespace rule is a DECISION, so it gets a test like any other.
+
+    `[x]( B.md )` denotes `B.md` in CommonMark, so reporting it dead while `B.md` is on disk is a
+    false red. That is real, and it is **deliberately not fixed on this branch** — see #74.
+
+    Without this test nothing distinguishes "FR-052 was left out on purpose" from "FR-052 was lost
+    in a merge". Seeded: a naive strip reinstating it passes the entire suite unnoticed, which is
+    exactly how a half-state gets re-landed — and a half-state is what nine review rounds were
+    spent climbing out of.
+
+    ⚠️ When #74 lands, this test must **invert**, not disappear. If it is simply deleted, the
+    property it guards goes unpinned again.
+    """
+    _w(tmp_path / "B.md", "# B\n")
+    _w(tmp_path / "doc.md", f"---\nuuid: {U_A}\n---\n\n[x]( B.md )\n")
+
+    found = _dangling(plan_robustify(tmp_path))
+    assert len(found) == 1, "the whitespace rule (#74) appears to have been re-landed silently"
+    assert " B.md " in found[0].detail

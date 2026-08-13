@@ -90,6 +90,32 @@ All notable changes to darnlink are documented here. The format is based on
 ## [0.20.5] — 2026-08-13
 
 ### Fixed
+- **A link with empty text — `![](photo.jpg)`, what pandoc emits for every image in a converted
+  `.docx`/`.odt` — was invisible to every axis, not merely unreported.** `MD_LINK_RE` required at
+  least one character of link text (`[^\]]+`), so such a link never matched: it was not a finding
+  that got filtered, it was never a candidate. The axis then printed `dangling: 0` over a tree full
+  of broken image embeds, which reads as *"no broken links"* but only ever meant *"none of the
+  shapes the regex recognises"*.
+
+  Measured on one repository running the wall at maximum, in its own gate scope: **127 links with
+  empty text, 7 of them pointing at a target that does not exist**, and the axis printed
+  `dangling: 0`. Since those files are converted documents, they arrive in blocks and nobody
+  re-reads them.
+
+  ⚠️ **Adopting this is not a no-op for a consumer.** `MD_LINK_RE` has three call sites, so
+  the same repository also gains **36 newly visible web links** (none a `/blob/` URL today, so its
+  web gate does not flip — the shape of those URLs, not a guarantee), and `--create-readme` gains a
+  path where `![](media/)` can create a `README.md`. A repo at `dangling: repo` with `dangling_max`
+  unset goes **0 → 7 and its push wall closes**: fix the links or raise the ceiling *before* moving
+  the pin, not after.
+
+  Reported as the pandoc attribute suffix (`{width="1.1in"}`) hiding the link; it was not.
+  The pattern stops at the `)` and never looks past it, so `![alt](x.jpg){width="1.1in"}` was always
+  seen. The two shapes simply co-occur. Both are pinned in tests so the real cause — the empty text —
+  cannot be re-diagnosed from the same coincidence. `ROBUST_LINK_RE` widens alongside `MD_LINK_RE`,
+  so an anchored empty-text link cannot be plain to one function and robust to another — a coupling
+  that matters to the **repair** axis and has its own tests, since reverting that half alone leaves
+  every `dangling` test green. FR-051.
 - **A tokenless `403` is the anonymous rate limit, not a private repo — and the web axis now says so
   instead of printing a quiet `clean`.** `web-check` reported *"cannot read destination: private repo
   and no token provided"* for any `403` without a token. That was wrong every time: GitHub answers
@@ -109,6 +135,46 @@ All notable changes to darnlink are documented here. The format is based on
   and PowerShell) warn when the axis runs without a token. The docs that promised *"public repos work
   tokenless"* and *"never a false green"* are corrected — **give the axis a token even for public
   destinations**: private ones need it for permission, public ones for quota.
+
+### Known issues — read this before moving a pin
+
+None is introduced by this release, but they belong where a consumer deciding on an upgrade will
+see them rather than buried under *Fixed*. **One of them is live**; the rest are latent at 0
+occurrences across thirteen repositories.
+
+- ⚠️ **LIVE — balanced parentheses in a destination are truncated at the first `)`** (#71).
+  CommonMark allows them; `MD_LINK_RE` does not, so the link is cut short and reported dead while
+  the file it names sits on disk, clustered in mirrored attachment filenames (`(Parte 1)`,
+  `(February - Monthly)`). The report conceals itself: its own `(resolves to …)` supplies the
+  missing parenthesis, so the truncated path reads as complete, and a reader who checks finds the
+  file present and concludes the *gate* is broken.
+
+  **Size it by 20, not by 104.** Two measurements of the same repository, and only the first is what
+  a wall would enforce:
+
+  | measurement | count |
+  |---|---:|
+  | `dangling` findings the gate **emits** that are truncations | **20** |
+  | truncated links **in the tree** whose paren-completed target exists | 104 |
+
+  An earlier version of this entry printed only the 104 and said raising `dangling` to `repo` "would
+  close the wall on 104 files that exist". That is wrong: a wall counts what the axis emits, and
+  most of the 104 never reach it. The gap between the two is filters this note does not fully
+  account for, which is exactly why the actionable number is the one measured at the gate.
+
+  Pre-existing and orthogonal to this release.
+
+- **`--write` detaches a pandoc attribute block** (#65). The anchor lands between the link and its
+  `{…}`, so the block stops applying. Pre-existing: a non-empty link text has always done it. The
+  tests added here pin that the block is never *deleted*, which is the worse neighbour of the two.
+- **`--write` silently drops a file's UTF-8 BOM** (#68) on all four write paths. CRLF is preserved
+  meticulously; the BOM is not, and three places in this repo imply otherwise — including the CI
+  Windows matrix, whose stated purpose is BOM/CRLF and whose BOM fixture only covers the *read*
+  path, so it cannot see this.
+- **A trailing space in a destination makes `repair` emit a CONFLICT it cannot heal** (#67):
+  a trailing space makes `names_md` false, the link is classified as a directory link and becomes a
+  `CONFLICT` diagnosed as *"path and uuid disagree"* — which is untrue, and `--write` never heals
+  it, so the gate stays red.
 
 ### Added
 - **The English-only gate now covers the surfaces that are actually published**: commit messages,

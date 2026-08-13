@@ -93,16 +93,96 @@ Measured on the fleet: of the findings this feature adds over a hand-written che
 embeds, **six of fourteen were images pointing outside their repository** — screenshots that stopped
 rendering when a home directory was reorganised, and that no gate had ever mentioned.
 
+## Why an empty link text was the worse bug (FR-051)
+
+FR-050 above reasons about embeds on the assumption that `MD_LINK_RE` sees them. For one very common
+shape it did not: the pattern required `[^\]]+` — **at least one character** of link text — so
+`![](photo.jpg)` matched nothing at all. Not reported and dismissed: **absent**, never a candidate.
+
+That empty alt is not an edge case. It is what **pandoc emits for every image** when converting a
+`.docx` or `.odt`, so it arrives in whole blocks of files imported at once, and the file that carries
+it is exactly the kind nobody re-reads — a converted document, filed and trusted.
+
+The failure mode is the one this whole feature exists to prevent, one level deeper. `dangling: 0` is
+read as *"no broken links"*. It only ever meant *"none of the shapes the regex recognises"*, and the
+gap between those two readings is invisible from the output. Measured on one repository running the
+wall at maximum, in that repo's own gate scope: **127 links with empty text, of which 7 point at a
+target that does not exist** — and the axis reported `dangling: 0`.
+
+> ⚠️ **An earlier draft of this paragraph said "7 links of this shape, 7 broken, 0 with a target that
+> exists, so the corpus offered no counter-example".** All three numbers were wrong, and the last was
+> the dangerous one: it argued the change was safe *because* nothing else of this shape existed, when
+> 83 links with a valid target and 36 web links did. The measurement behind it had counted a
+> **narrower** shape than the sentence claimed — images carrying a pandoc attribute suffix, not
+> empty-text links — and the gap was invisible because both counts were called "this shape". A
+> widening is justified by what it newly matches, so counting the subset that motivated it and
+> presenting that as the total inverts the argument.
+
+Note what this is **not**. The bug was reported as the pandoc attribute suffix (`{width="1.1in"}`)
+hiding the link. That suffix is harmless: the pattern stops at the `)` and never looks past it, and
+`![alt](x.jpg){width="1.1in"}` was always seen. The two shapes co-occur because pandoc emits both at
+once, which is what made the suffix the plausible-looking cause. Both are pinned in the tests so the
+true cause cannot be re-diagnosed later from the same coincidence.
+
+`href` keeps its `+`. That is a statement about the *grammar*, not a claim that an empty destination is handled: `[]( )` still yields a finding that names nothing. Fixing it is part of the whitespace rule deferred to #74, and it is a declared gap rather than a property.
+
+> ⚠️ **A rule about the whitespace *around* a destination was developed on this branch and has been
+> taken out.** It grew from one review finding into nine rounds, because "which spellings of
+> whitespace delimit a destination" turns out to be a parsing question — five separate dimensions,
+> each of which looked closed until the next round measured it against a CommonMark implementation.
+> It does not belong inside a one-character regression fix, and it is tracked separately with that
+> whole history. This feature ships the widening and its blast-radius guards, nothing more.
+
+### What else the widening newly exposes
+
+`MD_LINK_RE` has three call sites — `find_plain_links`, `find_detached_anchors` and
+`find_web_links` — so the blast radius is not confined to `dangling`. Measured on the same
+repository:
+
+| Surface | Effect |
+|---|---|
+| `dangling` | +7 findings, all real broken image embeds; **0 findings lost** |
+| web axis (`find_web_links`) | **+36** links newly visible. None is a `/blob/` URL, so none can demand an anchor and the gate does not flip — the shape of *these* URLs, not a property of the change. See the exit codes below |
+| `robustify --write` | an existing target behind an empty-text link now receives a uuid anchor, and the `!` of an embed is preserved (both tested in `test_robustify.py`). **0 occurrences in the measured corpus**: every empty-text link with a live target points at an unanchorable image |
+| `--create-readme` | `[](sub/)` and `![](media/)` can now **create** `sub/README.md`. 0 occurrences in the measured corpus, so this is live but unexercised |
+| `find_detached_anchors` | absorption changes only where an empty-text link now legitimately claims a trailing comment. `DetachedAnchor` is not a reported `Kind`, so no finding disappears |
+
+What a newly-visible `/blob/` URL would actually do, since a gate's exit code is the one thing this
+tool exists to produce and an earlier draft of this paragraph had it **backwards**:
+
+| Destination | Kind | Exit |
+|---|---|---|
+| reads, **carries** a uuid, link unanchored | `web_anchor` | **3** — anchors pending |
+| reads, carries **no** uuid | `web_unverifiable` | 0 |
+| 404 **with** a token that can see the repo | `web_not_found` | **4** — integrity failure, the harder stop |
+| 404 without a token, or a repo the token cannot see | `web_unverifiable` | 0 |
+
+⚠️ **One pre-existing write defect this widens the exposure to.** When a link carries a pandoc
+attribute block, `--write` inserts the anchor *between* the link and its attributes —
+`[](B.md) <!-- uuid: … -->{.cls}` — detaching them, since pandoc requires the block to follow the
+`)` immediately. **Not introduced here**: a non-empty text does the same and always has. But the
+corpus that motivated this feature is converted documents, where the block is ubiquitous, so the
+widening routes many more links towards it. Filed as #65 rather than folded in — mixing a behaviour
+change into a regression fix is how a fix stops being reviewable.
+
+**Adopting a darnlink with this change is not a no-op for a consumer at `dangling: repo` with
+`dangling_max` unset**: the repository above goes `0 → 7` and its push wall closes. The 7 links must
+be fixed, or the ceiling raised, *before* the pin moves — not after.
+
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
 
 - **FR-041**: A plain relative link in a scanned Markdown file whose resolved target path **does not
   exist** MUST be reported as a `dangling` finding, naming the file, the line, the link as written,
-  and the resolved path. The line, link and resolved path travel in the finding's `detail`: no
-  finding kind has ever carried a line field, and widening the shared `Finding` record is outside
-  this feature. A dead link is acted on by opening it, so `file` + line is what makes the report
-  usable without a search.
+  and the resolved path. A dead link is acted on by opening it, so `file` + line is what makes the
+  report usable without a search.
+
+  > The line, link and resolved path travel in the finding's `detail`. This requirement used to add
+  > *"no finding kind has ever carried a line field, and widening the shared `Finding` record is
+  > outside this feature"* — **no longer true**: `Finding` grew an optional `line` (`report.py:37`)
+  > for the gate recipe's added-lines ratchet, and `_dangling_target`'s caller fills it. The `detail` text is
+  > kept because callers parse it, not because the field is unavailable.
 - **FR-042**: `dangling` MUST be **report-only**. No mode, including `--write`, may create, move or
   otherwise alter anything in response to it.
 - **FR-043**: The target's extension MUST NOT affect whether the finding fires; only its existence.
@@ -123,6 +203,10 @@ rendering when a home directory was reorganised, and that no gate had ever menti
   caller's policy, expressed in the gate recipe, not in the core.
 - **FR-050**: An image embed (`![alt](path)`) whose target does not exist MUST be reported, on the
   same terms as any other link. See below — this is a decision, not an accident of the parser.
+- **FR-051**: A link whose **text is empty** (`[](path)`, `![](path)`) MUST be detected on exactly
+  the same terms as one with text. The link text is what a reader sees; it has no bearing on whether
+  the destination is there, and requiring at least one character of it made such links invisible to
+  every axis, not merely unreported. See below.
 
 ### Key Entities
 

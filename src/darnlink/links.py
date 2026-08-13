@@ -12,10 +12,14 @@ from typing import List, Sequence, Tuple
 
 # A robust link: a Markdown link immediately followed (any whitespace) by a uuid HTML comment.
 ROBUST_LINK_RE = re.compile(
-    r"\[(?P<text>[^\]]+)\]\((?P<href>[^)]+)\)\s*<!--\s*uuid:\s*(?P<uuid>[0-9a-fA-F-]{36})\s*-->"
+    r"\[(?P<text>[^\]]*)\]\((?P<href>[^)]+)\)\s*<!--\s*uuid:\s*(?P<uuid>[0-9a-fA-F-]{36})\s*-->"
 )
-# Any inline Markdown link.
-MD_LINK_RE = re.compile(r"\[(?P<text>[^\]]+)\]\((?P<href>[^)]+)\)")
+# Any inline Markdown link. `text` is `*`, not `+`: `[](dest)` is a link with empty text, and the
+# empty alt of `![](dest)` is what pandoc emits for every image in a converted .docx/.odt. Requiring
+# one character there made the whole link invisible -- not reported as bad, *absent* -- so a tree
+# full of broken image embeds passed the dangling axis as clean (FR-051). `href` stays `+`: a link
+# with no destination at all has nothing to check.
+MD_LINK_RE = re.compile(r"\[(?P<text>[^\]]*)\]\((?P<href>[^)]+)\)")
 # A uuid comment that immediately follows a link (used to tell plain from robust).
 # No `^`: it is applied with .match(content, pos), which already anchors at pos.
 _TRAILING_UUID_RE = re.compile(r"\s*<!--\s*uuid:\s*[0-9a-fA-F-]{36}\s*-->")
