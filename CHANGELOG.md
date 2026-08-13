@@ -19,7 +19,7 @@ All notable changes to darnlink are documented here. The format is based on
   `dangling: 0`. Since those files are converted documents, they arrive in blocks and nobody
   re-reads them.
 
-  ⚠️ **Adopting this is not a no-op for a consumer.** `MD_LINK_RE` is shared by four call sites, so
+  ⚠️ **Adopting this is not a no-op for a consumer.** `MD_LINK_RE` has three call sites, so
   the same repository also gains **36 newly visible web links** (none a `/blob/` URL today, so its
   web gate does not flip — the shape of those URLs, not a guarantee), and `--create-readme` gains a
   path where `![](media/)` can create a `README.md`. A repo at `dangling: repo` with `dangling_max`

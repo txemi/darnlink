@@ -230,28 +230,41 @@ def test_write_preserves_the_bang_of_an_image_embed(tmp_path):
     Seeded before writing this: an emitter that consumes the `!` leaves the whole suite green.
     """
     _w(tmp_path / "B.md", f"---\nuuid: {EXISTING}\n---\n# B\n")
-    _w(tmp_path / "A.md", "![](B.md)\n")
+    _w(tmp_path / "A.md", "see ![](B.md) here\n")
 
     apply_robustify(plan_robustify(tmp_path))
 
     a = (tmp_path / "A.md").read_text()
-    assert a.startswith("!"), f"the image embed lost its bang: {a!r}"
+    # Assert the `!` is still attached to THIS link, not merely present somewhere on the line:
+    # the emitted anchor `<!-- uuid: … -->` contains a `!`, so `"!" in a` is true even when the
+    # embed's own bang has been eaten, and `a.startswith("!")` only holds while the fixture happens
+    # to begin with the link. Both are green under a seed that swallows it.
+    assert "![](B.md)" in a, f"the image embed lost its bang: {a!r}"
     links = find_robust_links(a)
     assert len(links) == 1 and links[0].href == "B.md" and links[0].text == ""
 
 
-def test_write_leaves_a_pandoc_attribute_suffix_untouched(tmp_path):
+def test_write_leaves_any_pandoc_attribute_suffix_untouched(tmp_path):
     """The suffix must stay OUT of the match span, and only a write can prove it.
 
     #52 blamed `{width="…"}` for hiding the link. The fix must not "help" by consuming the suffix:
-    a regex ending `\\)(?:\\{[^}]*\\})?` passes every detection test in the suite — measured, all
-    260 of them — while `--write` silently **deletes the attributes** from the document. Detection
-    reports the same finding either way, so this is the only place the difference is observable.
+    a regex ending `\\)(?:\\{[^}]*\\})?` passes every *detection* test in the suite while `--write`
+    silently **deletes the attributes** from the document. Detection reports an identical finding
+    either way, so this is the only place the difference is observable.
+
+    Every attribute shape pandoc emits is covered, not just the one from the bug report. A version
+    of this test that used `{width="…"}` alone was defeated by a seed one character narrower —
+    `\\)(?:\\{\\.[^}]*\\})?`, which consumes only class blocks — passing 264/264 while destroying
+    `{.cls}`. That shape is the very one used as the example in issue #65 and in the spec. A test
+    fixture is a claim about a population, and a single sample is the weakest possible one.
     """
+    shapes = ['{width="1.1in" height="2in"}', "{.cls}", "{#anchor}", '{.a .b key="v"}']
     _w(tmp_path / "B.md", f"---\nuuid: {EXISTING}\n---\n# B\n")
-    _w(tmp_path / "A.md", '![](B.md){width="1.1in" height="2in"}\n')
+    for i, suffix in enumerate(shapes):
+        _w(tmp_path / f"A{i}.md", f"![](B.md){suffix}\n")
 
     apply_robustify(plan_robustify(tmp_path))
 
-    a = (tmp_path / "A.md").read_text()
-    assert 'width="1.1in"' in a and 'height="2in"' in a, f"attributes were eaten: {a!r}"
+    for i, suffix in enumerate(shapes):
+        a = (tmp_path / f"A{i}.md").read_text()
+        assert suffix in a, f"attribute block {suffix!r} was eaten: {a!r}"

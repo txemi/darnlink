@@ -87,17 +87,22 @@ def _dangling_target(href: str, linking_file: Path) -> Path | None:
     path_part, _ = split_fragment(href)
     decoded = unquote(path_part)
     encoded = decoded != path_part
-    # FR-052: a path that is only whitespace names no destination, so there is nothing to check.
-    # Resolving it yields the linking file's own directory under a blank name — a finding reading
-    # `line 5:  : target does not exist`, which names nothing a reader can go and look for.
+    # FR-052: CommonMark does not count the whitespace surrounding a link destination as part of it,
+    # so `[x]( B.md )` denotes `B.md` and `[x]( )` denotes nothing. darnlink judges both by the same
+    # rule: strip first, then decide.
     #
-    # This is judged on the DECODED path, after the fragment is split off, for the same reason
-    # FR-046/FR-047 are: the three spellings are the same link. Testing the raw href instead left
-    # `[](%20)` (a percent-encoded space) and `[]( #x)` (whitespace plus a fragment) still emitting
-    # the exact finding this rule forbids — and the second is worse than cosmetic, since a bare
-    # fragment must never be reported at all (FR-046), so ` #section` was a legal in-page anchor
-    # being called a dead link.
-    if not decoded.strip():
+    # Stripping matters twice over. A path that is *only* whitespace resolves to the linking file's
+    # own directory under a blank name, giving a finding that reads `line 5:  : target does not
+    # exist` and names nothing a reader can act on. And a path with whitespace *around* a real name
+    # resolves to `dir/ B.md ` — a file that does not exist under that spelling, so a link that
+    # renders and works was reported dead.
+    #
+    # Judged on the DECODED path with the fragment removed, for the reason FR-046/FR-047 are: those
+    # spellings denote the same destination, and a rule applied to only one of them is a rule with a
+    # way around it. Guarding the raw href alone left `[](%20)` and `[]( #x)` still emitting the
+    # finding this rule forbids, the second on a legal in-page anchor.
+    stripped = decoded.strip()
+    if not stripped:
         return None
     # Decoding can change *what kind of thing* the href is, not just how it is spelled:
     # `%2Fetc%2Fpasswd` becomes an absolute path and `http%3A//x` regains its scheme. Both pass
@@ -106,7 +111,7 @@ def _dangling_target(href: str, linking_file: Path) -> Path | None:
     # for a URL. The decoded spelling is held to the same rule as the raw one.
     if encoded and not is_local_relative(decoded):
         return None
-    t = resolve_href(href, linking_file)  # drops the fragment
+    t = resolve_href(href.strip(), linking_file)  # drops the fragment
     if t.exists():
         return None
     if encoded:

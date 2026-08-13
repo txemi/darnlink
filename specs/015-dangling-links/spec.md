@@ -130,12 +130,18 @@ a blank name, producing a finding that read `line 5:  : target does not exist`. 
 behaviour match the claim. Two notes on scope, both learned by being wrong about them first:
 
 - **It is a subtraction, not an addition.** With a non-empty text those shapes were reported *before*
-  this release, so FR-052 removes findings from the pre-existing surface. Measured across eleven
-  local repositories: 0 occurrences, so no consumer's count moves — but "0 findings lost" is a claim
-  about the widening, and this rule is the one exception to it.
+  this release, so FR-052 removes findings from the pre-existing surface. Measured across thirteen
+  local repositories, 14.446 Markdown files and 52.932 in-prose links: **0 occurrences**, so no
+  consumer's count moves — but "0 findings lost" is a claim about the widening, and this rule is the
+  one exception to it.
 - **The guard belongs after `split_fragment` and `unquote`, not before.** Written against the raw
-  href it missed `[](%20)` and `[]( #sec)` — the same link, spelled differently — and the second was
-  a false positive on valid CommonMark rather than a cosmetic finding.
+  href it missed `[](%20)` and `[]( #sec)` — the same destination, spelled differently — and the
+  second was a false positive on valid CommonMark rather than a cosmetic finding.
+- **And it has to strip, not just test for empty.** A first version rejected only an all-whitespace
+  path, which left `[x]( B.md )` resolving to `dir/ B.md ` and reported dead — while this very
+  section argued that surrounding whitespace is not part of the destination. A rule whose stated
+  reason covers a case its code does not is worse than a narrower rule honestly scoped: the gap
+  reads as a decision nobody took.
 
 `ROBUST_LINK_RE` widens with `MD_LINK_RE` deliberately — leaving it narrow would make an anchored
 `[](path) <!-- uuid: … -->` plain to one function and robust to another, and the tool's uuid
@@ -147,24 +153,35 @@ leaves every `dangling` test green (measured: 0 failures before those tests exis
 
 ### What else the widening newly exposes
 
-`MD_LINK_RE` is shared by four consumers, so the blast radius is not confined to `dangling`.
-Measured on the same repository:
+`MD_LINK_RE` has three call sites — `find_plain_links`, `find_detached_anchors` and
+`find_web_links` — so the blast radius is not confined to `dangling`. Measured on the same
+repository:
 
-| Consumer | Effect |
+| Surface | Effect |
 |---|---|
 | `dangling` | +7 findings, all real broken image embeds; **0 findings lost** |
-| web axis (`find_web_links`) | **+36** links newly visible. None is a `/blob/` URL, so no anchor is demanded and the gate does not flip — but that is the shape of *these* URLs, not a property of the change. One `[](https://github.com/o/r/blob/main/x.md)` anywhere would exit **3** if the destination reads and carries no uuid, and **4** — integrity failure, the harder stop — if it 404s with a token |
-| `robustify --write` | an existing target behind an empty-text link now receives a uuid anchor, and the `!` of an embed is preserved (both tested in `test_robustify.py`). **0 occurrences in the measured corpus**: all 83 empty-text links with a live target point at `.jpg`/`.jpeg`, which are unanchorable |
+| web axis (`find_web_links`) | **+36** links newly visible. None is a `/blob/` URL, so none can demand an anchor and the gate does not flip — the shape of *these* URLs, not a property of the change. See the exit codes below |
+| `robustify --write` | an existing target behind an empty-text link now receives a uuid anchor, and the `!` of an embed is preserved (both tested in `test_robustify.py`). **0 occurrences in the measured corpus**: every empty-text link with a live target points at an unanchorable image |
 | `--create-readme` | `[](sub/)` and `![](media/)` can now **create** `sub/README.md`. 0 occurrences in the measured corpus, so this is live but unexercised |
+| `find_detached_anchors` | absorption changes only where an empty-text link now legitimately claims a trailing comment. `DetachedAnchor` is not a reported `Kind`, so no finding disappears |
+
+What a newly-visible `/blob/` URL would actually do, since a gate's exit code is the one thing this
+tool exists to produce and an earlier draft of this paragraph had it **backwards**:
+
+| Destination | Kind | Exit |
+|---|---|---|
+| reads, **carries** a uuid, link unanchored | `web_anchor` | **3** — anchors pending |
+| reads, carries **no** uuid | `web_unverifiable` | 0 |
+| 404 **with** a token that can see the repo | `web_not_found` | **4** — integrity failure, the harder stop |
+| 404 without a token, or a repo the token cannot see | `web_unverifiable` | 0 |
 
 ⚠️ **One pre-existing write defect this widens the exposure to.** When a link carries a pandoc
-attribute suffix, `--write` inserts the anchor *between* the link and its attributes —
-`[](B.md) <!-- uuid: … -->{.cls}` — which detaches them, since pandoc requires the block to follow
-the `)` immediately. This is **not introduced here**: a non-empty text does the same and always has.
-But the corpus that motivated this feature is converted documents, where the suffix is ubiquitous,
-so the widening routes many more links towards it. Filed separately rather than folded in — mixing a
-behaviour change into a regression fix is how a fix stops being reviewable.
-| `find_detached_anchors` | absorption changes only where an empty-text link now legitimately claims a trailing comment. `DetachedAnchor` is not a reported `Kind`, so no finding disappears |
+attribute block, `--write` inserts the anchor *between* the link and its attributes —
+`[](B.md) <!-- uuid: … -->{.cls}` — detaching them, since pandoc requires the block to follow the
+`)` immediately. **Not introduced here**: a non-empty text does the same and always has. But the
+corpus that motivated this feature is converted documents, where the block is ubiquitous, so the
+widening routes many more links towards it. Filed as #65 rather than folded in — mixing a behaviour
+change into a regression fix is how a fix stops being reviewable.
 
 **Adopting a darnlink with this change is not a no-op for a consumer at `dangling: repo` with
 `dangling_max` unset**: the repository above goes `0 → 7` and its push wall closes. The 7 links must
@@ -208,13 +225,14 @@ be fixed, or the ceiling raised, *before* the pin moves — not after.
   the same terms as one with text. The link text is what a reader sees; it has no bearing on whether
   the destination is there, and requiring at least one character of it made such links invisible to
   every axis, not merely unreported. See below.
-- **FR-052**: An href whose path is **only whitespace** MUST NOT be reported. It names no
-  destination, so there is nothing to check, and resolving it yields the linking file's own
-  directory under a blank name — a finding that names nothing a reader can act on. The rule is
-  applied to the **decoded path with the fragment removed**, on the same terms as FR-046 and
-  FR-047: `[]( )`, `[](%20)` and `[]( #sec)` are one link written three ways, and guarding only the
-  raw spelling left the last two still emitting the finding this rule forbids — the third also
-  violating FR-046, since ` #section` is a legal in-page anchor being called a dead link.
+- **FR-052**: The whitespace **surrounding** a link destination MUST NOT be treated as part of it —
+  CommonMark does not. So `[x]( B.md )` MUST be judged as `B.md`, and a destination that is *only*
+  whitespace MUST NOT be reported at all: it names nothing, and resolving it yields the linking
+  file's own directory under a blank name, a finding that names nothing a reader can act on. The
+  rule is applied to the **decoded path with the fragment removed**, on the same terms as FR-046 and
+  FR-047 — those spellings denote the same destination, and a rule applied to one of them is a rule
+  with a way around it. Guarding the raw href alone left `[](%20)` and `[]( #sec)` still emitting
+  the forbidden finding, the second on a legal in-page anchor (FR-046).
 
 ### Key Entities
 

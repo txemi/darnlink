@@ -266,8 +266,9 @@ def test_pandoc_attribute_suffix_does_not_hide_the_target(tmp_path):
 
     `![alt](x){width="1.1in"}` was already visible: the regex stops at the `)` and never looks at
     what follows. This pins that the suffix does not hide the target; that the suffix stays OUT of
-    the match span is a separate property, and it needs a separate test — see the write case below,
-    because detection alone cannot tell the two apart.
+    the match span is a separate property, and it needs a separate test — see
+    `test_robustify.test_write_leaves_any_pandoc_attribute_suffix_untouched`, because detection
+    alone cannot tell the two apart.
     """
     _w(tmp_path / "doc.md", f'---\nuuid: {U_A}\n---\n\n![](gone.png){{width="1.1in"}}\n')
 
@@ -331,3 +332,25 @@ def test_whitespace_before_a_bare_fragment_is_not_a_dangling_target(tmp_path):
     _w(tmp_path / "doc.md", f"---\nuuid: {U_A}\n---\n\n[x]( #section)\n")
 
     assert _dangling(plan_robustify(tmp_path)) == []
+
+
+def test_whitespace_around_a_real_destination_is_stripped(tmp_path):
+    """FR-052: CommonMark does not count the whitespace around a destination as part of it.
+
+    `[x]( B.md )` denotes `B.md`. Judging it literally resolves to `dir/ B.md `, which exists under
+    no spelling, so a link that renders and works was reported dead. This is the same rule as the
+    empty case — `[x]( )` denotes nothing, `[x]( B.md )` denotes `B.md` — and an earlier version
+    closed only the first half while the spec argued for both.
+    """
+    _w(tmp_path / "doc.md", f"---\nuuid: {U_A}\n---\n\n[x]( B.md )\n")
+    _w(tmp_path / "B.md", "# B\n")
+
+    assert _dangling(plan_robustify(tmp_path)) == []
+
+
+def test_whitespace_around_a_missing_destination_still_dangles(tmp_path):
+    """The other half: stripping must not swallow the finding, only the spelling."""
+    _w(tmp_path / "doc.md", f"---\nuuid: {U_A}\n---\n\n[x]( gone.md )\n")
+
+    found = _dangling(plan_robustify(tmp_path))
+    assert len(found) == 1 and "gone.md" in found[0].detail
