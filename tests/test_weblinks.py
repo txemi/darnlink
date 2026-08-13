@@ -155,12 +155,23 @@ def test_online_404_WITHOUT_token_is_unverifiable_exits_0(tmp_path, monkeypatch)
     assert _run_web_check_cli([str(tmp_path), "--online"], fetcher=fetch) == 0
 
 
-def test_online_private_no_token_is_unverifiable(tmp_path):
+def test_online_403_without_a_token_is_reported_as_quota_not_as_a_private_repo(tmp_path):
+    """A tokenless 403 is the ANONYMOUS RATE LIMIT, not a private repo.
+
+    This test used to be called `..._private_no_token_...` and its fixture comment said
+    "private repo, no token -> 403". That is backwards, and `_finding_for` says so itself:
+    GitHub answers **404**, not 403, for a private repo we cannot see. So a 403 without a
+    token is essentially always the 60/h-per-IP anonymous quota — which is what a caller
+    behind a shared NAT hits. Naming it "private repo" sent readers hunting for a
+    permissions problem they did not have, on destinations that were public and returned
+    200 to a browser.
+    """
     _w(tmp_path / "conta.md", f"see [topo]({URL}) <!-- web-uuid: {UUID} -->\n")
-    fetch = _fetcher({URL: (403, None)})  # private repo, no token -> 403
+    fetch = _fetcher({URL: (403, None)})  # anonymous call, quota exhausted -> 403
     findings, _ = check_web_links_online(tmp_path, token=None, fetcher=fetch)
     assert findings[0].kind == "web_unverifiable"
-    assert "no token provided" in findings[0].detail
+    assert "quota" in findings[0].detail
+    assert "private repo" not in findings[0].detail
     # unverifiable does not fail the exit (not a broken link, just unconfirmed)
     assert _run_web_check_cli([str(tmp_path), "--online"], fetcher=fetch) == 0
 

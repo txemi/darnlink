@@ -30,4 +30,14 @@ jobs:
             -o "$RUNNER_TEMP/darnlink-gate"
           chmod +x "$RUNNER_TEMP/darnlink-gate"
       - name: darnlink gate (whole repo)
+        # Only needed with `"web": true`, and the reason is QUOTA, not permission: anonymous GitHub
+        # API calls are 60/h per public IP, so without a token the web axis reports `ok 0` — which
+        # reads as "nothing to check" and means "could not look". It can even be a FALSE GREEN: an
+        # un-anchored web link is only discoverable if the destination can be read.
+        #
+        # ⚠️ This automatic token covers THIS repo only. If your Markdown links into OTHER private
+        # repos, it will not read them — that half is permission, and needs a PAT or a GitHub App
+        # token scoped to those repos.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: "$RUNNER_TEMP/darnlink-gate"   # scope=repo from darnlink-gate.json

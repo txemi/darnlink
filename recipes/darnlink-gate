@@ -354,8 +354,14 @@ if [ "$SCOPE" != "staged" ]; then
       # while the build stayed green. Not a failure: committing offline must keep working.
       if [ -z "${GITHUB_TOKEN:-}" ]; then
         echo "darnlink-gate: web axis running WITHOUT a token → anonymous 60/h-per-IP quota." >&2
-        echo "  'ok 0' below means COULD NOT LOOK, not 'nothing to verify'. Quote the token" >&2
-        echo "  condition next to any web figure, or it is not comparable between runs." >&2
+        echo "  An 'ok 0 | unverifiable N' from web-check in this run means COULD NOT LOOK," >&2
+        echo "  not 'nothing to verify' — and it is indistinguishable from a repo that has no" >&2
+        echo "  cross-repo links at all." >&2
+        echo "  ⚠️ THIS CAN BE A FALSE GREEN, not just a missing measurement: an un-anchored web" >&2
+        echo "  link is only discoverable if the destination can be READ. Measured on one tree:" >&2
+        echo "  without token rc=0 (green), with token rc=3 (the link needed anchoring)." >&2
+        echo "  Export GITHUB_TOKEN, and quote the token condition next to any web figure —" >&2
+        echo "  without it the number is not comparable between two runs, let alone two repos." >&2
       fi
       WEB_ARGS=()
       for e in "${EXCLUDES[@]}";      do [ -n "$e" ] && WEB_ARGS+=(--exclude "$e"); done

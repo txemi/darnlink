@@ -250,7 +250,14 @@ def _classify(link: WebLink, gu: Optional[GithubUrl], status: int, dest_uuid: Op
     if gu is None:
         return WebFinding("web_unverifiable", f, link.href, "not a recognised GitHub blob/raw URL")
     if status in (401, 403):
-        why = "private repo and no token provided" if not have_token else "token rejected (403/401)"
+        # NOT "private repo": this function says so itself thirteen lines down — GitHub answers 404,
+        # not 403, for a private repo we cannot see. So a tokenless 403 is essentially always the
+        # ANONYMOUS RATE LIMIT (60/h per public IP, shared by every machine behind the same NAT),
+        # and naming it "private repo" sent readers to look for a permissions problem they did not
+        # have, on destinations that were public and returned 200 to a browser.
+        why = ("anonymous request rejected (403: the 60/h per-IP quota is exhausted, or the caller "
+               "is blocked) — export GITHUB_TOKEN to verify" if not have_token
+               else "token rejected (403/401)")
         return WebFinding("web_unverifiable", f, link.href, f"cannot read destination: {why}")
     if status == -2:
         # v0.17.0: the file 404s AND the destination repo is not readable with this token (a private
