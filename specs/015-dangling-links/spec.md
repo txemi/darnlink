@@ -136,9 +136,16 @@ behaviour match the claim. Two notes on scope, both learned by being wrong about
   repo's chat-transcript mirror). None of the 6 changes a verdict: they were dangling before and
   after, and what changed is the path the finding names. So no consumer's count moves — but the rule
   is **not inert**, which the bare "0 occurrences" of an earlier draft implied.
-- **The guard belongs after `split_fragment` and `unquote`, not before.** Written against the raw
-  href it missed `[](%20)` and `[]( #sec)` — the same destination, spelled differently — and the
-  second was a false positive on valid CommonMark rather than a cosmetic finding.
+- **The guard belongs after `split_fragment` and BEFORE `unquote`.** Written against the whole raw
+  href it missed `[]( #sec)`, a false positive on a legal in-page anchor. Written after `unquote` it
+  did something worse: `%20a.md` became `a.md`, so a link to a missing file was answered by an
+  existing neighbour. The fragment is a delimiter and comes off first; the escape is content and
+  stays. Four rounds arrived at that ordering, each fixing one dimension and leaving the next: the
+  literal form, then where the value is used, then ASCII versus Unicode, then encoded versus literal.
+  The single clause that licensed the error — *"those spellings denote the same destination"* — was
+  borrowed from FR-047, where it is true, and it propagated into five documents before anyone
+  checked it against a CommonMark implementation. **When a rule is about syntax, adjudicate it
+  against the reference parser, not against the rule next to it.**
 - **And it has to strip, not just test for empty.** A first version rejected only an all-whitespace
   path, which left `[x]( B.md )` resolving to `dir/ B.md ` and reported dead — while this very
   section argued that surrounding whitespace is not part of the destination. A rule whose stated
@@ -242,10 +249,14 @@ be fixed, or the ceiling raised, *before* the pin moves — not after.
   destination that is *only*
   whitespace MUST NOT be reported at all: it names nothing, and resolving it yields the linking
   file's own directory under a blank name, a finding that names nothing a reader can act on. The
-  rule is applied to the **decoded path with the fragment removed**, on the same terms as FR-046 and
-  FR-047 — those spellings denote the same destination, and a rule applied to one of them is a rule
-  with a way around it. Guarding the raw href alone left `[](%20)` and `[]( #sec)` still emitting
-  the forbidden finding, the second on a legal in-page anchor (FR-046). The whitespace stripped MUST
+  rule is applied to the **raw path with the fragment removed, BEFORE percent-decoding** — the
+  whitespace it drops is a *delimiter*, and a delimiter exists only in the source text. A
+  percent-escape is content: verified against the reference implementation, `[x]( a.md )` yields
+  `a.md` while `[x](%20a.md)` yields `%20a.md`, which denotes `" a.md"`. Stripping after decoding
+  makes those two the same link, which is a **false green** when only `a.md` exists and a **false
+  red** naming the wrong path when `" a.md"` does. This is where FR-046/FR-047's reasoning must NOT
+  be borrowed: their spellings do denote the same destination, and whitespace's do not.
+  The whitespace stripped MUST
   be **CommonMark's, which is ASCII** — space, tab, LF, VT, FF, CR — and never Python's
   `str.strip()` default, which also removes NBSP and the ideographic space. Those are ordinary
   characters: a file can be named `\xa0a.md`, so stripping them makes a link to a **missing** file

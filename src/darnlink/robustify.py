@@ -95,45 +95,44 @@ def _dangling_target(href: str, linking_file: Path) -> Path | None:
     # exists. Judging the raw spelling alone would report every percent-encoded link in a tree — the
     # kind of false positive that gets a gate switched off rather than fixed.
     path_part, _ = split_fragment(href)
-    decoded = unquote(path_part)
-    encoded = decoded != path_part
-    # FR-052: CommonMark does not count the whitespace surrounding a link destination as part of it,
-    # so `[x]( B.md )` denotes `B.md` and `[x]( )` denotes nothing. darnlink judges both by the same
-    # rule: strip first, then decide.
+    # FR-052: CommonMark does not count the whitespace *surrounding* a link destination as part of
+    # it, so `[x]( B.md )` denotes `B.md` and `[x]( )` denotes nothing. That whitespace is a
+    # DELIMITER, and a delimiter exists only in the source text — which is why the strip happens
+    # here, on the raw spelling, BEFORE any decoding.
     #
-    # Stripping matters twice over. A path that is *only* whitespace resolves to the linking file's
-    # own directory under a blank name, giving a finding that reads `line 5:  : target does not
-    # exist` and names nothing a reader can act on. And a path with whitespace *around* a real name
-    # resolves to `dir/ B.md ` — a file that does not exist under that spelling, so a link that
-    # renders and works was reported dead.
+    # Getting that order wrong is not a nicety; it silently changes which file the link names.
+    # Verified against the reference implementation (`cmark`):
     #
-    # Judged on the DECODED path with the fragment removed, for the reason FR-046/FR-047 are: those
-    # spellings denote the same destination, and a rule applied to only one of them is a rule with a
-    # way around it. Guarding the raw href alone left `[](%20)` and `[]( #x)` still emitting the
-    # finding this rule forbids, the second on a legal in-page anchor.
-    # `path_part` already has the fragment off, so stripping it here is the whole rule -- and every
-    # resolution below has to use these stripped forms, not the raw href. A first version computed
-    # `stripped` for the emptiness test only and then resolved `href.strip()`, which is a DIFFERENT
-    # string: `.strip()` on the raw href cannot reach a space sitting before a `#`, and the encoded
-    # branch was never stripped at all. Result: `[x]( B.md #s )` and `[x](%20B.md )` resolved to
-    # `dir/B.md ` and `dir/ B.md` and were reported dead while `B.md` sat right there. A rule is only
-    # applied where its value is used.
-    stripped = decoded.strip(_CM_WHITESPACE)
-    if not stripped:
-        return None
+    #     [x]( a.md )    ->  a.md        the spaces are delimiters, dropped
+    #     [x](%20a.md)   ->  %20a.md     the escape is CONTENT: this denotes " a.md"
+    #     [x](a.md%20)   ->  a.md%20     likewise, "a.md "
+    #
+    # A version that stripped after `unquote` turned `%20a.md` into `a.md`, so a link to a MISSING
+    # file resolved to an existing neighbour and reported clean (a false green), and where the
+    # spaced file did exist the link was reported dead pointing at the wrong path (a false red on a
+    # live file). `%20` is what every tool emits for a space, and a filename with an edge space
+    # exists in the corpus this feature was measured against.
+    #
+    # It came from borrowing FR-046/FR-047's reasoning — *"those spellings denote the same
+    # destination"* — which is true of a revealed scheme or absolute path and FALSE of whitespace:
+    # `%20a.md` and ` a.md` are different destinations. One clause, five documents, four rounds.
     raw_stripped = path_part.strip(_CM_WHITESPACE)
+    if not raw_stripped:
+        return None
+    decoded = unquote(raw_stripped)
+    encoded = decoded != raw_stripped
     # Decoding can change *what kind of thing* the href is, not just how it is spelled:
     # `%2Fetc%2Fpasswd` becomes an absolute path and `http%3A//x` regains its scheme. Both pass
     # `is_local_relative` while encoded, so judging only the raw form would let the encoding walk
     # around FR-046 — suppressing a finding because `/etc/passwd` happens to exist, or inventing one
     # for a URL. The decoded spelling is held to the same rule as the raw one.
-    if encoded and not is_local_relative(stripped):
+    if encoded and not is_local_relative(decoded):
         return None
     t = resolve_href(raw_stripped, linking_file)
     if t.exists():
         return None
     if encoded:
-        d = resolve_href(stripped, linking_file)
+        d = resolve_href(decoded, linking_file)
         # Report the DECODED path: it is the one the link denotes, and the one to look for on disk.
         return None if d.exists() else d
     return t

@@ -46,12 +46,19 @@ All notable changes to darnlink are documented here. The format is based on
   *A destination with whitespace **around a real name** is stripped before resolving.* `[x]( B.md )`
   denotes `B.md`; judged literally it resolved to `dir/ B.md ` and was reported dead while the file
   sat right there — a **false red on a live file**, which is how a gate gets switched off rather
-  than fixed. Applied to the decoded path with the fragment removed, and — the part a first version
-  got wrong — at every place inside this axis that the value is *used*, not only where it is tested.
-  **ASCII whitespace only**, which is what CommonMark counts: a bare `str.strip()` also removes NBSP
-  and the ideographic space, and since a file really can be named `\xa0a.md`, that turned a link to
-  a **missing** file into a resolved one and reported clean — a false green, and NBSP is precisely
-  what a Word or HTML paste produces. FR-052.
+  than fixed. FR-052.
+
+  Two properties of that strip took four attempts to get right, and both are false greens when
+  wrong, so they are worth stating exactly:
+
+  - **It happens BEFORE percent-decoding.** The whitespace dropped is a *delimiter*, and a delimiter
+    exists only in the source. An escape is content: `[x]( a.md )` denotes `a.md`, but `[x](%20a.md)`
+    denotes `" a.md"` — checked against the reference CommonMark implementation, which emits
+    `href="a.md"` for the first and `href="%20a.md"` for the second. Stripping afterwards made them
+    the same link, so a link to a **missing** file was answered by an existing neighbour.
+  - **ASCII whitespace only**, which is what CommonMark counts. A bare `str.strip()` also removes
+    NBSP and the ideographic space; a file can be named `\xa0a.md`, so that hid a broken link too —
+    and NBSP is precisely what a Word or HTML paste produces.
 
   Note this **removes** findings from the pre-existing surface rather than adding any: with a
   non-empty text these shapes were reported before this release. Measured across thirteen local

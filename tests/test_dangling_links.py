@@ -309,17 +309,43 @@ def test_a_whitespace_only_href_is_not_a_dangling_target(tmp_path):
     assert _dangling(plan_robustify(tmp_path)) == []
 
 
-def test_a_percent_encoded_space_is_not_a_dangling_target(tmp_path):
-    """FR-052 is judged on the DECODED path: `[](%20)` is the same link as `[]( )`.
+def test_a_percent_encoded_space_is_content_not_a_delimiter(tmp_path):
+    """`[](%20)` is NOT the same link as `[]( )` — and an earlier version of this test said it was.
 
-    Guarding the raw href alone left this one still emitting `line 5: %20: target does not exist`,
-    the exact finding the rule forbids, because `%20` is not whitespace until it is decoded. The
-    three spellings of "no destination" have to be one rule, for the same reason FR-046 and FR-047
-    judge the decoded form.
+    FR-052 drops the whitespace that *delimits* a destination, and a delimiter exists only in the
+    source. `%20` is an escape: it is content. Verified against the reference implementation
+    (`cmark`), which emits `href="%20"` here and `href="a.md"` for `[x]( a.md )` — it strips the one
+    and keeps the other.
+
+    So `[](%20)` denotes a file literally named `" "`, and when that file is absent the link is dead
+    like any other. The version of this test that asserted "clean" was pinning a **false green**:
+    with the strip applied after decoding, `[x](%20a.md)` resolved to `a.md`, so a link to a missing
+    file was silently answered by an existing neighbour.
     """
     _w(tmp_path / "doc.md", f"---\nuuid: {U_A}\n---\n\n[](%20)\n")
 
-    assert _dangling(plan_robustify(tmp_path)) == []
+    found = _dangling(plan_robustify(tmp_path))
+    assert len(found) == 1 and "%20" in found[0].detail
+
+
+def test_an_encoded_space_names_a_different_file_from_a_literal_one(tmp_path):
+    """The false green and the false red of the same defect, pinned as one pair.
+
+    `a.md` exists; `[x](%20a.md)` denotes `" a.md"`, which does not. Stripping after decoding made
+    the first answer the second — clean over a broken link. And with `" a.md"` present instead, the
+    same bug reported the link dead while naming `a.md`, a path the link never had: a false red on a
+    live file, pointing the reader at the wrong neighbour.
+
+    Reaches the encoded branch specifically. The literal-`\\xa0` test above cannot: with no escape in
+    the href the decoded and raw forms are identical, so half of this function is never exercised.
+    """
+    _w(tmp_path / "one" / "a.md", "# a\n")
+    _w(tmp_path / "one" / "doc.md", f"---\nuuid: {U_A}\n---\n\n[x](%20a.md)\n")
+
+    found = _dangling(plan_robustify(tmp_path / "one"))
+    assert len(found) == 1, f"an encoded space was treated as a delimiter: {found}"
+    assert "%20a.md" in found[0].detail                      # the link as written
+    assert found[0].detail.rstrip(") ").endswith("/ a.md")   # the path it really denotes
 
 
 def test_whitespace_before_a_bare_fragment_is_not_a_dangling_target(tmp_path):
@@ -361,14 +387,19 @@ def test_encoded_and_fragment_spellings_of_a_real_target_are_stripped(tmp_path):
 
     A version of this rule computed the stripped path for the emptiness check and then resolved
     `href.strip()` — a different string. `.strip()` on the raw href cannot reach a space sitting
-    before a `#`, and the percent-encoded branch was never stripped at all, so all three of these
-    resolved to `dir/ B.md ` or `dir/B.md ` and were reported dead while `B.md` sat right there.
+    before a `#`, so these resolved to `dir/B.md ` and were reported dead while `B.md` sat there.
 
     A false RED on a live file is not the mirror of a false green, it is how a gate gets switched
     off — so it is pinned per spelling, not as one case.
+
+    ⚠️ `%20B.md ` was in this list and has been **removed**, because listing it here was itself the
+    defect. Its trailing space is a delimiter and goes; its `%20` is content and stays, so the link
+    denotes `" B.md"` and is dead when only `B.md` exists. Asserting it clean pinned a false green —
+    a test enforcing the bug it was written to prevent. It now lives in
+    `test_an_encoded_space_names_a_different_file_from_a_literal_one`, asserting the opposite.
     """
     _w(tmp_path / "B.md", "# B\n")
-    for i, href in enumerate(["%20B.md ", " B.md #s", "B.md #s", " B.md "]):
+    for i, href in enumerate([" B.md #s", "B.md #s", " B.md "]):
         _w(tmp_path / f"doc{i}.md", f"---\nuuid: {U_A}\n---\n\n[x]({href})\n")
 
     assert _dangling(plan_robustify(tmp_path)) == []
@@ -391,3 +422,21 @@ def test_only_ascii_whitespace_is_stripped_from_a_destination(tmp_path):
 
     found = _dangling(plan_robustify(tmp_path))
     assert len(found) == 3, f"a non-ASCII space was treated as whitespace: {found}"
+
+
+def test_every_character_of_the_commonmark_whitespace_set_is_stripped(tmp_path):
+    """All six, one file each — because a set is a claim about six characters, not about one.
+
+    Only the space was exercised, so dropping `\\t`, `\\r`, `\\x0b` or `\\x0c` from the constant left
+    the suite green. VT and FF are the surprising members and the easiest to "tidy away"; they are
+    in CommonMark's definition, verified against the reference implementation, so they are pinned
+    here rather than defended in a comment.
+
+    Uses a NON-newline set only where a newline could not appear inside a link destination anyway.
+    """
+    _w(tmp_path / "B.md", "# B\n")
+    for i, ws in enumerate([" ", "\t", "\r", "\x0b", "\x0c"]):
+        _w(tmp_path / f"doc{i}.md", f"---\nuuid: {U_A}\n---\n\n[x]({ws}B.md{ws})\n")
+
+    found = _dangling(plan_robustify(tmp_path))
+    assert found == [], f"a CommonMark whitespace character was kept as part of the path: {found}"
