@@ -68,14 +68,25 @@ def _anchor_target(href: str, linking_file: Path, extra_targets: AbstractSet[Pat
     return None
 
 
-#: CommonMark whitespace, which is ASCII-only: space, tab, LF, VT, FF, CR. Deliberately NOT
-#: `str.strip()`'s default — that removes every character Python calls whitespace, including NBSP
-#: (`\xa0`) and the ideographic space (`　`), which CommonMark treats as ordinary characters.
-#: A file really can be named `\xa0a.md`, and stripping the NBSP made a link to a MISSING file
-#: resolve to an existing neighbour and report clean: a false green, in the one function this
-#: feature owns. NBSP is also exactly what arrives from a Word or HTML paste — the same corpus
-#: that motivated the feature. FR-052.
-_CM_WHITESPACE = " \t\n\r\x0b\x0c"
+#: What delimits a link destination — and **the two edges are not the same set**. Adjudicated
+#: against the reference implementation, not read off the spec. `cmark` gives:
+#:
+#:     [x](\x0ba.md)  ->  href "a.md"       VT leading  : delimiter, dropped
+#:     [x](a.md\x0b)  ->  href "a.md%0B"    VT trailing : CONTENT, kept
+#:
+#: Same for FF. A symmetric strip of all six therefore turns `[x](a.md\x0b)`, which denotes
+#: `a.md\x0b`, into `a.md` — so a link to a MISSING file is answered by an existing neighbour.
+#: A false green, in the one function this feature owns.
+#:
+#: Both sets are ASCII, deliberately NOT `str.strip()`'s default: that removes everything Python
+#: calls whitespace, including NBSP (`\xa0`) and the ideographic space, which CommonMark keeps as
+#: ordinary characters — and NBSP is exactly what a Word or HTML paste produces.
+#:
+#: Four rounds of review each closed one dimension of this rule and re-derived the next from the
+#: prose beside it. The asymmetry is the fourth, and it was caught the same way as the third: by
+#: asking the parser instead of the neighbouring rule. FR-052.
+_CM_WS_LEADING = " \t\n\r\x0b\x0c"
+_CM_WS_TRAILING = " \t\n\r"
 
 
 def _dangling_target(href: str, linking_file: Path) -> Path | None:
@@ -116,7 +127,7 @@ def _dangling_target(href: str, linking_file: Path) -> Path | None:
     # It came from borrowing FR-046/FR-047's reasoning — *"those spellings denote the same
     # destination"* — which is true of a revealed scheme or absolute path and FALSE of whitespace:
     # `%20a.md` and ` a.md` are different destinations. One clause, five documents, four rounds.
-    raw_stripped = path_part.strip(_CM_WHITESPACE)
+    raw_stripped = path_part.lstrip(_CM_WS_LEADING).rstrip(_CM_WS_TRAILING)
     if not raw_stripped:
         return None
     decoded = unquote(raw_stripped)

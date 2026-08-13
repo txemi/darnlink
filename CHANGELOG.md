@@ -56,6 +56,13 @@ All notable changes to darnlink are documented here. The format is based on
     denotes `" a.md"` — checked against the reference CommonMark implementation, which emits
     `href="a.md"` for the first and `href="%20a.md"` for the second. Stripping afterwards made them
     the same link, so a link to a **missing** file was answered by an existing neighbour.
+  - **The two edges are not the same set.** `cmark` strips VT and FF at the start of a destination
+    and keeps them at the end (`[x](a.md\x0b)` → `href="a.md%0B"`), so a symmetric strip is itself a
+    false green. Leading: space, tab, LF, CR, VT, FF. Trailing: space, tab, LF, CR.
+  - **The rule is POSIX-shaped.** Windows trims trailing spaces from a path component, so
+    `[x](a.md%20)` normalises to `a.md` there and is not dangling. That is the filesystem's answer
+    and this axis exists to ask the filesystem — but a consumer should read it here, not discover it
+    from a build that is red on one OS only.
   - **ASCII whitespace only**, which is what CommonMark counts. A bare `str.strip()` also removes
     NBSP and the ideographic space; a file can be named `\xa0a.md`, so that hid a broken link too —
     and NBSP is precisely what a Word or HTML paste produces.

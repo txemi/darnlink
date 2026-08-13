@@ -256,6 +256,16 @@ be fixed, or the ceiling raised, *before* the pin moves — not after.
   makes those two the same link, which is a **false green** when only `a.md` exists and a **false
   red** naming the wrong path when `" a.md"` does. This is where FR-046/FR-047's reasoning must NOT
   be borrowed: their spellings do denote the same destination, and whitespace's do not.
+  ⚠️ **The two edges are not the same set.** Adjudicated against the reference implementation:
+  `cmark` strips VT and FF at the START of a destination and keeps them at the END
+  (`[x](a.md\x0b)` → `href="a.md%0B"`). A symmetric strip is therefore a false green. Leading:
+  space, tab, LF, CR, VT, FF. Trailing: space, tab, LF, CR.
+
+  ⚠️ **And the rule is POSIX-shaped.** Windows trims trailing spaces and dots from a path component,
+  so `[x](a.md%20)` — which denotes `"a.md "` — normalises to `a.md` there and is not dangling. That
+  is the filesystem's answer and this axis exists to ask the filesystem, but the asymmetry is real
+  and is stated here rather than left for a consumer to discover from a red build on one OS only.
+
   The whitespace stripped MUST
   be **CommonMark's, which is ASCII** — space, tab, LF, VT, FF, CR — and never Python's
   `str.strip()` default, which also removes NBSP and the ideographic space. Those are ordinary

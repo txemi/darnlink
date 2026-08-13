@@ -439,19 +439,40 @@ def test_only_ascii_whitespace_is_stripped_from_a_destination(tmp_path):
     assert len(found) == 3, f"a non-ASCII space was treated as whitespace: {found}"
 
 
-def test_every_character_of_the_commonmark_whitespace_set_is_stripped(tmp_path):
-    """All six, one file each — because a set is a claim about six characters, not about one.
+def test_the_delimiter_set_is_asymmetric_between_the_two_edges(tmp_path):
+    """VT and FF delimit a destination on the LEFT and are content on the RIGHT. Per `cmark`:
 
-    Only the space was exercised, so dropping `\\t`, `\\r`, `\\x0b` or `\\x0c` from the constant left
-    the suite green. VT and FF are the surprising members and the easiest to "tidy away"; they are
-    in CommonMark's definition, verified against the reference implementation, so they are pinned
-    here rather than defended in a comment.
+        [x](\\x0bB.md)  ->  href "B.md"       leading  : delimiter
+        [x](B.md\\x0b)  ->  href "B.md%0B"    trailing : content
 
-    Uses a NON-newline set only where a newline could not appear inside a link destination anyway.
+    So a symmetric strip of all six is a **false green**: `[x](B.md\\x0b)` denotes `B.md\\x0b`, and
+    stripping the VT resolves it to `B.md`, which exists — a link to a missing file answered by an
+    existing neighbour.
+
+    ⚠️ The first version of this test asserted the symmetric behaviour and its docstring claimed it
+    was *"verified against the reference implementation"*. It was not: the `%20` half of this rule
+    was adjudicated against `cmark`, and this half was re-derived from the spec prose next to it —
+    the exact substitution the commit that wrote it had just forbidden. Naming that here because a
+    test that asserts a falsehood *while citing a verification* is worse than one with no rationale
+    at all: it stops the next reader from checking.
+
+    LF is absent from the fixture on purpose: a raw newline cannot occur inside a `(...)`
+    destination, so a test using one would pin behaviour on input the grammar never produces.
     """
     _w(tmp_path / "B.md", "# B\n")
-    for i, ws in enumerate([" ", "\t", "\r", "\x0b", "\x0c"]):
-        _w(tmp_path / f"doc{i}.md", f"---\nuuid: {U_A}\n---\n\n[x]({ws}B.md{ws})\n")
+    leading = [" ", "\t", "\r", "\x0b", "\x0c"]
+    trailing_delims = [" ", "\t", "\r"]
+    trailing_content = ["\x0b", "\x0c"]
+
+    for i, ws in enumerate(leading):
+        _w(tmp_path / f"lead{i}.md", f"---\nuuid: {U_A}\n---\n\n[x]({ws}B.md)\n")
+    for i, ws in enumerate(trailing_delims):
+        _w(tmp_path / f"tail{i}.md", f"---\nuuid: {U_A}\n---\n\n[x](B.md{ws})\n")
+    for i, ws in enumerate(trailing_content):
+        _w(tmp_path / f"keep{i}.md", f"---\nuuid: {U_A}\n---\n\n[x](B.md{ws})\n")
 
     found = _dangling(plan_robustify(tmp_path))
-    assert found == [], f"a CommonMark whitespace character was kept as part of the path: {found}"
+    names = sorted(f.file.name for f in found)
+    assert names == ["keep0.md", "keep1.md"], (
+        f"the two edges were treated alike; expected only the trailing VT/FF to dangle: {names}"
+    )
