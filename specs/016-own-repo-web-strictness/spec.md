@@ -158,8 +158,8 @@ into it later.
 
 ### Adoption: a budget, not a cliff
 
-The budget is **`--own-max N`**: fail only above it, and print the "lower it to N" nudge when the
-count drops. Without it, switching the axis on fails several repos at once on day one, and an axis
+The budget is **`--own-max N`**: fail only above it, and say where the count stands relative to it —
+in all four cases, not only when it drops (FR-013). Without it, switching the axis on fails several repos at once on day one, and an axis
 that cannot be adopted incrementally gets turned off instead of obeyed — the lesson 015 already paid.
 
 **The gate-recipe wiring is deliberately NOT in this spec.** Three review rounds spent their findings
@@ -392,17 +392,29 @@ convenience needs a named sentence in P-IV.
   the same uuid-less file cost 2, and one edit at the destination clears both. `web_own_exempt` never
   counts. Other exit-4 causes are unaffected: one budgeted finding plus one real `web_not_found`
   still exits 4. The findings are always reported — the budget silences the *verdict*, never the
-  *finding*. Omitting the flag MUST be distinguishable from `--own-max 0` (default `None`); the observable
-  difference is FR-013's message, not the exit code, which is the same for both. `--own-max` without
+  *finding*. Omitting the flag MUST be distinguishable from `--own-max 0` (default `None`) **on both
+  surfaces**: in the text report through FR-013's message, and in `--json` through an **`own_max` key
+  carrying the budget's own value** — the nudges live in the text branch and never reach the payload,
+  so without that key the two runs are byte-identical there. The exit code is the same for both. `--own-max` without
   any owner set MUST be a usage error (exit 1).
-- **FR-013** When the count is at or below a non-zero `--own-max`, the report MUST print the count and
-  say that lowering the budget to that number keeps the ratchet; when the count reaches **zero** it
-  MUST say to drop the flag entirely. Both nudges, as `dangling_max` gives. A budget nobody is told to
-  lower is a budget that never goes down. When the count is **above zero** and under budget, the run's
-  outcome word MUST also say so: today exit 0 prints `clean`, and printing `clean` with findings on
-  screen is exactly the misreading this project's consumers have already paid for. At **zero** it must
-  keep saying `clean` — an obsolete `--own-max 5` on an already-clean repo must not make a clean run
-  look qualified.
+- **FR-013** The report MUST always say where the count stands relative to the budget, in **four**
+  branches — the shape the `dangling` precedent actually has, which an earlier draft of this
+  requirement got wrong by naming only two:
+  - **zero** → say to drop the flag entirely; the rule is a rule again.
+  - **strictly below** a non-zero budget → say that lowering it to the count keeps the ratchet.
+  - **exactly at** the budget → say so, and point at the next step (fix one, lower it by one).
+    *"Lower the budget to 2" when the budget is already 2 instructs nobody*, and this is the state a
+    repo sits in for most of an adoption, so it is the message printed most often.
+  - **over** the budget → say so too. The run already fails on its own, but a budget that goes silent
+    exactly when it is exceeded is the one moment its number is most worth reading.
+
+  A budget nobody is told to lower is a budget that never goes down, which is why all four branches
+  speak. Separately, when the count is **above zero** and within budget the run's **outcome word**
+  MUST say so: today exit 0 prints `clean`, and printing `clean` with findings on screen is exactly
+  the misreading this project's consumers have already paid for. At **zero** it must keep saying
+  `clean` — an obsolete `--own-max 5` on an already-clean repo must not make a clean run look
+  qualified. Unlike the four branches, this clause is conditioned on the exit code, because it is the
+  word that reports it.
 - **FR-014** The new finding MUST compose with the file-level opt-outs: a file carrying
   `darnlink-ignore-file` (003) or `darnlink-ignore-links` (006) MUST NOT produce it. The link is still
   fetched and still reported — it degrades to `web_unverifiable`, it does not vanish — because
@@ -523,8 +535,9 @@ resolves through `git config`.
     `web_not_found`, exit 4 — status decides before the exemption (§Precedence).
 13. **Owner case.** `--own OWNED` against a `owned/repo/…` URL is owned, and vice versa (FR-001).
 14. **Budget.** With two owned uuid-less destinations: `--own-max 2` → both reported, exit **0**, the
-    outcome word is not `clean`, and the report says to lower the budget to 2; `--own-max 1` → exit
-    **4**; `--own-max 2` with an additional real `web_not_found` → exit **4** (FR-012). `--own-max`
+    outcome word is not `clean`, and the report says the count is **exactly at** the budget and to fix
+    one and lower it to 1 — not "lower it to 2", which would be a no-op; `--own-max 3` → the
+    lower-it-to-2 nudge; `--own-max 1` → exit **4**, and the report still says where the count stands; `--own-max 2` with an additional real `web_not_found` → exit **4** (FR-012). `--own-max`
     with no owner set → exit 1. Two links in **different files** pointing at the **same** uuid-less
     destination count as **2** (FR-012 counts findings, not destinations).
 15. **Composition.** The same failing link degrades to `web_unverifiable` — reported, not silent, and
