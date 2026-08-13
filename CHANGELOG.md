@@ -59,7 +59,15 @@ All notable changes to darnlink are documented here. The format is based on
   carry raw spaces and are **not links at all** in CommonMark, 6 are unbalanced. Gate-scope
   differential: **1867 → 1862** dangling — five false reds removed, **zero findings gained**.
 
-  ⚠️ **Bounded at two levels of nesting, with a deliberate fallback.** CommonMark allows arbitrary
+  ⚠️ **Two guards, both of which exist because the first version of this fix produced a false
+  green.** The destination class is `[^()\s]`, not `[^()]`: a destination outside `<…>` cannot
+  contain whitespace, and without that exclusion an *unmatched* `(` let the pattern run past the
+  link's own `)` — across lines — absorbing a following healthy link, which then ceased to exist
+  for the tool. And the pattern ends in `|[^)]+`, so a link nested past the bound degrades to the
+  old truncating behaviour rather than ceasing to match. Both restore *visible and wrong* rather
+  than *silent*.
+
+  ⚠️ **Bounded at two levels of nesting.** CommonMark allows arbitrary
   depth and a regex cannot; the pattern ends in `|[^)]+` so that a link nested past the bound
   degrades to the **old truncating behaviour** rather than ceasing to match. Without that, it would
   become invisible — a false green, which is strictly worse than the false red being removed.

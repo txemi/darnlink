@@ -12,7 +12,7 @@ from typing import List, Sequence, Tuple
 
 # A robust link: a Markdown link immediately followed (any whitespace) by a uuid HTML comment.
 ROBUST_LINK_RE = re.compile(
-    r"\[(?P<text>[^\]]*)\]\((?P<href>(?:[^()]|\((?:[^()]|\([^()]*\))*\))+|[^)]+)\)\s*<!--\s*uuid:\s*(?P<uuid>[0-9a-fA-F-]{36})\s*-->"
+    r"\[(?P<text>[^\]]*)\]\((?P<href>(?:[^()\s]|\((?:[^()\s]|\([^()\s]*\))*\))+|[^)]+)\)\s*<!--\s*uuid:\s*(?P<uuid>[0-9a-fA-F-]{36})\s*-->"
 )
 # Any inline Markdown link. `text` is `*`, not `+`: `[](dest)` is a link with empty text, and the
 # empty alt of `![](dest)` is what pandoc emits for every image in a converted .docx/.odt. Requiring
@@ -31,12 +31,22 @@ ROBUST_LINK_RE = re.compile(
 #: The ninth is triple nesting, which no bounded pattern reaches — it needs the scanner tracked
 #: in #74, and it occurs 0 times in the fleet.
 #:
-#: ⚠️ The trailing `|[^)]+` is what makes the bound SAFE, and it is the whole point of the
-#: alternation. Without it, a link nested past the bound stops matching **at all** — it becomes
-#: invisible, which is a FALSE GREEN, and a false green is strictly worse than the false red
-#: this change removes. With it, such a link degrades to exactly the old truncating behaviour:
-#: still wrong, still visible, still reported. Never trade a false red for a false green.
-MD_LINK_RE = re.compile(r"\[(?P<text>[^\]]*)\]\((?P<href>(?:[^()]|\((?:[^()]|\([^()]*\))*\))+|[^)]+)\)")
+#: ⚠️ **Two guards, and both exist because the first version of this change produced a FALSE
+#: GREEN — the outcome its own comment declared unacceptable.**
+#:
+#: * `[^()\s]`, not `[^()]`. A destination outside `<…>` cannot contain whitespace; CommonMark
+#:   says so, and without that exclusion the balanced branch pairs an *unmatched* `(` with the
+#:   link's own `)` and keeps running — across lines — until some later lone `)`. Everything
+#:   between is absorbed, and because `finditer` never restarts inside a match, a healthy link
+#:   caught in that span **ceases to exist for the tool**. Measured: `[a](f(x.md) blah [b](t.md)
+#:   tail)` lost `t.md` entirely. Excluding whitespace makes the branch fail at the first space,
+#:   so such input falls to the fallback and behaves exactly as it did before this change.
+#: * The trailing `|[^)]+`. Without it, a link nested past the bound stops matching at all —
+#:   invisible again, by the other route.
+#:
+#: Both restore the OLD truncating behaviour rather than silence: still wrong, still visible,
+#: still reported. **Never trade a false red for a false green.**
+MD_LINK_RE = re.compile(r"\[(?P<text>[^\]]*)\]\((?P<href>(?:[^()\s]|\((?:[^()\s]|\([^()\s]*\))*\))+|[^)]+)\)")
 # A uuid comment that immediately follows a link (used to tell plain from robust).
 # No `^`: it is applied with .match(content, pos), which already anchors at pos.
 _TRAILING_UUID_RE = re.compile(r"\s*<!--\s*uuid:\s*[0-9a-fA-F-]{36}\s*-->")

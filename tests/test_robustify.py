@@ -376,3 +376,23 @@ def test_absorbing_a_stray_does_not_eat_a_closing_paren_of_prose(tmp_path):
 
     a = (tmp_path / "A.md").read_text()
     assert a == f"(see [x](B.md) <!-- uuid: {EXISTING} -->)\n", f"bad rewrite: {a!r}"
+
+
+def test_repair_finds_a_robust_link_whose_destination_has_parens(tmp_path):
+    """`ROBUST_LINK_RE` widened too, and reverting that half alone left the whole suite green.
+
+    Real damage under that revert: an anchored link whose destination carries balanced parentheses
+    is not recognised as robust at all, so when its target moves `repair` returns **no finding** —
+    the stale path survives and the gate stays green. The coupling is the same one FR-051
+    established; what was missing was a test that fails when it is broken.
+    """
+    from darnlink.frontmatter_index import build_index
+    from darnlink.repair import plan_repairs, apply_repairs
+
+    _w(tmp_path / "new" / "a(b).md", f"---\nuuid: {EXISTING}\n---\n# a\n")
+    _w(tmp_path / "A.md", f"see [r](old/a(b).md) <!-- uuid: {EXISTING} -->\n")
+
+    apply_repairs(plan_repairs(tmp_path, build_index(tmp_path)))
+
+    a = (tmp_path / "A.md").read_text()
+    assert "new/a(b).md" in a, f"repair did not see the parenthesised robust link: {a!r}"

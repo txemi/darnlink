@@ -363,13 +363,30 @@ def test_nesting_beyond_two_levels_is_a_known_limit_not_a_property(tmp_path):
     assert "a(b(c(d" in found[0].detail          # truncated at the bound, as documented
 
 
-def test_prose_parentheses_after_a_link_are_not_swallowed(tmp_path):
-    """The risk of widening: `[x](a.md) (an aside)` must stay one link plus prose, not one long href.
+def test_an_unbalanced_paren_must_not_swallow_the_next_link(tmp_path):
+    """The guard that the first version of this change did not have, and needed most.
 
-    A pattern that allowed unbalanced parens would eat the aside; the balanced form cannot, and this
-    pins it — the same class of check that the empty-text widening needed at its own boundary.
+    `[^()]` matches `[`, `]` and newlines, so an **unmatched** `(` in one destination let the
+    balanced branch pair it with that link's own `)` and keep running until some later lone `)`.
+    Everything between was absorbed — and `finditer` never restarts inside a match, so a healthy
+    link caught in that span **ceased to exist for the tool**. A false green, produced by the very
+    change whose comment forbids trading a false red for one.
+
+    `cmark` sees exactly one link here, `t.md`. What darnlink must not do is see zero.
+
+    The fix is CommonMark's own rule rather than a patch: a destination outside `<…>` cannot
+    contain whitespace, so `[^()\\s]` makes the branch stop at the first space and the input falls
+    to the `|[^)]+` fallback — i.e. back to the pre-change behaviour, which was wrong but visible.
+
+    ⚠️ This replaces a test that asserted prose after a link is not swallowed. That one was a
+    tautology: no variant of this pattern can cross a bare `)`, so the aside was never at risk, and
+    the seed it claimed to guard against left it green.
     """
-    _w(tmp_path / "a.md", "x\n")
-    _w(tmp_path / "doc.md", f"---\nuuid: {U_A}\n---\n\n[r](a.md) (un inciso entre parentesis)\n")
+    _w(tmp_path / "t.md", "# t\n")
+    _w(tmp_path / "doc.md",
+       f"---\nuuid: {U_A}\n---\n\n[a](f(x.md) blah [b](t.md) tail)\n")
 
-    assert _dangling(plan_robustify(tmp_path)) == []
+    found = _dangling(plan_robustify(tmp_path))
+    detalles = " ".join(f.detail for f in found)
+    assert "t.md) tail" not in detalles, f"the following link was swallowed: {detalles}"
+    assert "f(x.md" in detalles, f"the unbalanced link should still be reported: {detalles}"
