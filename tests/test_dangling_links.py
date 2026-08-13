@@ -264,8 +264,9 @@ def test_pandoc_attribute_suffix_does_not_hide_the_target(tmp_path):
     """#52 reported the `{width="…"}` suffix as the cause. It is not — but it must keep working.
 
     `![alt](x){width="1.1in"}` was already visible: the regex stops at the `)` and never looks at
-    what follows. Both halves are pinned here so the true cause (the empty alt) cannot be re-fixed
-    later by someone reaching for the suffix instead.
+    what follows. This pins the empty-alt half; the non-empty-alt half is the test below, and both
+    are needed — a wrong fix that widened the grammar to *consume* the suffix would pass this one
+    alone, since every other test in this file uses an empty alt.
     """
     _w(tmp_path / "doc.md", f'---\nuuid: {U_A}\n---\n\n![](gone.png){{width="1.1in"}}\n')
 
@@ -279,3 +280,29 @@ def test_a_plain_link_with_empty_text_is_reported_too(tmp_path):
 
     found = _dangling(plan_robustify(tmp_path))
     assert len(found) == 1 and "gone.md" in found[0].detail
+
+
+def test_a_non_empty_alt_with_the_pandoc_suffix_is_still_seen(tmp_path):
+    """The other half of the suffix pin: a link WITH text and a `{…}` suffix must keep working.
+
+    Without this case, a wrong fix that widened the grammar to *consume* `{width="…"}` would pass
+    every other test in this file — they all use an empty alt, so none of them exercises the suffix
+    against a link the old regex already matched.
+    """
+    _w(tmp_path / "doc.md", f'---\nuuid: {U_A}\n---\n\n![shot](gone.png){{width="1.1in"}}\n')
+
+    found = _dangling(plan_robustify(tmp_path))
+    assert len(found) == 1 and "gone.png" in found[0].detail
+
+
+def test_a_whitespace_only_href_is_not_a_dangling_target(tmp_path):
+    """FR-052: `[]( )` names no destination, so there is nothing to check.
+
+    `[]()` never matched (`href` is `[^)]+`) but `[]( )` does, and resolving it gives the linking
+    file's own directory with a blank name — a finding reading `line 5:  : target does not exist`,
+    which names nothing anyone can go and look for. Widening the *text* must not smuggle in a
+    finding about the *href*.
+    """
+    _w(tmp_path / "doc.md", f"---\nuuid: {U_A}\n---\n\n[]( )\n")
+
+    assert _dangling(plan_robustify(tmp_path)) == []

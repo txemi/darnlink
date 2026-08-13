@@ -81,6 +81,12 @@ def _dangling_target(href: str, linking_file: Path) -> Path | None:
     """
     if not is_local_relative(href):
         return None                       # FR-046: scheme, protocol-relative, absolute, bare #frag
+    # FR-052: an href that is only whitespace names no destination, so there is nothing to check.
+    # `[]()` never matched (`href` is `[^)]+`), but `[]( )` does, and resolving it yields the linking
+    # file's own directory with a blank name -- a finding whose text reads `line 5:  : target does
+    # not exist`, naming nothing the reader can go and look for.
+    if not href.strip():
+        return None
     # FR-047: `resolve_href` does not percent-decode, so `my%20file.md` resolves to a path that never
     # exists. Judging the raw spelling alone would report every percent-encoded link in a tree — the
     # kind of false positive that gets a gate switched off rather than fixed.

@@ -14,15 +14,28 @@ All notable changes to darnlink are documented here. The format is based on
   of broken image embeds, which reads as *"no broken links"* but only ever meant *"none of the
   shapes the regex recognises"*.
 
-  Measured on one repository running the wall at maximum: **7 links of this shape, 7 of them broken,
-  0 visible** — and none with a valid target, so the corpus offered no counter-example either. Since
-  those files are converted documents, they arrive in blocks and nobody re-reads them.
+  Measured on one repository running the wall at maximum, in its own gate scope: **127 links with
+  empty text, 7 of them pointing at a target that does not exist**, and the axis printed
+  `dangling: 0`. Since those files are converted documents, they arrive in blocks and nobody
+  re-reads them.
+
+  ⚠️ **Adopting this is not a no-op for a consumer.** `MD_LINK_RE` is shared by four call sites, so
+  the same repository also gains **36 newly visible web links** (none a `/blob/` URL today, so its
+  web gate does not flip — the shape of those URLs, not a guarantee), and `--create-readme` gains a
+  path where `![](media/)` can create a `README.md`. A repo at `dangling: repo` with `dangling_max`
+  unset goes **0 → 7 and its push wall closes**: fix the links or raise the ceiling *before* moving
+  the pin, not after.
 
   Reported as the pandoc attribute suffix (`{width="1.1in"}`) hiding the link; it was not.
   The pattern stops at the `)` and never looks past it, so `![alt](x.jpg){width="1.1in"}` was always
   seen. The two shapes simply co-occur. Both are pinned in tests so the real cause — the empty text —
   cannot be re-diagnosed from the same coincidence. `ROBUST_LINK_RE` widens alongside `MD_LINK_RE`,
-  so an anchored empty-text link cannot be plain to one function and robust to another. FR-051.
+  so an anchored empty-text link cannot be plain to one function and robust to another — a coupling
+  that matters to the **repair** axis and has its own tests, since reverting that half alone leaves
+  every `dangling` test green. FR-051.
+- **`[]( )` — an href of pure whitespace — was reported as a dangling target.** It resolved to the
+  linking file's own directory with a blank name, so the finding read `line 5:  : target does not
+  exist`, naming nothing anyone could go and look for. FR-052.
 - **A tokenless `403` is the anonymous rate limit, not a private repo — and the web axis now says so
   instead of printing a quiet `clean`.** `web-check` reported *"cannot read destination: private repo
   and no token provided"* for any `403` without a token. That was wrong every time: GitHub answers

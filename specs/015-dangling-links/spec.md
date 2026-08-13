@@ -106,8 +106,17 @@ it is exactly the kind nobody re-reads — a converted document, filed and trust
 The failure mode is the one this whole feature exists to prevent, one level deeper. `dangling: 0` is
 read as *"no broken links"*. It only ever meant *"none of the shapes the regex recognises"*, and the
 gap between those two readings is invisible from the output. Measured on one repository running the
-wall at maximum: **7 links of this shape, 7 of them broken, 0 visible** — and 0 links of this shape
-with a target that exists, so the corpus offered no counter-example either.
+wall at maximum, in that repo's own gate scope: **127 links with empty text, of which 7 point at a
+target that does not exist** — and the axis reported `dangling: 0`.
+
+> ⚠️ **An earlier draft of this paragraph said "7 links of this shape, 7 broken, 0 with a target that
+> exists, so the corpus offered no counter-example".** All three numbers were wrong, and the last was
+> the dangerous one: it argued the change was safe *because* nothing else of this shape existed, when
+> 83 links with a valid target and 36 web links did. The measurement behind it had counted a
+> **narrower** shape than the sentence claimed — images carrying a pandoc attribute suffix, not
+> empty-text links — and the gap was invisible because both counts were called "this shape". A
+> widening is justified by what it newly matches, so counting the subset that motivated it and
+> presenting that as the total inverts the argument.
 
 Note what this is **not**. The bug was reported as the pandoc attribute suffix (`{width="1.1in"}`)
 hiding the link. That suffix is harmless: the pattern stops at the `)` and never looks past it, and
@@ -115,9 +124,35 @@ hiding the link. That suffix is harmless: the pattern stops at the `)` and never
 once, which is what made the suffix the plausible-looking cause. Both are pinned in the tests so the
 true cause cannot be re-diagnosed later from the same coincidence.
 
-`href` keeps its `+`: a link with no destination has nothing to check. And `ROBUST_LINK_RE` widens
-with `MD_LINK_RE` deliberately — leaving it narrow would make an anchored `[](path) <!-- uuid: … -->`
-plain to one function and robust to another, and the tool's uuid bookkeeping assumes those two agree.
+`href` keeps its `+`: a link with no destination has nothing to check. That was stated before it was
+true — `[]()` never matched, but `[]( )` did, and resolved to the linking file's own directory with a
+blank name, producing a finding that read `line 5:  : target does not exist`. FR-052 makes the
+behaviour match the claim.
+
+`ROBUST_LINK_RE` widens with `MD_LINK_RE` deliberately — leaving it narrow would make an anchored
+`[](path) <!-- uuid: … -->` plain to one function and robust to another, and the tool's uuid
+bookkeeping assumes those two agree. **That coupling is load-bearing for `repair`, not for
+`dangling`**: an anchored empty-text link was invisible to *both* finders before, so its uuid never
+reached the repair axis and a moved target silently stopped being healed — a false green one axis
+over from the one this feature names. It needs its own tests, because reverting that half alone
+leaves every `dangling` test green (measured: 0 failures before those tests existed, 3 after).
+
+### What else the widening newly exposes
+
+`MD_LINK_RE` is shared by four consumers, so the blast radius is not confined to `dangling`.
+Measured on the same repository:
+
+| Consumer | Effect |
+|---|---|
+| `dangling` | +7 findings, all real broken image embeds; **0 findings lost** |
+| web axis (`find_web_links`) | **+36** links newly visible. None is a `/blob/` URL, so no anchor is demanded and the gate does not flip — but that is the shape of *these* URLs, not a property of the change. One `[](https://github.com/o/r/blob/main/x.md)` anywhere would now exit 3 |
+| `robustify --write` | an existing target behind an empty-text link now receives a uuid anchor; the `!` of an embed sits outside the match span and is preserved |
+| `--create-readme` | `[](sub/)` and `![](media/)` can now **create** `sub/README.md`. 0 occurrences in the measured corpus, so this is live but unexercised |
+| `find_detached_anchors` | absorption changes only where an empty-text link now legitimately claims a trailing comment. `DetachedAnchor` is not a reported `Kind`, so no finding disappears |
+
+**Adopting a darnlink with this change is not a no-op for a consumer at `dangling: repo` with
+`dangling_max` unset**: the repository above goes `0 → 7` and its push wall closes. The 7 links must
+be fixed, or the ceiling raised, *before* the pin moves — not after.
 
 ## Requirements *(mandatory)*
 
@@ -125,10 +160,14 @@ plain to one function and robust to another, and the tool's uuid bookkeeping ass
 
 - **FR-041**: A plain relative link in a scanned Markdown file whose resolved target path **does not
   exist** MUST be reported as a `dangling` finding, naming the file, the line, the link as written,
-  and the resolved path. The line, link and resolved path travel in the finding's `detail`: no
-  finding kind has ever carried a line field, and widening the shared `Finding` record is outside
-  this feature. A dead link is acted on by opening it, so `file` + line is what makes the report
-  usable without a search.
+  and the resolved path. A dead link is acted on by opening it, so `file` + line is what makes the
+  report usable without a search.
+
+  > The line, link and resolved path travel in the finding's `detail`. This requirement used to add
+  > *"no finding kind has ever carried a line field, and widening the shared `Finding` record is
+  > outside this feature"* — **no longer true**: `Finding` grew an optional `line` (`report.py:37`)
+  > for the gate recipe's added-lines ratchet, and `robustify.py:397` fills it. The `detail` text is
+  > kept because callers parse it, not because the field is unavailable.
 - **FR-042**: `dangling` MUST be **report-only**. No mode, including `--write`, may create, move or
   otherwise alter anything in response to it.
 - **FR-043**: The target's extension MUST NOT affect whether the finding fires; only its existence.
@@ -153,6 +192,9 @@ plain to one function and robust to another, and the tool's uuid bookkeeping ass
   the same terms as one with text. The link text is what a reader sees; it has no bearing on whether
   the destination is there, and requiring at least one character of it made such links invisible to
   every axis, not merely unreported. See below.
+- **FR-052**: An href that is **only whitespace** MUST NOT be reported. It names no destination, so
+  there is nothing to check, and resolving it yields the linking file's own directory under a blank
+  name — a finding that names nothing a reader can act on.
 
 ### Key Entities
 
