@@ -34,8 +34,9 @@ All notable changes to darnlink are documented here. The format is based on
   excluded — a tag is textually indistinguishable from a branch of the same name.
 
   With no owner set, behaviour is unchanged byte for byte in the **text report, the exit code and the
-  files on disk**, with two named departures: the exemption marker, and two zero counters that
-  `--json` gains unconditionally so a consumer can tell the axis ran.
+  files on disk**, with two named departures: the exemption marker, and three keys that
+  `--json` gains unconditionally — the two new counters at zero, and `own_max` — so a consumer can
+  tell both that the axis ran and what budget it ran under.
 
 ## [0.20.5] — 2026-08-13
 

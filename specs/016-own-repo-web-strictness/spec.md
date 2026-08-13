@@ -392,8 +392,10 @@ convenience needs a named sentence in P-IV.
   the same uuid-less file cost 2, and one edit at the destination clears both. `web_own_exempt` never
   counts. Other exit-4 causes are unaffected: one budgeted finding plus one real `web_not_found`
   still exits 4. The findings are always reported — the budget silences the *verdict*, never the
-  *finding*. Omitting the flag MUST be distinguishable from `--own-max 0` (default `None`); the observable
-  difference is FR-013's message, not the exit code, which is the same for both. `--own-max` without
+  *finding*. Omitting the flag MUST be distinguishable from `--own-max 0` (default `None`) **on both
+  surfaces**: in the text report through FR-013's message, and in `--json` through an **`own_max` key
+  carrying the budget's own value** — the nudges live in the text branch and never reach the payload,
+  so without that key the two runs are byte-identical there. The exit code is the same for both. `--own-max` without
   any owner set MUST be a usage error (exit 1).
 - **FR-013** The report MUST always say where the count stands relative to the budget, in **four**
   branches — the shape the `dangling` precedent actually has, which an earlier draft of this
