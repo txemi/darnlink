@@ -20,5 +20,23 @@
 #
 # Bypass (discouraged): git commit --no-verify
 set -euo pipefail
-exec python3 "$(git rev-parse --show-toplevel)/tools/lang_gate.py" \
-    --prose "$1" --git-comments --label "commit message"
+# shellcheck source=/dev/null
+. "$(git rev-parse --show-toplevel)/tools/darnlang_ref.sh"
+
+command -v uvx >/dev/null 2>&1 || { echo "lang commit-msg: uvx not on PATH -> SKIPPING." >&2; exit 0; }
+
+# A uv resolution failure (offline, unreachable ref) exits 1 exactly like a real finding, so an
+# offline commit would be blocked by a message about a git ref while this header promises to skip.
+# The tell is the tool's own voice: darnlang prints a `darnlang:` line on every outcome. `set +e` is
+# required or errexit aborts before the guard can run -- which is how the first version of this fix
+# still failed closed in a sibling repo.
+set +e
+out=$(uvx --from "$DARNLANG_REF" darnlang prose "$1" --git-comments --label "commit message" 2>&1)
+rc=$?
+set -e
+if ! printf '%s' "$out" | grep -q '^darnlang:'; then
+  echo "lang commit-msg: darnlang could not run (offline? bad ref?) -> SKIPPING. CI still gates." >&2
+  exit 0
+fi
+printf '%s\n' "$out"
+exit "$rc"

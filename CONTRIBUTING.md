@@ -36,11 +36,11 @@ CI (`.github/workflows/ci.yml`) runs on every PR; please make sure it's green. A
 `hooks/pre-commit` is available — activate it with `bash setup.sh` (sets `core.hooksPath`).
 
 **Everything in this repo is written in English** — code, comments, docstrings, docs, spec files,
-commit messages, PR titles/descriptions, and issues. `tools/lang_gate.py` enforces it on four
-surfaces:
+commit messages, PR titles/descriptions, and issues. [`darnlang`](https://github.com/txemi/darnlang) enforces it on four surfaces, pinned by
+`tools/darnlang_ref.sh`:
 
 - **tracked files** (`.py` comments and docstrings, `.md` prose) — `tools/check.sh` and the `lang`
-  CI job;
+  CI job. File NAMES are judged too;
 - **commit messages** — `hooks/commit-msg`, plus a CI step over every commit the PR adds;
 - **PR title and description** — a CI step, so a non-English title blocks the merge;
 - **issues** — `.github/workflows/lang-issue.yml`. GitHub offers no way to gate an issue before it

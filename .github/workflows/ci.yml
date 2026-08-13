@@ -45,7 +45,9 @@ jobs:
       # No setup step on purpose: the gate is pure stdlib, so it cannot fail for reasons
       # unrelated to what it guards — which is how a gate keeps its credibility.
       - name: English-only gate — tracked files (fail-closed, baseline pinned at 0)
-        run: python3 tools/lang_gate.py --baseline
+        run: |
+          . tools/darnlang_ref.sh
+          uvx --from "$DARNLANG_REF" darnlang check --ext .py,.md
 
       # Commit messages: a surface no file gate can see, and one the local `hooks/commit-msg` cannot
       # be trusted to have covered — hooks are opt-in per clone and one `--no-verify` away. Measured
@@ -58,7 +60,9 @@ jobs:
           git log --format=%B \
             "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}" \
             > "$RUNNER_TEMP/msgs.txt"
-          python3 tools/lang_gate.py --prose "$RUNNER_TEMP/msgs.txt" --label "set of commit messages"
+          . tools/darnlang_ref.sh
+          uvx --from "darnlang[strict] @ $DARNLANG_REF" darnlang prose \
+            "$RUNNER_TEMP/msgs.txt" --strict --label "set of commit messages"
 
   # Exercises the commands users actually run (packaging + entry point + the literal README
   # one-liner) on Linux AND Windows — so the copy-paste one-liner is proven on both.

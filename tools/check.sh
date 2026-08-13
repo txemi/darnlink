@@ -14,7 +14,8 @@ cd "$(git rev-parse --show-toplevel)"
 # Fail-closed (baseline pinned at 0): darnlink measures zero offending lines, so demanding zero
 # costs nothing. Sibling repos that adopted the rule late run the same tool against a non-zero
 # baseline that may only shrink.
-python3 tools/lang_gate.py --baseline
+. tools/darnlang_ref.sh
+uvx --from "$DARNLANG_REF" darnlang check --ext .py,.md
 
 uv sync --extra dev   # set up the environment (project + dev deps), like CI's install step
 uv run pytest -q

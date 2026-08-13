@@ -26,6 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
       - name: English-only gate — PR title and description
         # The text travels through the environment, never interpolated into the shell. A PR title
         # on a public repo is written by anyone at all, and `run: echo "${{ github.event… }}"` is
@@ -35,4 +36,6 @@ jobs:
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
           printf '%s\n\n%s\n' "$PR_TITLE" "$PR_BODY" > "$RUNNER_TEMP/pr.txt"
-          python3 tools/lang_gate.py --prose "$RUNNER_TEMP/pr.txt" --label "PR title/description"
+          . tools/darnlang_ref.sh
+          uvx --from "darnlang[strict] @ $DARNLANG_REF" darnlang prose \
+            "$RUNNER_TEMP/pr.txt" --strict --label "PR title/description"

@@ -27,6 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
 
       - name: Judge the issue title and body
         id: check
@@ -37,11 +38,22 @@ jobs:
           ISSUE_BODY: ${{ github.event.issue.body }}
         run: |
           printf '%s\n\n%s\n' "$ISSUE_TITLE" "$ISSUE_BODY" > "$RUNNER_TEMP/issue.txt"
-          if python3 tools/lang_gate.py --prose "$RUNNER_TEMP/issue.txt" --label "issue"; then
-            echo "english=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "english=false" >> "$GITHUB_OUTPUT"
-          fi
+          . tools/darnlang_ref.sh
+          set +e
+          uvx --from "darnlang[strict] @ $DARNLANG_REF" darnlang prose \
+            "$RUNNER_TEMP/issue.txt" --strict --label issue
+          rc=$?
+          set -e
+          # THE EXIT CODE IS A CONTRACT, and this is the one place where confusing its values hurts
+          # a PERSON rather than a build. `if cmd; then` mapped EVERY non-zero to "wrong language",
+          # including 3 = "I could not run" -- so a broken gate would label a stranger's bug report
+          # and publicly tell them their language is wrong. Only 1 is a finding.
+          case "$rc" in
+            0) echo "english=true"  >> "$GITHUB_OUTPUT" ;;
+            1) echo "english=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::darnlang could not run (rc=$rc). Not labelling anybody over a broken gate."
+               exit "$rc" ;;
+          esac
 
       - name: Flag it
         if: steps.check.outputs.english == 'false'
