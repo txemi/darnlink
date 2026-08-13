@@ -93,6 +93,32 @@ Measured on the fleet: of the findings this feature adds over a hand-written che
 embeds, **six of fourteen were images pointing outside their repository** — screenshots that stopped
 rendering when a home directory was reorganised, and that no gate had ever mentioned.
 
+## Why an empty link text was the worse bug (FR-051)
+
+FR-050 above reasons about embeds on the assumption that `MD_LINK_RE` sees them. For one very common
+shape it did not: the pattern required `[^\]]+` — **at least one character** of link text — so
+`![](photo.jpg)` matched nothing at all. Not reported and dismissed: **absent**, never a candidate.
+
+That empty alt is not an edge case. It is what **pandoc emits for every image** when converting a
+`.docx` or `.odt`, so it arrives in whole blocks of files imported at once, and the file that carries
+it is exactly the kind nobody re-reads — a converted document, filed and trusted.
+
+The failure mode is the one this whole feature exists to prevent, one level deeper. `dangling: 0` is
+read as *"no broken links"*. It only ever meant *"none of the shapes the regex recognises"*, and the
+gap between those two readings is invisible from the output. Measured on one repository running the
+wall at maximum: **7 links of this shape, 7 of them broken, 0 visible** — and 0 links of this shape
+with a target that exists, so the corpus offered no counter-example either.
+
+Note what this is **not**. The bug was reported as the pandoc attribute suffix (`{width="1.1in"}`)
+hiding the link. That suffix is harmless: the pattern stops at the `)` and never looks past it, and
+`![alt](x.jpg){width="1.1in"}` was always seen. The two shapes co-occur because pandoc emits both at
+once, which is what made the suffix the plausible-looking cause. Both are pinned in the tests so the
+true cause cannot be re-diagnosed later from the same coincidence.
+
+`href` keeps its `+`: a link with no destination has nothing to check. And `ROBUST_LINK_RE` widens
+with `MD_LINK_RE` deliberately — leaving it narrow would make an anchored `[](path) <!-- uuid: … -->`
+plain to one function and robust to another, and the tool's uuid bookkeeping assumes those two agree.
+
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
@@ -123,6 +149,10 @@ rendering when a home directory was reorganised, and that no gate had ever menti
   caller's policy, expressed in the gate recipe, not in the core.
 - **FR-050**: An image embed (`![alt](path)`) whose target does not exist MUST be reported, on the
   same terms as any other link. See below — this is a decision, not an accident of the parser.
+- **FR-051**: A link whose **text is empty** (`[](path)`, `![](path)`) MUST be detected on exactly
+  the same terms as one with text. The link text is what a reader sees; it has no bearing on whether
+  the destination is there, and requiring at least one character of it made such links invisible to
+  every axis, not merely unreported. See below.
 
 ### Key Entities
 

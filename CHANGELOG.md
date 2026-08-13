@@ -7,6 +7,22 @@ All notable changes to darnlink are documented here. The format is based on
 ## [Unreleased]
 
 ### Fixed
+- **A link with empty text — `![](photo.jpg)`, what pandoc emits for every image in a converted
+  `.docx`/`.odt` — was invisible to every axis, not merely unreported.** `MD_LINK_RE` required at
+  least one character of link text (`[^\]]+`), so such a link never matched: it was not a finding
+  that got filtered, it was never a candidate. The axis then printed `dangling: 0` over a tree full
+  of broken image embeds, which reads as *"no broken links"* but only ever meant *"none of the
+  shapes the regex recognises"*.
+
+  Measured on one repository running the wall at maximum: **7 links of this shape, 7 of them broken,
+  0 visible** — and none with a valid target, so the corpus offered no counter-example either. Since
+  those files are converted documents, they arrive in blocks and nobody re-reads them.
+
+  Reported as the pandoc attribute suffix (`{width="1.1in"}`) hiding the link; it was not.
+  The pattern stops at the `)` and never looks past it, so `![alt](x.jpg){width="1.1in"}` was always
+  seen. The two shapes simply co-occur. Both are pinned in tests so the real cause — the empty text —
+  cannot be re-diagnosed from the same coincidence. `ROBUST_LINK_RE` widens alongside `MD_LINK_RE`,
+  so an anchored empty-text link cannot be plain to one function and robust to another. FR-051.
 - **A tokenless `403` is the anonymous rate limit, not a private repo — and the web axis now says so
   instead of printing a quiet `clean`.** `web-check` reported *"cannot read destination: private repo
   and no token provided"* for any `403` without a token. That was wrong every time: GitHub answers

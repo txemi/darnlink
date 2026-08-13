@@ -236,3 +236,46 @@ def test_missing_encoded_path_reports_the_decoded_target(tmp_path):
     assert len(found) == 1
     assert "my missing file.md" in found[0].detail   # decoded, not %20
     assert "my%20missing%20file.md" in found[0].detail  # and the link as written
+
+
+def test_image_embed_with_an_empty_alt_is_reported(tmp_path):
+    """FR-051: `![](gone.png)` — the shape pandoc emits for every image in a converted .docx/.odt.
+
+    `MD_LINK_RE` required at least one character of link text, so a link whose text is empty did not
+    match *at all*. That is the worst failure mode a gate has: the link was not reported as bad, it
+    was absent, and the axis printed `dangling: 0` over a tree full of broken embeds. Regression
+    #52 — measured on one real corpus: 7 links of this shape, 7 of them broken, 0 visible.
+    """
+    _w(tmp_path / "doc.md", f"---\nuuid: {U_A}\n---\n\n![](gone.png)\n")
+
+    found = _dangling(plan_robustify(tmp_path))
+    assert len(found) == 1 and "gone.png" in found[0].detail
+
+
+def test_empty_alt_image_that_exists_is_not_reported(tmp_path):
+    """The other half of the pin: widening the regex must not invent findings."""
+    _w(tmp_path / "doc.md", f"---\nuuid: {U_A}\n---\n\n![](there.png)\n")
+    _w(tmp_path / "there.png", "bytes\n")
+
+    assert _dangling(plan_robustify(tmp_path)) == []
+
+
+def test_pandoc_attribute_suffix_does_not_hide_the_target(tmp_path):
+    """#52 reported the `{width="…"}` suffix as the cause. It is not — but it must keep working.
+
+    `![alt](x){width="1.1in"}` was already visible: the regex stops at the `)` and never looks at
+    what follows. Both halves are pinned here so the true cause (the empty alt) cannot be re-fixed
+    later by someone reaching for the suffix instead.
+    """
+    _w(tmp_path / "doc.md", f'---\nuuid: {U_A}\n---\n\n![](gone.png){{width="1.1in"}}\n')
+
+    found = _dangling(plan_robustify(tmp_path))
+    assert len(found) == 1 and "gone.png" in found[0].detail
+
+
+def test_a_plain_link_with_empty_text_is_reported_too(tmp_path):
+    """Not an image-only bug: `[](gone.md)` was equally invisible, and is a link like any other."""
+    _w(tmp_path / "doc.md", f"---\nuuid: {U_A}\n---\n\n[](gone.md)\n")
+
+    found = _dangling(plan_robustify(tmp_path))
+    assert len(found) == 1 and "gone.md" in found[0].detail
