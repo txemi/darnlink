@@ -124,7 +124,7 @@ hiding the link. That suffix is harmless: the pattern stops at the `)` and never
 once, which is what made the suffix the plausible-looking cause. Both are pinned in the tests so the
 true cause cannot be re-diagnosed later from the same coincidence.
 
-`href` keeps its `+`: a link with no destination has nothing to check.
+`href` keeps its `+`. That is a statement about the *grammar*, not a claim that an empty destination is handled: `[]( )` still yields a finding that names nothing. Fixing it is part of the whitespace rule deferred to #74, and it is a declared gap rather than a property.
 
 > ⚠️ **A rule about the whitespace *around* a destination was developed on this branch and has been
 > taken out.** It grew from one review finding into nine rounds, because "which spellings of

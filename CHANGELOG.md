@@ -88,8 +88,7 @@ occurrences across thirteen repositories.
   meticulously; the BOM is not, and three places in this repo imply otherwise — including the CI
   Windows matrix, whose stated purpose is BOM/CRLF and whose BOM fixture only covers the *read*
   path, so it cannot see this.
-- **Whitespace around a destination is stripped by `dangling` but not by `repair`, `robustify` or
-  `--create-readme`** (#67), so one link can get two verdicts. The `repair` case is the sharp one:
+- **A trailing space in a destination makes `repair` emit a CONFLICT it cannot heal** (#67):
   a trailing space makes `names_md` false, the link is classified as a directory link and becomes a
   `CONFLICT` diagnosed as *"path and uuid disagree"* — which is untrue, and `--write` never heals
   it, so the gate stays red.

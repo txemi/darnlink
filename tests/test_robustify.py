@@ -255,14 +255,14 @@ def test_write_leaves_any_pandoc_attribute_suffix_untouched(tmp_path):
 
     Every attribute shape pandoc emits is covered, not just the one from the bug report. A version
     of this test that used `{width="…"}` alone was defeated by a seed one character narrower —
-    `\\)(?:\\{\\.[^}]*\\})?`, which consumes only class blocks — passing 264/264 while destroying
+    `\\)(?:\\{\\.[^}]*\\})?`, which consumes only class blocks — passing the whole suite while destroying
     `{.cls}`. That shape is the very one used as the example in issue #65 and in the spec. A test
     fixture is a claim about a population, and a single sample is the weakest possible one.
     """
     shapes = ['{width="1.1in" height="2in"}', "{.cls}", "{#anchor}", '{.a .b key="v"}']
     # Vary the LINK TEXT as well as the attribute shape. A version of this test that used an empty
     # alt throughout was defeated by a seed that ate the block only when the text is non-empty —
-    # 266/266 green while `![alt text](B.md){width=…}` lost its attributes. The text is the axis
+    # the whole suite green while `![alt text](B.md){width=…}` lost its attributes. The text is the axis
     # this whole feature is about, so it is the last one that should have been held constant.
     texts = ["", "alt text", "x"]
     _w(tmp_path / "B.md", f"---\nuuid: {EXISTING}\n---\n# B\n")

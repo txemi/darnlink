@@ -294,3 +294,25 @@ def test_a_non_empty_alt_with_the_pandoc_suffix_is_still_seen(tmp_path):
 
     found = _dangling(plan_robustify(tmp_path))
     assert len(found) == 1 and "gone.png" in found[0].detail
+
+
+def test_whitespace_around_a_destination_is_NOT_stripped_here(tmp_path):
+    """The absence of the whitespace rule is a DECISION, so it gets a test like any other.
+
+    `[x]( B.md )` denotes `B.md` in CommonMark, so reporting it dead while `B.md` is on disk is a
+    false red. That is real, and it is **deliberately not fixed on this branch** — see #74.
+
+    Without this test nothing distinguishes "FR-052 was left out on purpose" from "FR-052 was lost
+    in a merge". Seeded: a naive strip reinstating it passes the entire suite unnoticed, which is
+    exactly how a half-state gets re-landed — and a half-state is what nine review rounds were
+    spent climbing out of.
+
+    ⚠️ When #74 lands, this test must **invert**, not disappear. If it is simply deleted, the
+    property it guards goes unpinned again.
+    """
+    _w(tmp_path / "B.md", "# B\n")
+    _w(tmp_path / "doc.md", f"---\nuuid: {U_A}\n---\n\n[x]( B.md )\n")
+
+    found = _dangling(plan_robustify(tmp_path))
+    assert len(found) == 1, "the whitespace rule (#74) appears to have been re-landed silently"
+    assert " B.md " in found[0].detail
