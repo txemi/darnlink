@@ -471,3 +471,37 @@ def test_default_fetcher_404_no_token_skips_repo_check(monkeypatch):
     monkeypatch.setattr(wl, "_repo_accessible", lambda o, r, t: called.__setitem__("n", called["n"]+1) or False)
     assert wl.default_fetcher(gu, None, attempts=1, sleep=lambda _s: None) == (404, None)
     assert called["n"] == 0  # no token -> no repo check
+
+
+# --- the verdict line: it must not advise a remedy that cannot be taken ---
+
+def test_verdict_line_is_plain_clean_when_nothing_was_unverifiable(tmp_path, capsys):
+    _w(tmp_path / "conta.md", f"see [topo]({URL}) <!-- web-uuid: {UUID} -->\n")
+    fetch = _fetcher({URL: (200, f"---\nuuid: {UUID}\n---\n")})
+    assert _run_web_check_cli([str(tmp_path), "--online"], fetcher=fetch) == 0
+    assert "-> exit 0 (clean)" in capsys.readouterr().out
+
+
+def test_verdict_line_does_not_offer_a_token_that_would_not_help(tmp_path, capsys):
+    """`web_unverifiable` has seven causes and a token fixes two. Do not advise it over the other five.
+
+    This is the defect the axis warning itself was added to prevent, one floor down: an alert that
+    fires when it cannot help is learned and ignored. Measured on darnlink's own tree, where all 14
+    unverifiable are non-GitHub URLs: the figure is IDENTICAL with and without a token, and the line
+    still told the operator to export one they had already exported.
+    """
+    # A non-GitHub URL: unverifiable forever, with or without credentials.
+    _w(tmp_path / "conta.md", "see [ext](https://example.com/a/b.md)\n")
+    assert _run_web_check_cli([str(tmp_path), "--online"], fetcher=_fetcher({})) == 0
+    out = capsys.readouterr().out
+    assert "unverifiable, NOT verified" in out          # it still says it did not look
+    assert "GITHUB_TOKEN" not in out                    # but offers no remedy that cannot be taken
+
+
+def test_verdict_line_offers_the_token_when_it_WOULD_help(tmp_path, capsys, monkeypatch):
+    """The mirror case: a tokenless 403 is quota, and a token really does resolve it."""
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    _w(tmp_path / "conta.md", f"see [topo]({URL}) <!-- web-uuid: {UUID} -->\n")
+    assert _run_web_check_cli([str(tmp_path), "--online"], fetcher=_fetcher({URL: (403, None)})) == 0
+    out = capsys.readouterr().out
+    assert "1 of them would resolve with GITHUB_TOKEN" in out

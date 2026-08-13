@@ -439,8 +439,14 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
         # without a token and 3 with one. Say what was not looked at, right where the verdict is read.
         outcome = {0: "clean", 3: "anchors pending", 4: "integrity failure"}[code]
         if code == 0 and unverifiable:
-            outcome = (f"clean of what could be READ — {len(unverifiable)} unverifiable, "
-                       f"NOT verified (export GITHUB_TOKEN)")
+            # Only offer the token when the token would actually change something. `web_unverifiable`
+            # has seven causes and credentials fix two; suggesting it over a non-GitHub URL or a
+            # destination with no uuid is advice that cannot be taken, and advice that cannot be taken
+            # is how this line becomes the next thing everyone scrolls past.
+            fixable = sum(1 for x in unverifiable if x.token_would_help)
+            outcome = f"clean of what could be READ — {len(unverifiable)} unverifiable, NOT verified"
+            if fixable:
+                outcome += f"; {fixable} of them would resolve with GITHUB_TOKEN — export it"
         print(f"  -> exit {code} ({outcome})")
 
     return code

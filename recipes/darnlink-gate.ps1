@@ -133,6 +133,8 @@ if ($scope -ne 'staged') {
         Write-Warning "  cross-repo links at all."
         Write-Warning "  THIS CAN BE A FALSE GREEN: an un-anchored web link is only discoverable if"
         Write-Warning "  the destination can be READ. Measured: without token rc=0, with token rc=3."
+        Write-Warning "  Export GITHUB_TOKEN, and quote the token condition next to any web figure -"
+        Write-Warning "  without it the number is not comparable between two runs, let alone two repos."
       }
       $webArgs = @()
       foreach ($e in $excludes)     { if ($e) { $webArgs += @('--exclude', $e) } }

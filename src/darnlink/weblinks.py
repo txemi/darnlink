@@ -244,6 +244,13 @@ class WebFinding:
     href: str
     detail: str
     anchored_uuid: Optional[str] = None  # web_anchor: the uuid we would (or did) anchor to
+    # web_unverifiable has SEVEN causes and a token fixes only two of them (401/403 and 404, both
+    # WITHOUT a token). The rest — a non-GitHub URL, a destination with no uuid, a malformed URL, a
+    # transport error, and anything that already failed WITH a token — are not helped by credentials.
+    # Without this flag the summary told operators to "export GITHUB_TOKEN" over findings the token
+    # cannot touch, including in this very repo where all 14 are non-GitHub URLs and the figure is
+    # identical with and without one. An alert that fires when it cannot help is learned and ignored.
+    token_would_help: bool = False
 
 
 def _classify(link: WebLink, gu: Optional[GithubUrl], status: int, dest_uuid: Optional[str],
@@ -259,7 +266,10 @@ def _classify(link: WebLink, gu: Optional[GithubUrl], status: int, dest_uuid: Op
         why = (f"anonymous request rejected ({status}: the 60/h per-IP quota is exhausted, or the "
                "caller is blocked) — export GITHUB_TOKEN to verify" if not have_token
                else "token rejected (403/401)")
-        return WebFinding("web_unverifiable", f, link.href, f"cannot read destination: {why}")
+        # token_would_help ONLY when there is no token: with one, a 401/403 means it was REJECTED,
+        # and telling the operator to export the token they already exported is noise.
+        return WebFinding("web_unverifiable", f, link.href, f"cannot read destination: {why}",
+                          token_would_help=not have_token)
     if status == -2:
         # v0.17.0: the file 404s AND the destination repo is not readable with this token (a private
         # cross-org repo — a client org our PAT can't see). A 404 there is ambiguous (could be moved, or
@@ -277,7 +287,8 @@ def _classify(link: WebLink, gu: Optional[GithubUrl], status: int, dest_uuid: Op
             # a real break (below). This is the "fail-closed ONLY when there is a token" contract.
             return WebFinding("web_unverifiable", f, link.href,
                               "destination 404s but no token — ambiguous (could be a private repo we "
-                              "cannot see, not necessarily moved); a token is needed to call it broken")
+                              "cannot see, not necessarily moved); a token is needed to call it broken",
+                              token_would_help=True)
         return WebFinding("web_not_found", f, link.href,
                           "destination URL 404s; darnlink does not search where it moved (LLM layer's job)")
     if status == -3:
