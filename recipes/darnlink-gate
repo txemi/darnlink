@@ -73,8 +73,11 @@
 #     `origin` owner; it is a separate key, not a sentinel in the list, so an owner literally called
 #     `origin` stays expressible. `own_web_max: <int>` budgets it, so the rung is adoptable before you
 #     reach zero — same ratchet shape as `dangling_max`, and a non-numeric value counts as ABSENT,
-#     never as infinite. A config error here (a budget with no owners, an unresolvable origin) exits 1,
-#     which the recipe reports as a CONFIG error and NOT as a verdict about the repository.
+#     never as infinite. A misconfiguration here (a budget with no owners, an unresolvable origin)
+#     exits 1, and the recipe reports it as likely-config rather than as a verdict about the
+#     repository — but ONLY when this run actually passed an own_* flag, because exit 1 is not
+#     exclusively a usage error (uvx and an uncaught exception use it too). Under `fail_closed` it
+#     still fails the gate with 4: in CI an axis that could not run is not a pass.
 #   web (mode=max only): add a `web-check --online` pass — cross-repo links to OTHER GitHub repos must
 #     resolve to the destination's uuid (read online). ⚠️ PUBLIC targets need a token too — not for
 #     permission but for QUOTA: anonymous API calls are 60/h per public IP. Without one the pass
@@ -327,6 +330,13 @@ PY
   printf '%s\n' "$out"
 }
 
+# F4: `own_web` rides on `web` and on mode=max. Configured where the pass never runs it is a silent
+# no-op that READS like protection — exactly what the CLI refuses to do with `--own-max` and no owners.
+if [ -n "${OWN_WEB[*]}$OWN_WEB_FROM_ORIGIN$OWN_WEB_MAX" ] && { [ -z "$WEB" ] || [ "$MODE" != "max" ]; }; then
+  echo "darnlink-gate: own_web* is configured but the web pass does not run here (web=${WEB:-off}," >&2
+  echo "  mode=$MODE — it needs web on AND mode=max). The 016 rule is NOT being applied." >&2
+fi
+
 if [ "$SCOPE" != "staged" ]; then
   # ---- whole-repo (the wall). darnlink's own exit code is the gate. ----
   # set +e around the run: darnlink exits 0/1/2/3 (findings ARE non-zero) — set -e must not kill us
@@ -389,22 +399,39 @@ if [ "$SCOPE" != "staged" ]; then
       WEB_ARGS=()
       for e in "${EXCLUDES[@]}";      do [ -n "$e" ] && WEB_ARGS+=(--exclude "$e"); done
       for b in "${IGNORE_BLOCKS[@]}"; do [ -n "$b" ] && WEB_ARGS+=(--ignore-block "$b"); done
-      for o in "${OWN_WEB[@]}";       do [ -n "$o" ] && WEB_ARGS+=(--own "$o"); done
-      [ -n "$OWN_WEB_FROM_ORIGIN" ] && WEB_ARGS+=(--own-from-origin)
-      [ -n "$OWN_WEB_MAX" ]         && WEB_ARGS+=(--own-max "$OWN_WEB_MAX")
+      OWN_PASSED=""
+      for o in "${OWN_WEB[@]}";       do [ -n "$o" ] && { WEB_ARGS+=(--own "$o"); OWN_PASSED=1; }; done
+      [ -n "$OWN_WEB_FROM_ORIGIN" ] && { WEB_ARGS+=(--own-from-origin); OWN_PASSED=1; }
+      [ -n "$OWN_WEB_MAX" ]         && { WEB_ARGS+=(--own-max "$OWN_WEB_MAX"); OWN_PASSED=1; }
+      # An owner list that is present but entirely empty is a typo, and a silent one: the axis would
+      # run with no ownership at all and go green looking like it had checked.
+      if [ "${#OWN_WEB[@]}" -gt 0 ] && [ -n "${OWN_WEB[0]}${OWN_WEB[*]}" ] && [ -z "$OWN_PASSED" ]; then
+        echo "darnlink-gate: own_web is set but every entry is empty — no ownership was applied." >&2
+      fi
       run web-check . --online "${WEB_ARGS[@]}"; rc=$?
       set -e
-      # EXIT 1 IS A USAGE ERROR, NOT A VERDICT ABOUT THE REPO, and feature 016 makes it reachable from
-      # CONFIGURATION: own_web_max without own_web, an empty owner name, or own_web_from_origin in a
-      # tree with no GitHub `origin`. Reporting it as a red gate would send someone hunting for broken
-      # links that do not exist. It must not go to `bail()` either — that EXITS the script, so a typo
-      # would skip every axis after this one, which is the bug this pass already fixed once. Say what
-      # is wrong, drop the axis for this run, and let the rest of the gate speak.
-      if [ "$rc" -eq 1 ]; then
-        echo "darnlink-gate: web-check rejected its own arguments (exit 1) — this is a CONFIG error," >&2
-        echo "  not a finding about this repository. Check own_web / own_web_from_origin /" >&2
-        echo "  own_web_max in darnlink-gate.json. The web axis did NOT run this time." >&2
-        rc=0
+      # Exit 1 CAN be a usage error — feature 016 makes it reachable from CONFIGURATION: own_web_max
+      # without own_web, an empty owner name, own_web_from_origin in a tree with no GitHub `origin`.
+      # But it is NOT only that: `uvx` exits 1 on its own failures and an uncaught Python exception
+      # exits 1 too. So this only fires when THIS RUN passed an own_* flag — otherwise a repo that
+      # never adopted 016 would have its exit 1 turned green, which is a worse guarantee than before
+      # this key existed.
+      #
+      # And even then it respects `fail_closed`: under fail-open it drops the axis with a warning, but
+      # in CI — where the gate IS the wall — a config error that cannot be validated must not be a
+      # pass. It becomes 4 ("could not gate") and is marked final, so the run still fails and the
+      # remaining axes still execute. It must NOT go to `bail()`, which exits the script and would skip
+      # them, the bug this pass was fixed for once already.
+      if [ "$rc" -eq 1 ] && [ -n "$OWN_PASSED" ]; then
+        echo "darnlink-gate: web-check rejected its own arguments (exit 1) — most likely a CONFIG" >&2
+        echo "  error rather than a finding about this repository. Check own_web /" >&2
+        echo "  own_web_from_origin / own_web_max in darnlink-gate.json. The web axis did NOT run." >&2
+        if [ -n "$FAIL_CLOSED" ]; then
+          echo "  fail_closed is on: an axis that could not run is not a pass. -> 4" >&2
+          rc=4
+        else
+          rc=0
+        fi
       fi
       # web-check's contract (all in 0..4, none of them "unreachable"): 0 = clean (a network/token
       # failure is reported web_unverifiable, still exit 0 — it NEVER exits high); 3 = a plain web link

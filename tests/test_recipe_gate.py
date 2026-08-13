@@ -89,12 +89,15 @@ def sandbox(tmp_path):
     )
     shim.chmod(0o755)
 
-    def run(config: dict, argv_log: Path | None = None) -> subprocess.CompletedProcess:
+    def run(config: dict, argv_log: Path | None = None, uvx_dir: Path | None = None,
+            extra_env: dict | None = None) -> subprocess.CompletedProcess:
         (repo / "darnlink-gate.json").write_text(json.dumps(config))
         env = _clean_env()
         if argv_log is not None:
             env["DARNLINK_ARGV_LOG"] = str(argv_log)
-        env["PATH"] = f"{bindir}{os.pathsep}" + env.get("PATH", "")
+        if extra_env:
+            env.update(extra_env)
+        env["PATH"] = f"{uvx_dir or bindir}{os.pathsep}" + env.get("PATH", "")
         env["DARNLINK_BIN"] = _darnlink_bin()
         return subprocess.run(
             ["bash", str(RECIPE)], cwd=repo, env=env, capture_output=True, text=True
@@ -560,7 +563,7 @@ def test_own_web_max_without_own_web_is_a_config_error_not_a_verdict(sandbox):
 
     out = r.stdout + r.stderr
     assert r.returncode == 0, out
-    assert "CONFIG error" in out and "did NOT run" in out
+    assert "CONFIG" in out and "did NOT run" in out
 
 
 def test_a_junk_own_web_max_is_ignored_not_treated_as_infinite(sandbox):
@@ -631,3 +634,73 @@ def test_absent_keys_leave_the_command_line_untouched(sandbox, tmp_path):
 
     web = [l for l in log.read_text().splitlines() if "web-check" in l]
     assert web and "--own" not in web[0], web
+
+
+def test_an_exit_1_is_NOT_swallowed_for_a_repo_that_never_opted_in(sandbox, tmp_path):
+    """The blocking defect this pass shipped with: the swallow was unconditional, so ANY exit 1 —
+    `uvx` failing on its own, an uncaught Python exception — turned green for every consumer with
+    `web: true`, including those who never adopted 016. Worse than before the key existed."""
+    repo, run = sandbox
+    _owned_web_link_without_uuid(repo)
+    fake = tmp_path / "exit1bin"
+    fake.mkdir()
+    (fake / "uvx").write_text('#!/usr/bin/env bash\ncase " $* " in *" web-check "*) exit 1;; esac\n'
+                              'args=("$@"); [ "${args[0]:-}" = "--from" ] && args=("${args[@]:2}")\n'
+                              '[ "${args[0]:-}" = "darnlink" ] && args=("${args[@]:1}")\n'
+                              'exec "${DARNLINK_BIN:-darnlink}" "${args[@]}"\n')
+    (fake / "uvx").chmod(0o755)
+
+    r = run({"mode": "max", "web": True}, uvx_dir=fake)   # no own_* keys at all
+
+    assert r.returncode == 1, r.stdout + r.stderr
+
+
+def test_under_fail_closed_a_config_error_is_not_a_pass(sandbox, tmp_path):
+    """In CI the gate IS the wall: an axis that could not run must not read as one that ran clean.
+    Fail-open drops it with a warning; fail-closed makes it 4 — and the later axes still execute,
+    because bail() would exit the script and skip them."""
+    repo, run = sandbox
+    _owned_web_link_without_uuid(repo)
+
+    r = run({"mode": "max", "web": True, "own_web_max": 5, "fail_closed": True})
+
+    assert r.returncode == 4, r.stdout + r.stderr
+    assert "not a pass" in (r.stdout + r.stderr)
+
+
+def test_an_explicit_zero_budget_reaches_the_cli(sandbox, tmp_path):
+    """`own_web_max: 0` is the value whose distinction from "absent" is the whole point of FR-012, and
+    it was the one not covered: a mutation that dropped the explicit 0 survived the suite."""
+    repo, run = sandbox
+    _owned_web_link_without_uuid(repo)
+    log = tmp_path / "argv.log"
+
+    run({"mode": "max", "web": True, "own_web": ["owned"], "own_web_max": 0}, argv_log=log)
+
+    web = [l for l in log.read_text().splitlines() if "web-check" in l]
+    assert web and "--own-max 0" in web[0], web
+
+
+def test_the_env_overrides_win_over_the_json(sandbox, tmp_path, monkeypatch):
+    """Both new env keys were added to the leak-scrub list and then never exercised: renaming either
+    one in the recipe left the whole suite green."""
+    repo, run = sandbox
+    _owned_web_link_without_uuid(repo)
+    log = tmp_path / "argv.log"
+
+    run({"mode": "max", "web": True, "own_web": ["owned"], "own_web_max": 3}, argv_log=log,
+        extra_env={"DARNLINK_GATE_OWN_WEB_MAX": "9", "DARNLINK_GATE_OWN_WEB_FROM_ORIGIN": "1"})
+
+    web = [l for l in log.read_text().splitlines() if "web-check" in l]
+    assert web and "--own-max 9" in web[0] and "--own-from-origin" in web[0], web
+
+
+def test_own_web_configured_where_the_pass_never_runs_says_so(sandbox):
+    """Configured under mode=check the rule simply does not apply, and a no-op that reads like
+    protection is what the CLI itself refuses to be."""
+    repo, run = sandbox
+    _owned_web_link_without_uuid(repo)
+
+    r = run({"mode": "check", "web": True, "own_web": ["owned"]})
+
+    assert "NOT being applied" in (r.stdout + r.stderr)

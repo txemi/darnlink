@@ -73,10 +73,18 @@ $ownWebFromOrigin = -not ([string]::IsNullOrWhiteSpace([string]$rawOWFO) -or
                           ([string]$rawOWFO).Trim().ToLower() -in @('0','false','no','off'))
 # A budget, so the rung is adoptable before a repo reaches zero. Non-numeric counts as ABSENT, never as
 # infinite: silently WIDENING an allowance is the one direction a config typo must not be able to go.
-$rawOWM = if ($null -ne $env:DARNLINK_GATE_OWN_WEB_MAX) { $env:DARNLINK_GATE_OWN_WEB_MAX } else { CfgOr 'own_web_max' '' }
+# NOT CfgOr here: it tests truthiness, and PowerShell reads the JSON `0` as [int]0, which is $false —
+# so `own_web_max: 0` silently became "absent". That is the one value whose distinction from absent is
+# the entire point of the budget, and it would have diverged from bash, which passes it. Read by
+# PRESENCE instead.
+$rawOWM = if ($null -ne $env:DARNLINK_GATE_OWN_WEB_MAX) { $env:DARNLINK_GATE_OWN_WEB_MAX }
+          elseif ($cfg -and $cfg.PSObject.Properties.Name -contains 'own_web_max') { $cfg.own_web_max }
+          else { '' }
 $ownWebMax = ''
 if (-not [string]::IsNullOrWhiteSpace([string]$rawOWM)) {
-  if (([string]$rawOWM).Trim() -match '^\d+$') { $ownWebMax = ([string]$rawOWM).Trim() }
+  # `[0-9]` and no Trim, to match the bash recipe character for character: `\d` in .NET also matches
+  # Unicode digits, and trimming here would accept ' 3 ' where bash rejects it.
+  if (([string]$rawOWM) -match '^[0-9]+$') { $ownWebMax = [string]$rawOWM }
   else { Write-Warning "darnlink-gate: own_web_max='$rawOWM' is not a non-negative integer - ignoring it." }
 }
 # CREATE_README (opt-in, mode=max): also run --create-readme — a directory link whose target folder has
@@ -155,20 +163,28 @@ if ($scope -ne 'staged') {
       $webArgs = @()
       foreach ($e in $excludes)     { if ($e) { $webArgs += @('--exclude', $e) } }
       foreach ($b in $ignoreBlocks) { if ($b) { $webArgs += @('--ignore-block', $b) } }
-      foreach ($o in $ownWeb)       { if ($o) { $webArgs += @('--own', $o) } }
-      if ($ownWebFromOrigin) { $webArgs += '--own-from-origin' }
-      if ($ownWebMax)        { $webArgs += @('--own-max', $ownWebMax) }
+      $ownPassed = $false
+      foreach ($o in $ownWeb)       { if ($o) { $webArgs += @('--own', $o); $ownPassed = $true } }
+      if ($ownWebFromOrigin)               { $webArgs += '--own-from-origin'; $ownPassed = $true }
+      if (-not [string]::IsNullOrEmpty($ownWebMax)) { $webArgs += @('--own-max', $ownWebMax); $ownPassed = $true }
       & uvx --from $ref darnlink web-check . --online @webArgs
       $webRc = $LASTEXITCODE
       # EXIT 1 IS A USAGE ERROR, NOT A VERDICT ABOUT THE REPO, and feature 016 makes it reachable from
       # CONFIGURATION: own_web_max without own_web, an empty owner name, or own_web_from_origin in a
       # tree with no GitHub `origin`. Reporting it as a red gate would send someone hunting for broken
       # links that do not exist. Say what is wrong and drop the axis for this run.
-      if ($webRc -eq 1) {
-        Write-Warning "darnlink-gate: web-check rejected its own arguments (exit 1) - this is a CONFIG"
-        Write-Warning "  error, not a finding about this repository. Check own_web /"
+      # Only when THIS RUN passed an own_* flag: uvx exits 1 on its own failures and an uncaught
+      # Python exception exits 1 too, so an unconditional swallow would turn those green for a repo
+      # that never adopted 016 — a worse guarantee than before this key existed. And it respects
+      # fail_closed: in CI an axis that could not run is not a pass.
+      if ($webRc -eq 1 -and $ownPassed) {
+        Write-Warning "darnlink-gate: web-check rejected its own arguments (exit 1) - most likely a CONFIG"
+        Write-Warning "  error rather than a finding about this repository. Check own_web /"
         Write-Warning "  own_web_from_origin / own_web_max in darnlink-gate.json. The web axis did NOT run."
-        $webRc = 0
+        if ($failClosed) {
+          Write-Warning "  fail_closed is on: an axis that could not run is not a pass. -> 4"
+          $webRc = 4
+        } else { $webRc = 0 }
       }
       exit $webRc
     }
