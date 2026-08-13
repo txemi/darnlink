@@ -20,5 +20,34 @@
 #
 # Bypass (discouraged): git commit --no-verify
 set -euo pipefail
-exec python3 "$(git rev-parse --show-toplevel)/tools/lang_gate.py" \
-    --prose "$1" --git-comments --label "commit message"
+# shellcheck source=/dev/null
+. "$(git rev-parse --show-toplevel)/tools/darnlang_ref.sh"
+
+command -v uvx >/dev/null 2>&1 || { echo "lang commit-msg: uvx not on PATH -> SKIPPING." >&2; exit 0; }
+
+# RESOLVE FIRST, JUDGE SECOND, and never conflate the two. A uv resolution failure (offline,
+# unreachable ref) exits 1 exactly like a real finding, so a single combined call cannot tell "the
+# tool could not start" from "your message is wrong".
+#
+# The first version of this guard grepped the output for a `darnlang:` line. That worked, and it was
+# the wrong contract: a reviewer proved it by renaming the prefix upstream, whereupon the hook threw
+# away a REAL finding and reported a skip. Depending on wording when a numeric exit-code contract
+# exists is how a gate dies quietly. So: a cheap `--help` decides whether the tool is reachable, and
+# after that every exit code belongs to darnlang.
+#
+# `set +e` is required or errexit aborts before the guard runs -- which is how the first attempt at
+# this still failed closed in a sibling repo.
+set +e
+uvx --from "$DARNLANG_REF" darnlang --help >/dev/null 2>&1
+resolved=$?
+set -e
+if [ "$resolved" -ne 0 ]; then
+  echo "lang commit-msg: darnlang could not be resolved (offline? bad ref?) -> SKIPPING." >&2
+  echo "  CI still gates this. A clean commit does NOT prove the message was judged." >&2
+  exit 0
+fi
+
+# `--show-text` locally: the reader here is you, and "line 1 is wrong" without the words is a gate
+# you argue with instead of fix. CI keeps it off, because its logs are public.
+exec uvx --from "$DARNLANG_REF" darnlang prose "$1" --git-comments --show-text \
+     --label "commit message"

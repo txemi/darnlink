@@ -9,12 +9,21 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
 # English-only gate. The rule is not new — CLAUDE.md has said "Everything in this repo is written
-# in English" since the start — but until now nothing checked it. Runs FIRST because it is pure
-# stdlib: it costs a second and needs no environment, so it fails before `uv sync` makes you wait.
+# in English" since the start.
+#
+# It NO LONGER has the property this comment used to claim. It was pure stdlib and needed no
+# environment; it is now a pinned package resolved through uvx, measured at ~4.4 s warm against
+# ~0.37 s before, and it needs the network the first time. That is the price of one implementation
+# with tests instead of five copies without any, and it is written down here rather than left for
+# somebody to discover while wondering why their commit got slower.
 # Fail-closed (baseline pinned at 0): darnlink measures zero offending lines, so demanding zero
 # costs nothing. Sibling repos that adopted the rule late run the same tool against a non-zero
 # baseline that may only shrink.
-python3 tools/lang_gate.py --baseline
+# `--show-text` is deliberate and LOCAL-ONLY. darnlang hides the matching text by default because
+# CI logs of a public repo are public -- but here the reader is you, and being told "this file gained
+# a line" without being told WHICH WORDS is a gate you argue with instead of fix.
+. tools/darnlang_ref.sh
+uvx --from "$DARNLANG_REF" darnlang check --ext .py,.md --show-text
 
 uv sync --extra dev   # set up the environment (project + dev deps), like CI's install step
 uv run pytest -q

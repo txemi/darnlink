@@ -42,10 +42,23 @@ jobs:
           # Full history: the commit-message step below ranges over the commits this PR adds,
           # and with the default depth of 1 there is no range to walk.
           fetch-depth: 0
-      # No setup step on purpose: the gate is pure stdlib, so it cannot fail for reasons
-      # unrelated to what it guards — which is how a gate keeps its credibility.
+      # `uv` IS a setup step now, and that is the cost of the migration stated plainly: the gate used
+      # to be pure stdlib and could not fail for reasons unrelated to what it guards. It is bought
+      # back by a package that has tests and one place to fix a bug for five repos.
+      - uses: astral-sh/setup-uv@v5
+      # Resolve the tool in its OWN step. Merging "install" and "judge" into one `uvx` call was a
+      # critical defect: uvx exits 1 when it cannot resolve the ref -- offline, bad tag, network
+      # policy -- which is indistinguishable from "found something". On this workflow that meant a
+      # perfectly English issue got LABELLED and publicly told its language was wrong because the
+      # runner could not reach a git tag. Separated, a resolve failure fails this step and turns the
+      # job red without touching anybody's issue, and the judging step below can only exit with
+      # darnlang's own codes.
+      - name: Install darnlang
+        run: |
+          . tools/darnlang_ref.sh
+          uv tool install "darnlang[strict] @ $DARNLANG_REF"
       - name: English-only gate — tracked files (fail-closed, baseline pinned at 0)
-        run: python3 tools/lang_gate.py --baseline
+        run: darnlang check --ext .py,.md
 
       # Commit messages: a surface no file gate can see, and one the local `hooks/commit-msg` cannot
       # be trusted to have covered — hooks are opt-in per clone and one `--no-verify` away. Measured
@@ -55,10 +68,20 @@ jobs:
       - name: English-only gate — commit messages added by this PR
         if: github.event_name == 'pull_request'
         run: |
-          git log --format=%B \
-            "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}" \
-            > "$RUNNER_TEMP/msgs.txt"
-          python3 tools/lang_gate.py --prose "$RUNNER_TEMP/msgs.txt" --label "set of commit messages"
+          # ONE MESSAGE AT A TIME. Feeding `git log --format=%B` concatenated defeats layer 3,
+          # which judges the text as a single block: measured, ONE English line alongside a Spanish
+          # subject is enough to dilute it past detection, and the repo's normal commit shape --
+          # short subject, long English body -- was missed entirely. The compensating control this
+          # workflow is supposed to provide for the hook's known gap did not exist.
+          fail=0
+          while IFS= read -r sha; do
+            [ -z "$sha" ] && continue
+            git log -1 --format=%B "$sha" > "$RUNNER_TEMP/one.txt"
+            darnlang prose "$RUNNER_TEMP/one.txt" --strict \
+              --label "commit message $sha" || fail=1
+          done < <(git log --format=%H \
+            "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}")
+          exit "$fail"
 
   # Exercises the commands users actually run (packaging + entry point + the literal README
   # one-liner) on Linux AND Windows — so the copy-paste one-liner is proven on both.
