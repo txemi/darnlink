@@ -6,6 +6,53 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- **`darnlink-gate`: the `own_web` keys, so feature 016 can actually be switched on.** The rule
+  shipped in v0.21.0 lives in the CLI; until now no gate invoked it, so it protected nothing. Both
+  recipes — bash and PowerShell — now read `own_web` (a list of owners), `own_web_from_origin` (bool)
+  and `own_web_max` (int) and pass them through — including an explicit `own_web_max: 0`, which the
+  PowerShell config reader dropped at first because it tests truthiness and PowerShell reads JSON `0`
+  as false. That is the one value whose distinction from *absent* is the whole point of the budget.
+
+  Three details keep it honest, and each is the same rule an existing key already follows:
+
+  - **`own_web_from_origin` is its own key, not a sentinel inside the list** — an owner literally
+    called `origin` has to stay expressible, the same reason the CLI has a flag rather than
+    `--own auto`.
+  - **A non-numeric budget counts as ABSENT, never as infinite.** Silently widening an allowance is
+    the one direction a config typo must not be able to go (`dangling_max` established this).
+  - **An exit 1 is treated as likely-config, but only when this run passed an `own_*` flag.** Feature
+    016 makes exit 1 reachable from configuration — a budget with no owners, an unresolvable origin —
+    and reporting that as a red gate would send someone hunting for broken links that do not exist.
+    But exit 1 is *not* exclusively a usage error: `uvx` exits 1 on its own failures and an uncaught
+    exception exits 1 too, so an unconditional reading would have turned those green for every
+    consumer with `web: true`, including repositories that never adopted 016 — a worse guarantee than
+    before the key existed. And it respects `fail_closed`: under fail-open the axis is dropped with a
+    warning, in CI it becomes 4, because there the gate *is* the wall and an axis that could not run
+    is not a pass. It is not routed to `bail()` either: that exits the script and would skip every
+    axis after this one, the bug this same pass was fixed for once already.
+
+  The wiring is asserted on the **invocation**, not the verdict: without a token an unreadable
+  destination is `web_unverifiable` and the gate exits 0 whether or not the flags were passed, so a
+  verdict-based test cannot tell — and did not. Dropping the `--own` loop entirely left every other
+  recipe test green until the shim started recording argv.
+
+  Two further silent no-ops closed while wiring it, both found by mutation rather than by reading:
+
+  - **An empty owner entry passed without a word.** `[""]` flattens to exactly what an absent key
+    gives, so the list length is now read separately from its value — and a *partially* empty list is
+    named too, the case where the config lists three owners and the gate enforces one.
+  - **`web-check`'s exit 4 had no test protecting it from the `rc>3` fail-open heuristic.** Its codes
+    are all in 0..4 and none of them means *unreachable*, which is why the web verdict is marked
+    final; remove that immunity and a genuine 4 — exactly how feature 016 reports an owned
+    destination with no uuid — turns into **0** under the default, with the suite green.
+
+### Fixed
+- **Nothing had ever parsed `recipes/darnlink-gate.ps1`.** The recipe tests skip on Windows and no CI
+  job ran `pwsh`, so a syntax error in the shipped PowerShell recipe would have reached consumers as
+  a script that does not start. CI now parses it. Parsing is not testing — it never runs the gate —
+  but it is the one failure mode a bash-only fleet cannot see at all.
+
 ## [0.21.0] — 2026-08-13
 
 ### Added

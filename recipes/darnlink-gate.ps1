@@ -63,11 +63,47 @@ $ignoreBlocks = @(CfgOr 'ignore_blocks' @())
 $rawWeb = if ($null -ne $env:DARNLINK_GATE_WEB) { $env:DARNLINK_GATE_WEB } else { CfgOr 'web' '' }
 $web = -not ([string]::IsNullOrWhiteSpace([string]$rawWeb) -or
              ([string]$rawWeb).Trim().ToLower() -in @('0','false','no','off'))
+# OWN_WEB (opt-in, needs `web`): the owners you control. A destination owned by one of them whose .md
+# has no uuid stops being "someone else's problem" and becomes a gate failure - feature 016. A LIST of
+# names, never a sentinel: `own_web_from_origin` is its own key precisely so an owner literally called
+# `origin` stays expressible, the same reason the CLI has a flag instead of `--own auto`.
+# Read by PRESENCE, not by truthiness, for the same reason as `own_web_max` below: PowerShell unwraps
+# a one-element array, so `["" ]` is $false to CfgOr and would come back as "absent" — losing the very
+# entry the empty-entry warning exists to name.
+$ownWeb = @(if ($cfg -and $cfg.PSObject.Properties.Name -contains 'own_web') { $cfg.own_web } else { @() })
+$rawOWFO = if ($null -ne $env:DARNLINK_GATE_OWN_WEB_FROM_ORIGIN) { $env:DARNLINK_GATE_OWN_WEB_FROM_ORIGIN } else { CfgOr 'own_web_from_origin' '' }
+$ownWebFromOrigin = -not ([string]::IsNullOrWhiteSpace([string]$rawOWFO) -or
+                          ([string]$rawOWFO).Trim().ToLower() -in @('0','false','no','off'))
+# A budget, so the rung is adoptable before a repo reaches zero. Non-numeric counts as ABSENT, never as
+# infinite: silently WIDENING an allowance is the one direction a config typo must not be able to go.
+# NOT CfgOr here: it tests truthiness, and PowerShell reads the JSON `0` as [int]0, which is $false —
+# so `own_web_max: 0` silently became "absent". That is the one value whose distinction from absent is
+# the entire point of the budget, and it would have diverged from bash, which passes it. Read by
+# PRESENCE instead.
+$rawOWM = if ($null -ne $env:DARNLINK_GATE_OWN_WEB_MAX) { $env:DARNLINK_GATE_OWN_WEB_MAX }
+          elseif ($cfg -and $cfg.PSObject.Properties.Name -contains 'own_web_max') { $cfg.own_web_max }
+          else { '' }
+$ownWebMax = ''
+if (-not [string]::IsNullOrWhiteSpace([string]$rawOWM)) {
+  # `[0-9]` and no Trim, to match the bash recipe character for character: `\d` in .NET also matches
+  # Unicode digits, and trimming here would accept ' 3 ' where bash rejects it.
+  if (([string]$rawOWM) -match '^[0-9]+$') { $ownWebMax = [string]$rawOWM }
+  else { Write-Warning "darnlink-gate: own_web_max='$rawOWM' is not a non-negative integer - ignoring it." }
+}
 # CREATE_README (opt-in, mode=max): also run --create-readme — a directory link whose target folder has
 # no README (no uuid) FAILS the gate (dry-run detects it; fix with --create-readme --write).
 $rawCR = if ($null -ne $env:DARNLINK_GATE_CREATE_README) { $env:DARNLINK_GATE_CREATE_README } else { CfgOr 'create_readme' '' }
 $createReadme = -not ([string]::IsNullOrWhiteSpace([string]$rawCR) -or
                       ([string]$rawCR).Trim().ToLower() -in @('0','false','no','off'))
+
+# F4: `own_web` rides on `web` and on mode=max. Configured where the pass never runs it is a silent
+# no-op that READS like protection - exactly what the CLI refuses to do with `--own-max` and no owners.
+if (($ownWeb.Count -gt 0 -or $ownWebFromOrigin -or -not [string]::IsNullOrEmpty($ownWebMax)) -and
+    ((-not $web) -or $mode -ne 'max')) {
+  $webShown = if ($web) { '1' } else { 'off' }
+  Write-Warning "darnlink-gate: own_web* is configured but the web pass does not run here (web=$webShown,"
+  Write-Warning "  mode=$mode - it needs web on AND mode=max). The 016 rule is NOT being applied."
+}
 
 # --- guard: read-only. Never pass --write through. ---
 if ($args -contains '--write') {
@@ -139,8 +175,39 @@ if ($scope -ne 'staged') {
       $webArgs = @()
       foreach ($e in $excludes)     { if ($e) { $webArgs += @('--exclude', $e) } }
       foreach ($b in $ignoreBlocks) { if ($b) { $webArgs += @('--ignore-block', $b) } }
+      $ownPassed = $false
+      $ownWebUsed = 0
+      foreach ($o in $ownWeb) { if ($o) { $webArgs += @('--own', $o); $ownPassed = $true; $ownWebUsed++ } }
+      if ($ownWebFromOrigin)               { $webArgs += '--own-from-origin'; $ownPassed = $true }
+      if (-not [string]::IsNullOrEmpty($ownWebMax)) { $webArgs += @('--own-max', $ownWebMax); $ownPassed = $true }
+      # Same two warnings as the bash recipe, same wording: an owner entry that is present but empty
+      # is a typo that makes the axis enforce less than the config claims, and it would go green.
+      if ($ownWeb.Count -gt 0 -and $ownWebUsed -eq 0) {
+        Write-Warning "darnlink-gate: own_web is set but every entry is empty - no ownership was applied."
+      } elseif ($ownWebUsed -lt $ownWeb.Count) {
+        Write-Warning "darnlink-gate: own_web has $($ownWeb.Count - $ownWebUsed) empty entry/entries out of"
+        Write-Warning "  $($ownWeb.Count) - they were ignored, so fewer owners are enforced than the config lists."
+      }
       & uvx --from $ref darnlink web-check . --online @webArgs
-      exit $LASTEXITCODE
+      $webRc = $LASTEXITCODE
+      # EXIT 1 IS A USAGE ERROR, NOT A VERDICT ABOUT THE REPO, and feature 016 makes it reachable from
+      # CONFIGURATION: own_web_max without own_web, an empty owner name, or own_web_from_origin in a
+      # tree with no GitHub `origin`. Reporting it as a red gate would send someone hunting for broken
+      # links that do not exist. Say what is wrong and drop the axis for this run.
+      # Only when THIS RUN passed an own_* flag: uvx exits 1 on its own failures and an uncaught
+      # Python exception exits 1 too, so an unconditional swallow would turn those green for a repo
+      # that never adopted 016 — a worse guarantee than before this key existed. And it respects
+      # fail_closed: in CI an axis that could not run is not a pass.
+      if ($webRc -eq 1 -and $ownPassed) {
+        Write-Warning "darnlink-gate: web-check rejected its own arguments (exit 1) - most likely a CONFIG"
+        Write-Warning "  error rather than a finding about this repository. Check own_web /"
+        Write-Warning "  own_web_from_origin / own_web_max in darnlink-gate.json. The web axis did NOT run."
+        if ($failClosed) {
+          Write-Warning "  fail_closed is on: an axis that could not run is not a pass. -> 4"
+          $webRc = 4
+        } else { $webRc = 0 }
+      }
+      exit $webRc
     }
   } else {
     & uvx --from $ref darnlink check . @dlArgs @args   # `darnlink check` → 0/2/3 (mode=check|repair)

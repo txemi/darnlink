@@ -67,6 +67,17 @@
 #        Measured on a nine-repo fleet: 2,356 links pointing at files that do not exist, none of
 #        them named by any other axis. Expect a number.
 #   mode ∈ { repair | check | max } — see WHAT IT DOES. Raising it is a one-way ratchet: only up.
+#   own_web (needs `web`): a LIST of GitHub owners you control. A destination owned by one of them
+#     whose .md has no uuid stops being "someone else's problem" and FAILS the gate — you can fix it,
+#     it is a missing two-line edit in a repo you own. `own_web_from_origin: true` adds this repo's
+#     `origin` owner; it is a separate key, not a sentinel in the list, so an owner literally called
+#     `origin` stays expressible. `own_web_max: <int>` budgets it, so the rung is adoptable before you
+#     reach zero — same ratchet shape as `dangling_max`, and a non-numeric value counts as ABSENT,
+#     never as infinite. A misconfiguration here (a budget with no owners, an unresolvable origin)
+#     exits 1, and the recipe reports it as likely-config rather than as a verdict about the
+#     repository — but ONLY when this run actually passed an own_* flag, because exit 1 is not
+#     exclusively a usage error (uvx and an uncaught exception use it too). Under `fail_closed` it
+#     still fails the gate with 4: in CI an axis that could not run is not a pass.
 #   web (mode=max only): add a `web-check --online` pass — cross-repo links to OTHER GitHub repos must
 #     resolve to the destination's uuid (read online). ⚠️ PUBLIC targets need a token too — not for
 #     permission but for QUOTA: anonymous API calls are 60/h per public IP. Without one the pass
@@ -113,6 +124,21 @@ print("\n".join(v) if isinstance(v, list) else (v if v is not None else default)
 PY
 }
 
+# How many entries a LIST key has — which `read_cfg` cannot tell you: it joins with newlines, so an
+# absent key, `[]` and `[""]` all arrive as the empty string. `[""]` is the likeliest typo of the
+# three (a template line left half-filled) and the only one that must be named out loud, so ask for
+# the length separately instead of trying to infer it from the flattened value.
+read_cfg_len() { python3 - "$cfg" "$1" <<'PY' 2>/dev/null || printf '0'
+import json, sys
+try:
+    d = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    d = {}
+v = d.get(sys.argv[2])
+print(len(v) if isinstance(v, list) else 0)
+PY
+}
+
 REF="${DARNLINK_REF:-$(read_cfg ref 'git+https://github.com/txemi/darnlink@v0.7.0')}"
 MODE="${DARNLINK_GATE_MODE:-$(read_cfg mode check)}"
 SCOPE="${DARNLINK_GATE_SCOPE:-$(read_cfg scope repo)}"
@@ -133,6 +159,22 @@ case "${FAIL_CLOSED,,}" in ""|0|false|no|off) FAIL_CLOSED="" ;; *) FAIL_CLOSED=1
 # Fail-closed only on a genuinely broken/moved public web link. Same normalise-the-string dance as above.
 WEB="${DARNLINK_GATE_WEB:-$(read_cfg web "")}"
 case "${WEB,,}" in ""|0|false|no|off) WEB="" ;; *) WEB=1 ;; esac
+# OWN_WEB (opt-in, needs `web`): the owners you control. A destination owned by one of them whose .md
+# has no uuid stops being "someone else's problem" and becomes a gate failure — see feature 016. A
+# LIST of names, never a sentinel: `own_web_from_origin` is its own key precisely so an owner literally
+# called `origin` stays expressible, the same reason the CLI has a flag instead of `--own auto`.
+mapfile -t OWN_WEB < <(read_cfg own_web "")
+OWN_WEB_N="$(read_cfg_len own_web)"; [[ "$OWN_WEB_N" =~ ^[0-9]+$ ]] || OWN_WEB_N=0
+OWN_WEB_FROM_ORIGIN="${DARNLINK_GATE_OWN_WEB_FROM_ORIGIN:-$(read_cfg own_web_from_origin "")}"
+case "${OWN_WEB_FROM_ORIGIN,,}" in ""|0|false|no|off) OWN_WEB_FROM_ORIGIN="" ;; *) OWN_WEB_FROM_ORIGIN=1 ;; esac
+# A budget, so the rung is adoptable before a repo reaches zero. Non-numeric counts as ABSENT, never as
+# infinite: silently WIDENING an allowance is the one direction a config typo must not be able to go —
+# the same rule `dangling_max` follows, and for the same reason.
+OWN_WEB_MAX="${DARNLINK_GATE_OWN_WEB_MAX:-$(read_cfg own_web_max "")}"
+if [ -n "$OWN_WEB_MAX" ] && ! [[ "$OWN_WEB_MAX" =~ ^[0-9]+$ ]]; then
+  echo "darnlink-gate: own_web_max='$OWN_WEB_MAX' is not a non-negative integer — ignoring it." >&2
+  OWN_WEB_MAX=""
+fi
 # CREATE_README (opt-in): when on, mode=max also runs `--create-readme` — a directory link whose target
 # folder has no README (so no uuid to anchor to) FAILS the gate (dry-run: it's DETECTED, not written).
 # Robustify it by hand with `--create-readme --write`. Raises the max ceiling from "files" to "folders".
@@ -304,6 +346,14 @@ PY
   printf '%s\n' "$out"
 }
 
+# F4: `own_web` rides on `web` and on mode=max. Configured where the pass never runs it is a silent
+# no-op that READS like protection — exactly what the CLI refuses to do with `--own-max` and no owners.
+if { [ "$OWN_WEB_N" -gt 0 ] || [ -n "$OWN_WEB_FROM_ORIGIN$OWN_WEB_MAX" ]; } \
+   && { [ -z "$WEB" ] || [ "$MODE" != "max" ]; }; then
+  echo "darnlink-gate: own_web* is configured but the web pass does not run here (web=${WEB:-off}," >&2
+  echo "  mode=$MODE — it needs web on AND mode=max). The 016 rule is NOT being applied." >&2
+fi
+
 if [ "$SCOPE" != "staged" ]; then
   # ---- whole-repo (the wall). darnlink's own exit code is the gate. ----
   # set +e around the run: darnlink exits 0/1/2/3 (findings ARE non-zero) — set -e must not kill us
@@ -366,8 +416,47 @@ if [ "$SCOPE" != "staged" ]; then
       WEB_ARGS=()
       for e in "${EXCLUDES[@]}";      do [ -n "$e" ] && WEB_ARGS+=(--exclude "$e"); done
       for b in "${IGNORE_BLOCKS[@]}"; do [ -n "$b" ] && WEB_ARGS+=(--ignore-block "$b"); done
+      OWN_PASSED=""; OWN_WEB_USED=0
+      for o in "${OWN_WEB[@]}"; do
+        [ -n "$o" ] && { WEB_ARGS+=(--own "$o"); OWN_PASSED=1; OWN_WEB_USED=$((OWN_WEB_USED + 1)); }
+      done
+      [ -n "$OWN_WEB_FROM_ORIGIN" ] && { WEB_ARGS+=(--own-from-origin); OWN_PASSED=1; }
+      [ -n "$OWN_WEB_MAX" ]         && { WEB_ARGS+=(--own-max "$OWN_WEB_MAX"); OWN_PASSED=1; }
+      # An owner entry that is present but empty is a typo, and a silent one: the axis would run with
+      # less ownership than the config claims and go green looking like it had checked all of it. It
+      # is counted, not inferred from the joined value — `[""]` flattens to exactly what an absent key
+      # gives, and `[""]` is the shape a half-filled template line actually takes.
+      if [ "$OWN_WEB_N" -gt 0 ] && [ "$OWN_WEB_USED" -eq 0 ]; then
+        echo "darnlink-gate: own_web is set but every entry is empty — no ownership was applied." >&2
+      elif [ "$OWN_WEB_USED" -lt "$OWN_WEB_N" ]; then
+        echo "darnlink-gate: own_web has $((OWN_WEB_N - OWN_WEB_USED)) empty entry/entries out of" >&2
+        echo "  $OWN_WEB_N — they were ignored, so fewer owners are enforced than the config lists." >&2
+      fi
       run web-check . --online "${WEB_ARGS[@]}"; rc=$?
       set -e
+      # Exit 1 CAN be a usage error — feature 016 makes it reachable from CONFIGURATION: own_web_max
+      # without own_web, an empty owner name, own_web_from_origin in a tree with no GitHub `origin`.
+      # But it is NOT only that: `uvx` exits 1 on its own failures and an uncaught Python exception
+      # exits 1 too. So this only fires when THIS RUN passed an own_* flag — otherwise a repo that
+      # never adopted 016 would have its exit 1 turned green, which is a worse guarantee than before
+      # this key existed.
+      #
+      # And even then it respects `fail_closed`: under fail-open it drops the axis with a warning, but
+      # in CI — where the gate IS the wall — a config error that cannot be validated must not be a
+      # pass. It becomes 4 ("could not gate") and is marked final, so the run still fails and the
+      # remaining axes still execute. It must NOT go to `bail()`, which exits the script and would skip
+      # them, the bug this pass was fixed for once already.
+      if [ "$rc" -eq 1 ] && [ -n "$OWN_PASSED" ]; then
+        echo "darnlink-gate: web-check rejected its own arguments (exit 1) — most likely a CONFIG" >&2
+        echo "  error rather than a finding about this repository. Check own_web /" >&2
+        echo "  own_web_from_origin / own_web_max in darnlink-gate.json. The web axis did NOT run." >&2
+        if [ -n "$FAIL_CLOSED" ]; then
+          echo "  fail_closed is on: an axis that could not run is not a pass. -> 4" >&2
+          rc=4
+        else
+          rc=0
+        fi
+      fi
       # web-check's contract (all in 0..4, none of them "unreachable"): 0 = clean (a network/token
       # failure is reported web_unverifiable, still exit 0 — it NEVER exits high); 3 = a plain web link
       # not yet anchored (dry-run: it COULD be robustified) — a real gate failure, which is the point

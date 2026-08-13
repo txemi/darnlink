@@ -43,6 +43,7 @@ _LEAKY_ENV = (
     "DARNLINK_REF", "DARNLINK_GATE_MODE", "DARNLINK_GATE_SCOPE", "DARNLINK_GATE_FAIL_CLOSED",
     "DARNLINK_GATE_WEB", "DARNLINK_GATE_CREATE_README", "DARNLINK_GATE_TOKEN_FILE",
     "DARNLINK_GATE_DANGLING", "DARNLINK_GATE_DANGLING_MAX",
+    "DARNLINK_GATE_OWN_WEB_FROM_ORIGIN", "DARNLINK_GATE_OWN_WEB_MAX",
     # ⚠️ And git's own. `git` exports these to every hook it runs, so when this suite is executed
     # FROM the repo's pre-commit hook (`tools/check.sh`), an un-scrubbed `git` in a test inherits
     # GIT_DIR from the outer repo while using the sandbox as its work tree. That combination is not
@@ -80,14 +81,23 @@ def sandbox(tmp_path):
         'args=("$@")\n'
         '[ "${args[0]:-}" = "--from" ] && args=("${args[@]:2}")\n'   # drop `--from <ref>`
         '[ "${args[0]:-}" = "darnlink" ] && args=("${args[@]:1}")\n'  # drop the tool name
+        # Record the argv when asked. A WIRING test cannot assert on the verdict: without a token the
+        # destination is unverifiable and the gate exits 0 whether or not the flag was passed — which
+        # is exactly how a dropped `--own` survived mutation until this existed.
+        '[ -n "${DARNLINK_ARGV_LOG:-}" ] && printf \'%s\\n\' "$*" >> "$DARNLINK_ARGV_LOG"\n'
         'exec "${DARNLINK_BIN:-darnlink}" "${args[@]}"\n'
     )
     shim.chmod(0o755)
 
-    def run(config: dict) -> subprocess.CompletedProcess:
+    def run(config: dict, argv_log: Path | None = None, uvx_dir: Path | None = None,
+            extra_env: dict | None = None) -> subprocess.CompletedProcess:
         (repo / "darnlink-gate.json").write_text(json.dumps(config))
         env = _clean_env()
-        env["PATH"] = f"{bindir}{os.pathsep}" + env.get("PATH", "")
+        if argv_log is not None:
+            env["DARNLINK_ARGV_LOG"] = str(argv_log)
+        if extra_env:
+            env.update(extra_env)
+        env["PATH"] = f"{uvx_dir or bindir}{os.pathsep}" + env.get("PATH", "")
         env["DARNLINK_BIN"] = _darnlink_bin()
         return subprocess.run(
             ["bash", str(RECIPE)], cwd=repo, env=env, capture_output=True, text=True
@@ -527,3 +537,267 @@ def test_staged_scope_survives_a_payload_bigger_than_one_env_var(sandbox):
 
     assert "Argument list too long" not in out, out[:400]
     assert r.returncode == 0, out[:400]   # the added line carries no link → nothing to gate on
+
+
+# --- own_web: the feature-016 keys (a list of owners, a boolean, and a budget) ---
+
+def _owned_web_link_without_uuid(repo: Path) -> None:
+    """A plain web link to a `.md` in a repo we will claim as ours, whose destination has no uuid.
+    The gate never reaches the network in these tests: `web-check` is the shimmed local darnlink, and
+    without a token a destination it cannot read is `web_unverifiable`, exit 0. What is exercised here
+    is the WIRING — that the keys reach the CLI at all — not the classification, which lives in
+    tests/test_own_repo_web_strictness.py."""
+    (repo / "A.md").write_text(
+        "# A\nsee [x](https://github.com/owned/repo/blob/main/a.md) plain\n")
+
+
+def test_own_web_max_without_own_web_is_a_config_error_not_a_verdict(sandbox):
+    """Feature 016 makes exit 1 reachable from CONFIGURATION. Reported as a red gate it would send
+    someone hunting for broken links that do not exist; routed to `bail()` it would EXIT the script
+    and skip every axis after it — the bug this pass already fixed once. It warns, drops the axis, and
+    lets the rest of the gate speak."""
+    repo, run = sandbox
+    _owned_web_link_without_uuid(repo)
+
+    r = run({"mode": "max", "web": True, "own_web_max": 5})
+
+    out = r.stdout + r.stderr
+    assert r.returncode == 0, out
+    assert "CONFIG" in out and "did NOT run" in out
+
+
+def test_a_junk_own_web_max_is_ignored_not_treated_as_infinite(sandbox):
+    """Silently WIDENING an allowance is the one direction a config typo must not be able to go —
+    the same rule `dangling_max` follows. Ignored, and said out loud."""
+    repo, run = sandbox
+    _owned_web_link_without_uuid(repo)
+
+    r = run({"mode": "max", "web": True, "own_web": ["owned"], "own_web_max": "muchos"})
+
+    assert "not a non-negative integer" in (r.stdout + r.stderr)
+
+
+def test_own_web_is_a_list_so_an_owner_called_origin_stays_expressible(sandbox):
+    """`own_web_from_origin` is its own key rather than a sentinel inside the list, for the same
+    reason the CLI has a flag instead of `--own auto`: an owner literally called `origin` must remain
+    a legal input. Here it is passed as a plain owner and the gate accepts it."""
+    repo, run = sandbox
+    _owned_web_link_without_uuid(repo)
+
+    r = run({"mode": "max", "web": True, "own_web": ["origin", "owned"]})
+
+    out = r.stdout + r.stderr
+    assert "CONFIG error" not in out, out       # not rejected as a bad argument
+    assert r.returncode == 0, out
+
+
+def test_the_keys_do_nothing_when_the_web_axis_is_off(sandbox, tmp_path):
+    """`own_web` rides on `web`. With the axis off the pass must not run at all — asserted on the
+    INVOCATION, because the exit code cannot tell: a destination nobody can read is unverifiable and
+    the gate exits 0 whether or not web-check ran."""
+    repo, run = sandbox
+    _owned_web_link_without_uuid(repo)
+    log = tmp_path / "argv.log"
+
+    r = run({"mode": "max", "own_web": ["owned"], "own_web_max": 0}, argv_log=log)
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert not [l for l in log.read_text().splitlines() if "web-check" in l], log.read_text()
+
+
+def test_the_owner_keys_actually_reach_the_cli(sandbox, tmp_path):
+    """The wiring itself, asserted on the INVOCATION rather than the verdict. Without a token the
+    destination is unverifiable and the gate exits 0 whether or not the flags were passed, so a
+    verdict-based test cannot tell — and did not: dropping the `--own` loop entirely left every other
+    test in this file green."""
+    repo, run = sandbox
+    _owned_web_link_without_uuid(repo)
+    log = tmp_path / "argv.log"
+
+    run({"mode": "max", "web": True, "own_web": ["owned", "other"],
+         "own_web_from_origin": True, "own_web_max": 3}, argv_log=log)
+
+    web = [l for l in log.read_text().splitlines() if "web-check" in l]
+    assert web, log.read_text()
+    assert "--own owned" in web[0] and "--own other" in web[0]
+    assert "--own-from-origin" in web[0]
+    assert "--own-max 3" in web[0]
+
+
+def test_absent_keys_leave_the_command_line_untouched(sandbox, tmp_path):
+    """The rule every key in this recipe follows: not opting in changes nothing for you."""
+    repo, run = sandbox
+    _owned_web_link_without_uuid(repo)
+    log = tmp_path / "argv.log"
+
+    run({"mode": "max", "web": True}, argv_log=log)
+
+    web = [l for l in log.read_text().splitlines() if "web-check" in l]
+    assert web and "--own" not in web[0], web
+
+
+def test_an_exit_1_is_NOT_swallowed_for_a_repo_that_never_opted_in(sandbox, tmp_path):
+    """The blocking defect this pass shipped with: the swallow was unconditional, so ANY exit 1 —
+    `uvx` failing on its own, an uncaught Python exception — turned green for every consumer with
+    `web: true`, including those who never adopted 016. Worse than before the key existed."""
+    repo, run = sandbox
+    _owned_web_link_without_uuid(repo)
+    fake = tmp_path / "exit1bin"
+    fake.mkdir()
+    (fake / "uvx").write_text('#!/usr/bin/env bash\ncase " $* " in *" web-check "*) exit 1;; esac\n'
+                              'args=("$@"); [ "${args[0]:-}" = "--from" ] && args=("${args[@]:2}")\n'
+                              '[ "${args[0]:-}" = "darnlink" ] && args=("${args[@]:1}")\n'
+                              'exec "${DARNLINK_BIN:-darnlink}" "${args[@]}"\n')
+    (fake / "uvx").chmod(0o755)
+
+    r = run({"mode": "max", "web": True}, uvx_dir=fake)   # no own_* keys at all
+
+    assert r.returncode == 1, r.stdout + r.stderr
+
+
+def test_under_fail_closed_a_config_error_is_not_a_pass(sandbox, tmp_path):
+    """In CI the gate IS the wall: an axis that could not run must not read as one that ran clean.
+    Fail-open drops it with a warning; fail-closed makes it 4 — and the later axes still execute,
+    because bail() would exit the script and skip them."""
+    repo, run = sandbox
+    _owned_web_link_without_uuid(repo)
+
+    r = run({"mode": "max", "web": True, "own_web_max": 5, "fail_closed": True})
+
+    assert r.returncode == 4, r.stdout + r.stderr
+    assert "not a pass" in (r.stdout + r.stderr)
+
+
+def test_an_explicit_zero_budget_reaches_the_cli(sandbox, tmp_path):
+    """`own_web_max: 0` is the value whose distinction from "absent" is the whole point of FR-012, and
+    it was the one not covered: a mutation that dropped the explicit 0 survived the suite."""
+    repo, run = sandbox
+    _owned_web_link_without_uuid(repo)
+    log = tmp_path / "argv.log"
+
+    run({"mode": "max", "web": True, "own_web": ["owned"], "own_web_max": 0}, argv_log=log)
+
+    web = [l for l in log.read_text().splitlines() if "web-check" in l]
+    assert web and "--own-max 0" in web[0], web
+
+
+def test_the_env_overrides_win_over_the_json(sandbox, tmp_path, monkeypatch):
+    """Both new env keys were added to the leak-scrub list and then never exercised: renaming either
+    one in the recipe left the whole suite green."""
+    repo, run = sandbox
+    _owned_web_link_without_uuid(repo)
+    log = tmp_path / "argv.log"
+
+    run({"mode": "max", "web": True, "own_web": ["owned"], "own_web_max": 3}, argv_log=log,
+        extra_env={"DARNLINK_GATE_OWN_WEB_MAX": "9", "DARNLINK_GATE_OWN_WEB_FROM_ORIGIN": "1"})
+
+    web = [l for l in log.read_text().splitlines() if "web-check" in l]
+    assert web and "--own-max 9" in web[0] and "--own-from-origin" in web[0], web
+
+
+def test_own_web_configured_where_the_pass_never_runs_says_so(sandbox):
+    """Configured under mode=check the rule simply does not apply, and a no-op that reads like
+    protection is what the CLI itself refuses to be."""
+    repo, run = sandbox
+    _owned_web_link_without_uuid(repo)
+
+    r = run({"mode": "check", "web": True, "own_web": ["owned"]})
+
+    assert "NOT being applied" in (r.stdout + r.stderr)
+
+
+def _uvx_forcing_web_check_to(tmp_path, code: int) -> Path:
+    """A uvx shim that makes ONLY the web pass exit with `code` and lets every other subcommand
+    through — the only way to exercise the recipe's reading of a code the real tool will not produce
+    on demand."""
+    d = tmp_path / f"uvx{code}"
+    d.mkdir()
+    (d / "uvx").write_text(
+        f'#!/usr/bin/env bash\ncase " $* " in *" web-check "*) exit {code};; esac\n'
+        'args=("$@"); [ "${args[0]:-}" = "--from" ] && args=("${args[@]:2}")\n'
+        '[ "${args[0]:-}" = "darnlink" ] && args=("${args[@]:1}")\n'
+        'exec "${DARNLINK_BIN:-darnlink}" "${args[@]}"\n')
+    (d / "uvx").chmod(0o755)
+    return d
+
+
+@pytest.mark.parametrize("cfg", [
+    {"mode": "max", "web": True, "own_web": ["me"]},
+    {"mode": "max", "web": True, "own_web_from_origin": True},
+    {"mode": "max", "web": True, "own_web_max": 5},
+])
+def test_each_own_flag_on_its_own_arms_the_config_reading_of_exit_1(sandbox, tmp_path, cfg):
+    """Only `own_web_max` was exercised, so a mutation that stopped `--own` or `--own-from-origin`
+    from arming the swallow survived: those two repos got the pre-016 behaviour and nothing said so."""
+    repo, run = sandbox
+    _owned_web_link_without_uuid(repo)
+
+    r = run(cfg, uvx_dir=_uvx_forcing_web_check_to(tmp_path, 1))
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "did NOT run" in (r.stdout + r.stderr)
+
+
+def test_a_genuine_web_4_is_not_re_read_as_a_network_hiccup(sandbox, tmp_path):
+    """web-check's codes are all in 0..4 and none of them means "unreachable", so its 4 — which is
+    exactly how feature 016 reports an owned destination with no uuid — must survive the rc>3
+    fail-open heuristic. Drop the RC_IS_FINAL immunity and this repo goes GREEN under the default."""
+    repo, run = sandbox
+    _owned_web_link_without_uuid(repo)
+
+    r = run({"mode": "max", "web": True, "own_web": ["owned"]},
+            uvx_dir=_uvx_forcing_web_check_to(tmp_path, 4))
+
+    assert r.returncode == 4, r.stdout + r.stderr
+
+
+def test_after_a_fail_closed_config_error_the_later_axes_still_run(sandbox):
+    """The 4 must be CARRIED, not bail()'d: bail exits the script and the create-readme / dangling
+    axes never speak. Asserting only the exit code cannot tell the two apart — both give 4."""
+    repo, run = sandbox
+    (repo / "docs").mkdir()
+    (repo / "docs" / "page.md").write_text("# page\n")
+    (repo / "A.md").write_text("# A\nthe [docs](docs/)\ngone [g](nope/missing.md)\n")
+
+    r = run({"mode": "max", "web": True, "own_web_max": 5, "fail_closed": True,
+             "create_readme": True, "create_readme_excludes": ["mirrors/**"],
+             "dangling": "repo"})
+    out = r.stdout + r.stderr
+
+    assert r.returncode == 4, out
+    assert "create-readme axis" in out, out
+    assert "dangling axis" in out, out
+
+
+def test_a_single_empty_owner_is_named_not_swallowed(sandbox):
+    """`["" ]` is the likeliest shape of the typo (a half-filled template line) and the one the
+    joined value cannot distinguish from an absent key — it went through silently, axis running with
+    no ownership at all and going green as if it had checked."""
+    repo, run = sandbox
+    _owned_web_link_without_uuid(repo)
+
+    r = run({"mode": "max", "web": True, "own_web": [""]})
+
+    assert "every entry is empty" in (r.stdout + r.stderr), r.stdout + r.stderr
+
+
+def test_some_empty_owners_among_good_ones_are_named_too(sandbox):
+    """The all-empty case was covered and this one was not, so the config could list three owners,
+    enforce one, and say nothing — fewer owners than the file claims, with a clean exit."""
+    repo, run = sandbox
+    _owned_web_link_without_uuid(repo)
+
+    r = run({"mode": "max", "web": True, "own_web": ["owned", "", ""]})
+
+    assert "2 empty entry/entries out of" in (r.stdout + r.stderr), r.stdout + r.stderr
+
+
+def test_own_web_of_only_empty_entries_still_trips_the_pass_never_runs_warning(sandbox):
+    """F4 read presence off the JOINED value, so an owner list of empty strings looked absent to it
+    too: configured under mode=check it said nothing at all."""
+    repo, run = sandbox
+    _owned_web_link_without_uuid(repo)
+
+    r = run({"mode": "check", "web": True, "own_web": [""]})
+
+    assert "NOT being applied" in (r.stdout + r.stderr), r.stdout + r.stderr

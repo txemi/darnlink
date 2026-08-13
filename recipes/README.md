@@ -47,6 +47,38 @@ is that orchestration in one place; a consumer carries only a tiny config + a 3-
   Windows-only surface silently does not gate this axis. Being explicit rather than letting the
   difference be discovered: on a repo that gates on both, POSIX gates it and Windows does not.
 
+- `web` (opt-in, **default off**, `mode=max` only) → adds a whole-repo `web-check --online` pass:
+  cross-repo Markdown links to **other GitHub repos** must resolve to the destination file's `uuid`,
+  read over the network and anchored with `<!-- web-uuid: X -->`.
+  ⚠️ **Both public and private destinations need `GITHUB_TOKEN`** — private ones for permission,
+  **public ones for quota** (anonymous API = 60/h per public IP, shared by everyone behind the same
+  NAT). Without it they come back `web_unverifiable`, which is a warning and reads like *nothing to
+  check*: **that is a false green**, because an un-anchored web link is only discoverable if the
+  destination can be READ. Measured on one repo, same tree, same day: without token `rc=0`, with
+  token `rc=3`. Quote the token condition next to any web figure or it isn't comparable.
+
+- `own_web` / `own_web_from_origin` / `own_web_max` (opt-in, **need `web`**) → feature 016. A web
+  destination owned by **you** whose `.md` has no `uuid` stops being *someone else's problem* and
+  **fails the gate**: it is a two-line edit in a repo you control, so it is fixable, which is the
+  whole difference from an external link.
+
+  | key | Value | Meaning |
+  |---|---|---|
+  | `own_web` | list of GitHub owners | the owners you control |
+  | `own_web_from_origin` | bool | also count this repo's `origin` owner. A **separate key, not a sentinel** in the list, so an owner literally called `origin` stays expressible |
+  | `own_web_max` | int | a budget, so the rung is adoptable before the repo reaches zero. **Non-numeric counts as ABSENT, never as infinite** — widening an allowance is the one direction a config typo must not be able to go |
+
+  A misconfiguration (a budget with no owners, an empty owner name, `own_web_from_origin` in a tree
+  with no GitHub `origin`) exits `1`, and the recipe reports it as **likely-config** rather than as a
+  verdict about the repository — but **only when this run actually passed an `own_*` flag**, because
+  exit `1` is not exclusively a usage error (`uvx` and an uncaught exception use it too). Under
+  `fail_closed` it still fails, with `4`: in CI an axis that could not run is not a pass.
+
+  ⚠️ **`darnlink-gate.ps1` implements these keys, but its web pass still `exit`s the moment it
+  finishes**, so on Windows the create-readme and dangling axes do not run after a web pass — the
+  bug the POSIX recipe was fixed for. Same caveat as `dangling` below: stated rather than left to be
+  discovered.
+
 - `scope=repo` → judge the whole tree (**the wall — use in pre-push & CI**).
   `scope=staged` → judge only the files you're committing (**multi-session pre-commit**, so a
   teammate's in-flight plain link doesn't block your commit). It filters `darnlink check --json` by
