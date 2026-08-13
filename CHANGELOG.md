@@ -6,6 +6,8 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.20.5] — 2026-08-13
+
 ### Fixed
 - **A tokenless `403` is the anonymous rate limit, not a private repo — and the web axis now says so
   instead of printing a quiet `clean`.** `web-check` reported *"cannot read destination: private repo
