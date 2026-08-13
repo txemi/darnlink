@@ -33,45 +33,6 @@ All notable changes to darnlink are documented here. The format is based on
   so an anchored empty-text link cannot be plain to one function and robust to another — a coupling
   that matters to the **repair** axis and has its own tests, since reverting that half alone leaves
   every `dangling` test green. FR-051.
-- **Within the `dangling` axis**, the whitespace around a link destination is no longer treated as
-  part of it, as CommonMark requires. (Only that axis — `repair`, `robustify` and `--create-readme`
-  still do not strip; see *Known issues* and #67.) Two halves:
-
-  *A destination that is only whitespace is not reported at all.* `[x]( )`, `[x](%20)` and
-  `[x]( #sec)` resolved to the linking file's own directory under a blank name, giving a finding
-  that read `line 5:  : target does not exist` — naming nothing anyone could go and look for. The
-  last was worse than cosmetic: ` #section` is a legal in-page anchor, and FR-046 says a bare
-  fragment is never reported, so a valid link was called dead.
-
-  *A destination with whitespace **around a real name** is stripped before resolving.* `[x]( B.md )`
-  denotes `B.md`; judged literally it resolved to `dir/ B.md ` and was reported dead while the file
-  sat right there — a **false red on a live file**, which is how a gate gets switched off rather
-  than fixed. FR-052.
-
-  Two properties of that strip took four attempts to get right, and both are false greens when
-  wrong, so they are worth stating exactly:
-
-  - **It happens BEFORE percent-decoding.** The whitespace dropped is a *delimiter*, and a delimiter
-    exists only in the source. An escape is content: `[x]( a.md )` denotes `a.md`, but `[x](%20a.md)`
-    denotes `" a.md"` — checked against the reference CommonMark implementation, which emits
-    `href="a.md"` for the first and `href="%20a.md"` for the second. Stripping afterwards made them
-    the same link, so a link to a **missing** file was answered by an existing neighbour.
-  - **The two edges are not the same set.** `cmark` strips VT and FF at the start of a destination
-    and keeps them at the end (`[x](a.md\x0b)` → `href="a.md%0B"`), so a symmetric strip is itself a
-    false green. Leading: space, tab, LF, CR, VT, FF. Trailing: space, tab, LF, CR.
-  - **The rule is POSIX-shaped.** Windows trims trailing spaces from a path component, so
-    `[x](a.md%20)` normalises to `a.md` there and is not dangling. That is the filesystem's answer
-    and this axis exists to ask the filesystem — but a consumer should read it here, not discover it
-    from a build that is red on one OS only.
-  - **ASCII whitespace only**, which is what CommonMark counts. A bare `str.strip()` also removes
-    NBSP and the ideographic space; a file can be named `\xa0a.md`, so that hid a broken link too —
-    and NBSP is precisely what a Word or HTML paste produces.
-
-  Note this **removes** findings from the pre-existing surface rather than adding any: with a
-  non-empty text these shapes were reported before this release. Measured across thirteen local
-  repositories: **0** whitespace-only destinations, and **6** with surrounding whitespace, none of
-  which changes a verdict — only the path the finding names. No consumer's count moves.
-
 - **A tokenless `403` is the anonymous rate limit, not a private repo — and the web axis now says so
   instead of printing a quiet `clean`.** `web-check` reported *"cannot read destination: private repo
   and no token provided"* for any `403` without a token. That was wrong every time: GitHub answers
@@ -131,7 +92,7 @@ occurrences across thirteen repositories.
   `--create-readme`** (#67), so one link can get two verdicts. The `repair` case is the sharp one:
   a trailing space makes `names_md` false, the link is classified as a directory link and becomes a
   `CONFLICT` diagnosed as *"path and uuid disagree"* — which is untrue, and `--write` never heals
-  it, so the gate stays red. FR-052 is deliberately scoped to the `dangling` axis for now.
+  it, so the gate stays red.
 
 ### Added
 - **The English-only gate now covers the surfaces that are actually published**: commit messages,

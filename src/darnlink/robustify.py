@@ -68,42 +68,6 @@ def _anchor_target(href: str, linking_file: Path, extra_targets: AbstractSet[Pat
     return None
 
 
-#: What delimits a link destination. The two edges are not the same set **and not even the same
-#: kind of operation** — adjudicated against the reference implementation, exhaustively, not read
-#: off the spec.
-#:
-#: * **Leading**: a genuine strip. All six ASCII whitespace characters are dropped.
-#: * **Trailing**: a *scan terminator*. `cmark` ends the destination at the first
-#:   `{SP, TAB, LF, CR}` and then skips a WIDER separator set — including VT and FF — before the
-#:   title or the `)`. So VT/FF are content only when directly adjacent to the destination.
-#:
-#: `rstrip` cannot express that, because it stops at the first character outside its set:
-#:
-#:     [x](B.md\x0b)      cmark "B.md%0B"   rstrip "B.md\x0b"   agree
-#:     [x](B.md \x0b)     cmark "B.md"      rstrip "B.md \x0b"  DISAGREE -> false red
-#:
-#: Measured over every ordered pair of whitespace at each edge (121 inputs cmark parses as links):
-#: a symmetric strip agrees 93 times, `lstrip`/`rstrip` 109, terminate-at-first **121**.
-#:
-#: Five rounds of review each re-derived a character SET here and got the next one wrong. This is
-#: the first that changes the SHAPE of the rule, and it is the only formulation that reaches the
-#: parser exactly. FR-052.
-_CM_WS_LEADING = " \t\n\r\x0b\x0c"
-#: Where the destination scan stops. Not a strip set: the first occurrence ends the path.
-_CM_WS_SCAN_STOP = " \t\n\r"
-
-
-def _destination(path_part: str) -> str:
-    """The destination a Markdown link denotes, per CommonMark: strip the left, cut at the right."""
-    q = path_part.lstrip(_CM_WS_LEADING)
-    cut = len(q)
-    for i, c in enumerate(q):
-        if c in _CM_WS_SCAN_STOP:
-            cut = i
-            break
-    return q[:cut]
-
-
 def _dangling_target(href: str, linking_file: Path) -> Path | None:
     """The resolved path of a local link that points at **nothing**, or None (feature 015).
 
@@ -121,32 +85,8 @@ def _dangling_target(href: str, linking_file: Path) -> Path | None:
     # exists. Judging the raw spelling alone would report every percent-encoded link in a tree — the
     # kind of false positive that gets a gate switched off rather than fixed.
     path_part, _ = split_fragment(href)
-    # FR-052: CommonMark does not count the whitespace *surrounding* a link destination as part of
-    # it, so `[x]( B.md )` denotes `B.md` and `[x]( )` denotes nothing. That whitespace is a
-    # DELIMITER, and a delimiter exists only in the source text — which is why the strip happens
-    # here, on the raw spelling, BEFORE any decoding.
-    #
-    # Getting that order wrong is not a nicety; it silently changes which file the link names.
-    # Verified against the reference implementation (`cmark`):
-    #
-    #     [x]( a.md )    ->  a.md        the spaces are delimiters, dropped
-    #     [x](%20a.md)   ->  %20a.md     the escape is CONTENT: this denotes " a.md"
-    #     [x](a.md%20)   ->  a.md%20     likewise, "a.md "
-    #
-    # A version that stripped after `unquote` turned `%20a.md` into `a.md`, so a link to a MISSING
-    # file resolved to an existing neighbour and reported clean (a false green), and where the
-    # spaced file did exist the link was reported dead pointing at the wrong path (a false red on a
-    # live file). `%20` is what every tool emits for a space, and a filename with an edge space
-    # exists in the corpus this feature was measured against.
-    #
-    # It came from borrowing FR-046/FR-047's reasoning — *"those spellings denote the same
-    # destination"* — which is true of a revealed scheme or absolute path and FALSE of whitespace:
-    # `%20a.md` and ` a.md` are different destinations. One clause, five documents, four rounds.
-    raw_stripped = _destination(path_part)
-    if not raw_stripped:
-        return None
-    decoded = unquote(raw_stripped)
-    encoded = decoded != raw_stripped
+    decoded = unquote(path_part)
+    encoded = decoded != path_part
     # Decoding can change *what kind of thing* the href is, not just how it is spelled:
     # `%2Fetc%2Fpasswd` becomes an absolute path and `http%3A//x` regains its scheme. Both pass
     # `is_local_relative` while encoded, so judging only the raw form would let the encoding walk
@@ -154,7 +94,7 @@ def _dangling_target(href: str, linking_file: Path) -> Path | None:
     # for a URL. The decoded spelling is held to the same rule as the raw one.
     if encoded and not is_local_relative(decoded):
         return None
-    t = resolve_href(raw_stripped, linking_file)
+    t = resolve_href(href, linking_file)  # drops the fragment
     if t.exists():
         return None
     if encoded:

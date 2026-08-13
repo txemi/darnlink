@@ -124,51 +124,14 @@ hiding the link. That suffix is harmless: the pattern stops at the `)` and never
 once, which is what made the suffix the plausible-looking cause. Both are pinned in the tests so the
 true cause cannot be re-diagnosed later from the same coincidence.
 
-`href` keeps its `+`: a link with no destination has nothing to check. That was stated before it was
-true — `[]()` never matched, but `[x]( )` did, and resolved to the linking file's own directory with
-a blank name, producing a finding that read `line 5:  : target does not exist`. FR-052 makes the
-behaviour match the claim. Two notes on scope, both learned by being wrong about them first:
+`href` keeps its `+`: a link with no destination has nothing to check.
 
-- **It is a subtraction, not an addition.** With a non-empty text those shapes were reported *before*
-  this release, so FR-052 removes findings from the pre-existing surface — the one exception to the
-  "0 findings lost" claim, which is about the widening. Measured across thirteen local repositories:
-  **0** whitespace-only destinations, and **6** with whitespace around a real name (all in one
-  repo's chat-transcript mirror). None of the 6 changes a verdict: they were dangling before and
-  after, and what changed is the path the finding names. So no consumer's count moves — but the rule
-  is **not inert**, which the bare "0 occurrences" of an earlier draft implied.
-- **The guard belongs after `split_fragment` and BEFORE `unquote`.** Written against the whole raw
-  href it missed `[]( #sec)`, a false positive on a legal in-page anchor. Written after `unquote` it
-  did something worse: `%20a.md` became `a.md`, so a link to a missing file was answered by an
-  existing neighbour. The fragment is a delimiter and comes off first; the escape is content and
-  stays. Four rounds arrived at that ordering, each fixing one dimension and leaving the next: the
-  literal form, then where the value is used, then ASCII versus Unicode, then encoded versus literal.
-  The single clause that licensed the error — *"those spellings denote the same destination"* — was
-  borrowed from FR-047, where it is true, and it propagated into five documents before anyone
-  checked it against a CommonMark implementation. **When a rule is about syntax, adjudicate it
-  against the reference parser, not against the rule next to it.**
-- **And it has to strip, not just test for empty.** A first version rejected only an all-whitespace
-  path, which left `[x]( B.md )` resolving to `dir/ B.md ` and reported dead — while this very
-  section argued that surrounding whitespace is not part of the destination. A rule whose stated
-  reason covers a case its code does not is worse than a narrower rule honestly scoped: the gap
-  reads as a decision nobody took.
-- **Scoped to `dangling`, deliberately, and the scope is written into FR-052 rather than left
-  implied.** The same reasoning applies to three more sites — `_anchor_target`, whose omission means
-  `check` reports "nothing to anchor" over `[x]( B.md )`; `_dir_link_missing_readme`; and `names_md`
-  on the `repair` axis, where the consequence is worst: a trailing space makes `names_md` false, the
-  link is classified as a *directory* link, and it becomes a `CONFLICT` diagnosed as *"path and uuid
-  disagree"* — which is untrue, and unlike a `repair`, `--write` never heals it, so the gate stays
-  red. **0 occurrences across thirteen repositories** (0 of 10.116 robust links), and fixing them
-  changes behaviour on three axes this feature does not own. Filed rather than folded in, for the
-  reason #65 was: a regression fix that also changes behaviour stops being reviewable. The sentence
-  above is narrowed so the gap is a decision on the record, not a silence.
-
-`ROBUST_LINK_RE` widens with `MD_LINK_RE` deliberately — leaving it narrow would make an anchored
-`[](path) <!-- uuid: … -->` plain to one function and robust to another, and the tool's uuid
-bookkeeping assumes those two agree. **That coupling is load-bearing for `repair`, not for
-`dangling`**: an anchored empty-text link was invisible to *both* finders before, so its uuid never
-reached the repair axis and a moved target silently stopped being healed — a false green one axis
-over from the one this feature names. It needs its own tests, because reverting that half alone
-leaves every `dangling` test green (measured: 0 failures before those tests existed, 3 after).
+> ⚠️ **A rule about the whitespace *around* a destination was developed on this branch and has been
+> taken out.** It grew from one review finding into nine rounds, because "which spellings of
+> whitespace delimit a destination" turns out to be a parsing question — five separate dimensions,
+> each of which looked closed until the next round measured it against a CommonMark implementation.
+> It does not belong inside a one-character regression fix, and it is tracked separately with that
+> whole history. This feature ships the widening and its blast-radius guards, nothing more.
 
 ### What else the widening newly exposes
 
@@ -244,35 +207,6 @@ be fixed, or the ceiling raised, *before* the pin moves — not after.
   the same terms as one with text. The link text is what a reader sees; it has no bearing on whether
   the destination is there, and requiring at least one character of it made such links invisible to
   every axis, not merely unreported. See below.
-- **FR-052**: **Within the `dangling` axis**, the whitespace surrounding a link destination MUST NOT
-  be treated as part of it — CommonMark does not. So `[x]( B.md )` MUST be judged as `B.md`, and a
-  destination that is *only*
-  whitespace MUST NOT be reported at all: it names nothing, and resolving it yields the linking
-  file's own directory under a blank name, a finding that names nothing a reader can act on. The
-  rule is applied to the **raw path with the fragment removed, BEFORE percent-decoding** — the
-  whitespace it drops is a *delimiter*, and a delimiter exists only in the source text. A
-  percent-escape is content: verified against the reference implementation, `[x]( a.md )` yields
-  `a.md` while `[x](%20a.md)` yields `%20a.md`, which denotes `" a.md"`. Stripping after decoding
-  makes those two the same link, which is a **false green** when only `a.md` exists and a **false
-  red** naming the wrong path when `" a.md"` does. This is where FR-046/FR-047's reasoning must NOT
-  be borrowed: their spellings do denote the same destination, and whitespace's do not.
-  ⚠️ **The two edges are not the same set.** Adjudicated against the reference implementation:
-  `cmark` strips VT and FF at the START of a destination and keeps them at the END
-  (`[x](a.md\x0b)` → `href="a.md%0B"`). A symmetric strip is therefore a false green. Leading:
-  space, tab, LF, CR, VT, FF. Trailing: space, tab, LF, CR.
-
-  ⚠️ **And the rule is POSIX-shaped.** Windows trims trailing spaces and dots from a path component,
-  so `[x](a.md%20)` — which denotes `"a.md "` — normalises to `a.md` there and is not dangling. That
-  is the filesystem's answer and this axis exists to ask the filesystem, but the asymmetry is real
-  and is stated here rather than left for a consumer to discover from a red build on one OS only.
-
-  The whitespace involved MUST
-  be **ASCII**, that being what CommonMark counts — and never Python's
-  `str.strip()` default, which also removes NBSP and the ideographic space. Those are ordinary
-  characters: a file can be named `\xa0a.md`, so stripping them makes a link to a **missing** file
-  resolve to an existing neighbour and report clean. That is a false green, in the one function
-  this feature owns — and NBSP is exactly what a Word or HTML paste emits, which is the corpus this
-  feature exists for.
 
 ### Key Entities
 
