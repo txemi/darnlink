@@ -2,8 +2,16 @@
   "count": 0,
   "note": "Legacy foreign-language lines. This number may only DECREASE.",
   "scanned_exts": [
+    ".htm",
+    ".html",
+    ".j2",
+    ".jinja",
+    ".markdown",
     ".md",
-    ".py"
+    ".py",
+    ".pyi",
+    ".rst",
+    ".txt"
   ],
   "files": {}
 }

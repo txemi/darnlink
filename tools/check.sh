@@ -23,7 +23,7 @@ cd "$(git rev-parse --show-toplevel)"
 # CI logs of a public repo are public -- but here the reader is you, and being told "this file gained
 # a line" without being told WHICH WORDS is a gate you argue with instead of fix.
 . tools/darnlang_ref.sh
-uvx --from "$DARNLANG_REF" darnlang check --ext .py,.md --show-text
+uvx --from "$DARNLANG_REF" darnlang check --ext all --show-text
 
 uv sync --extra dev   # set up the environment (project + dev deps), like CI's install step
 uv run pytest -q
