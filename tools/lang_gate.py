@@ -99,33 +99,94 @@ _INLINE_CODE = re.compile(r"`[^`]*`")
 _URL = re.compile(r"https?://\S+")
 
 
-def _baseline_path() -> str:
-    """Where the baseline lives. Resolved against the REPO, never against this file.
+_BASELINE_NAME = "lang_gate_baseline.json"
 
-    WHY (2026-08-11). It used to be `dirname(__file__)/lang_gate_baseline.json` — i.e. next to the
-    tool. That works only because the tool happens to sit inside the repo it checks: the moment it
-    is installed anywhere else (a venv, `uvx`, a shared bin) the gate reads and writes a baseline in
-    a directory that has nothing to do with the project, and silently reports a clean tree. It was
-    correct by accident of location, which is not a property you want under a gate.
 
-    Resolution order: `LANG_GATE_BASELINE` (explicit wins) -> `<git root>/tools/lang_gate_baseline.json`
-    -> next to this file, only if there is no git repo at all. The default keeps the file exactly
-    where every consumer already has it, so this fix moves nothing and breaks no one.
+def _project_root() -> str:
+    """The one tree this run is about: the git repo, or the tool's parent if there is no repo.
+
+    WHY THIS IS ONE FUNCTION (2026-08-12). This tool needs two paths -- the tree to scan and the
+    baseline to compare it against -- and they must describe the SAME project or the ratchet means
+    nothing. Both used to come from `__file__`. Both were wrong in the same way, which is exactly
+    why nobody noticed: they agreed, so the gate worked -- correct by accident of location.
+
+    Fixing only the baseline (2026-08-11) was strictly worse than leaving both wrong. Run from a
+    project carrying 1242 legacy lines with the tool installed elsewhere, it read the real baseline
+    and compared it against a count taken from an unrelated tree: `0 < 1242`, so it printed
+    "OK -- and it went DOWN", exited 0 over untouched debt, and invited the user to run
+    `--update-baseline`, which would have written that 0 into a tracked file. The verdict was not
+    even deterministic -- the scanned tree was whatever sat next to the tool, so the same command
+    returned green or red depending on what happened to be in the neighbouring directory.
+
+    So there is ONE resolution and everything derives from it. Two paths that must agree should not
+    be two decisions.
     """
-    env = os.environ.get("LANG_GATE_BASELINE")
-    if env:
-        return os.path.abspath(env)
     try:
         r = subprocess.run(["git", "rev-parse", "--show-toplevel"],
                            capture_output=True, text=True, timeout=10)
         if r.returncode == 0 and r.stdout.strip():
-            return os.path.join(r.stdout.strip(), "tools", "lang_gate_baseline.json")
-    except Exception:
-        pass
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "lang_gate_baseline.json")
+            return os.path.realpath(r.stdout.strip())
+        why = (r.stderr.strip().splitlines()[0] if r.stderr.strip()
+               else "not inside a git repo")
+    except Exception as exc:  # git missing, timeout, anything
+        why = f"cannot ask git for the repo root ({exc.__class__.__name__})"
+    # FALL BACK TO THE CWD, NOT TO THE TOOL. Where the tool sits says nothing about what the user
+    # asked to check; the directory they ran it from does. Falling back to `dirname(__file__)` is
+    # how a shared-bin install ends up judging the tool's own repo -- or `$HOME` -- and reporting
+    # OK about a project it never looked at. And say it out loud: this file announces every other
+    # degradation it makes, and a gate that silently picks a different tree is the bug above.
+    print(f"lang-gate: {why} -> falling back to the current directory", file=sys.stderr)
+    return os.path.realpath(os.getcwd())
 
 
-_BASELINE = _baseline_path()
+def _is_within(path: str, root: str) -> bool:
+    """True if `path` lives inside `root`. Used to refuse cross-project baselines."""
+    try:
+        root = os.path.realpath(root)
+        return os.path.commonpath([os.path.realpath(path), root]) == root
+    except ValueError:  # different drives on Windows
+        return False
+
+
+def _baseline_path(root: str) -> str:
+    """Where the baseline lives: `<root>/tools/`, derived from `root` and from nothing else.
+
+    NO FALLBACK TO THE TOOL'S OWN DIRECTORY, and the reason is worth writing down because a first
+    attempt at this fix had one. It looked harmless -- "if there is no baseline at the default but
+    one sits beside the tool, and the tool is inside `root`, it must be the same project" -- and it
+    reopened the exact hole this function exists to close. A vendored copy or a submodule (tool AND
+    its baseline) lives inside `root` and satisfies that test while belonging to a different
+    project. Measured: a host repo with no baseline of its own, carrying `third_party/x/tools/`
+    whose baseline said 1242, reported "OK -- and it went DOWN (0 < 1242)" with rc=0 and then let
+    `--update-baseline` overwrite that tracked 1242 with 0.
+
+    "Inside the tree" is not the same question as "belongs to this project", and no cheap predicate
+    tells them apart. So there is one location, and a consumer with an unusual layout uses
+    `LANG_GATE_BASELINE` -- an explicit choice, not a guess made on their behalf.
+    """
+    env = os.environ.get("LANG_GATE_BASELINE")
+    if env:
+        # Relative means "relative to the project", not to wherever you happened to `cd`. Against
+        # the cwd, the same command gives a different verdict from the root and from a subdirectory
+        # -- exactly the dependency this whole change exists to remove.
+        path = env if os.path.isabs(env) else os.path.join(root, env)
+        path = os.path.abspath(path)
+        # Reads are not guarded (the whole point of the escape hatch is pointing somewhere odd),
+        # but comparing a count from `root` against a baseline from elsewhere is exactly the #49
+        # failure, so it does not get to happen quietly.
+        if not _is_within(path, root):
+            print(f"lang-gate: LANG_GATE_BASELINE points outside the tree being scanned. The "
+                  f"comparison spans two projects.\n  scanned : {root}\n  baseline: {path}",
+                  file=sys.stderr)
+        return path
+    default = os.path.join(root, "tools", _BASELINE_NAME)
+    # Check the DEFAULT too. It looks impossible to leave the tree from `<root>/tools/`, but a
+    # symlinked `tools/` (or a symlinked baseline file) does exactly that, with no env var and no
+    # user action at run time -- the only remaining silent path across projects.
+    if os.path.exists(default) and not _is_within(default, root):
+        print(f"lang-gate: {default} resolves outside the tree being scanned (symlink?). The "
+              f"comparison spans two projects.\n  scanned : {root}", file=sys.stderr)
+    return default
 
 
 def _is_commentish(line: str) -> bool:
@@ -317,7 +378,8 @@ def main() -> int:
     ap.add_argument("--label", default="text",
                     help="with --prose: what to call the text in the error message")
     args = ap.parse_args()
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    root = _project_root()
+    baseline_path = _baseline_path(root)
 
     if args.prose:
         try:
@@ -362,7 +424,22 @@ def main() -> int:
     for path, _, _ in hits:
         per_file[path] = per_file.get(path, 0) + 1
     if args.update_baseline:
-        with open(_BASELINE, "w", encoding="utf-8") as fh:
+        # Never record a count measured on one tree into another tree's baseline. Unreachable with
+        # the single-root resolution unless LANG_GATE_BASELINE says otherwise -- which is exactly
+        # the case worth guarding, because `n` is a fact about `root` and nowhere else.
+        if not _is_within(baseline_path, root):
+            print(f"lang-gate: REFUSING to write. The baseline is outside the tree that was "
+                  f"scanned, so the count would describe a different project.\n"
+                  f"  scanned : {root}\n  baseline: {baseline_path}", file=sys.stderr)
+            return 1
+        try:
+            os.makedirs(os.path.dirname(baseline_path) or ".", exist_ok=True)
+            fh = open(baseline_path, "w", encoding="utf-8")
+        except OSError as exc:
+            print(f"lang-gate: cannot write the baseline at {baseline_path}: {exc}",
+                  file=sys.stderr)
+            return 1
+        with fh:
             json.dump({"count": n,
                        "note": "Legacy Spanish lines. This number may only DECREASE.",
                        # What the number counts. Without it, widening coverage in this file is
@@ -375,7 +452,7 @@ def main() -> int:
         return 0
 
     try:
-        baseline = json.load(open(_BASELINE, encoding="utf-8"))
+        baseline = json.load(open(baseline_path, encoding="utf-8"))
         base = baseline["count"]
     except (OSError, ValueError, KeyError):
         print(f"lang-gate: no readable baseline; current count is {n}. "
@@ -433,6 +510,11 @@ def main() -> int:
                                f"ones -- re-seed with --update-baseline from a GREEN commit.)")
         return 1
     if n < base:
+        if not _is_within(baseline_path, root):
+            print(f"lang-gate: the count ({n}) is BELOW the baseline ({base}), but they describe "
+                  f"different projects -- see the warning above. Not treating this as a win.",
+                  file=sys.stderr)
+            return 1
         print(f"lang-gate: OK -- and it went DOWN ({n} < {base}). "
               f"Lock the win in with --update-baseline.")
         return 0
