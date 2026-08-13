@@ -476,3 +476,37 @@ def test_the_delimiter_set_is_asymmetric_between_the_two_edges(tmp_path):
     assert names == ["keep0.md", "keep1.md"], (
         f"the two edges were treated alike; expected only the trailing VT/FF to dangle: {names}"
     )
+
+
+def test_the_trailing_edge_is_a_terminator_not_a_strip(tmp_path):
+    """The sixth dimension of FR-052, and the first that changes the SHAPE of the rule.
+
+    Rounds 3-8 each re-derived a character *set*. This is not a set question. Per `cmark`, the
+    destination scan **ends** at the first `{SP, TAB, LF, CR}`, and a wider separator set — VT and
+    FF included — is skipped afterwards. So VT/FF are content only when *directly adjacent* to the
+    path:
+
+        [x](B.md\\x0b)   -> "B.md%0B"   the VT touches the path: content
+        [x](B.md \\x0b)  -> "B.md"      a space intervenes: the scan already stopped
+
+    `rstrip(" \\t\\n\\r")` cannot express that — it halts at the first character outside its set, so
+    it returns `B.md \\x0b` and the link is reported dead while `B.md` is on disk. Five false reds,
+    all of which the *symmetric* strip it replaced got right: that round traded one false green for
+    five false reds.
+
+    ⚠️ The previous test varies **one** whitespace character per fixture, so the correct algorithm
+    and the wrong one are indistinguishable to it. Both are needed: that one pins which characters
+    belong to each edge, this one pins that the right edge is a cut and not a trim.
+    """
+    _w(tmp_path / "B.md", "# B\n")
+    # a scan-stop followed by a VT/FF: the scan already ended, so the path is B.md and it EXISTS
+    vivos = ["B.md \x0b", "B.md \x0c", "B.md\t\x0b", "B.md\t\x0c", "B.md\r\x0b"]
+    for i, dest in enumerate(vivos):
+        _w(tmp_path / f"alive{i}.md", f"---\nuuid: {U_A}\n---\n\n[x]({dest})\n")
+    # VT touching the path: content, so the destination really is "B.md\x0b" and it does NOT exist
+    _w(tmp_path / "dead.md", f"---\nuuid: {U_A}\n---\n\n[x](B.md\x0b)\n")
+
+    found = _dangling(plan_robustify(tmp_path))
+    assert sorted(f.file.name for f in found) == ["dead.md"], (
+        f"a trailing edge was trimmed instead of cut: {[f.file.name for f in found]}"
+    )

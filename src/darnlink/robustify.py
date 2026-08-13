@@ -68,25 +68,40 @@ def _anchor_target(href: str, linking_file: Path, extra_targets: AbstractSet[Pat
     return None
 
 
-#: What delimits a link destination — and **the two edges are not the same set**. Adjudicated
-#: against the reference implementation, not read off the spec. `cmark` gives:
+#: What delimits a link destination. The two edges are not the same set **and not even the same
+#: kind of operation** — adjudicated against the reference implementation, exhaustively, not read
+#: off the spec.
 #:
-#:     [x](\x0ba.md)  ->  href "a.md"       VT leading  : delimiter, dropped
-#:     [x](a.md\x0b)  ->  href "a.md%0B"    VT trailing : CONTENT, kept
+#: * **Leading**: a genuine strip. All six ASCII whitespace characters are dropped.
+#: * **Trailing**: a *scan terminator*. `cmark` ends the destination at the first
+#:   `{SP, TAB, LF, CR}` and then skips a WIDER separator set — including VT and FF — before the
+#:   title or the `)`. So VT/FF are content only when directly adjacent to the destination.
 #:
-#: Same for FF. A symmetric strip of all six therefore turns `[x](a.md\x0b)`, which denotes
-#: `a.md\x0b`, into `a.md` — so a link to a MISSING file is answered by an existing neighbour.
-#: A false green, in the one function this feature owns.
+#: `rstrip` cannot express that, because it stops at the first character outside its set:
 #:
-#: Both sets are ASCII, deliberately NOT `str.strip()`'s default: that removes everything Python
-#: calls whitespace, including NBSP (`\xa0`) and the ideographic space, which CommonMark keeps as
-#: ordinary characters — and NBSP is exactly what a Word or HTML paste produces.
+#:     [x](B.md\x0b)      cmark "B.md%0B"   rstrip "B.md\x0b"   agree
+#:     [x](B.md \x0b)     cmark "B.md"      rstrip "B.md \x0b"  DISAGREE -> false red
 #:
-#: Four rounds of review each closed one dimension of this rule and re-derived the next from the
-#: prose beside it. The asymmetry is the fourth, and it was caught the same way as the third: by
-#: asking the parser instead of the neighbouring rule. FR-052.
+#: Measured over every ordered pair of whitespace at each edge (121 inputs cmark parses as links):
+#: a symmetric strip agrees 93 times, `lstrip`/`rstrip` 109, terminate-at-first **121**.
+#:
+#: Five rounds of review each re-derived a character SET here and got the next one wrong. This is
+#: the first that changes the SHAPE of the rule, and it is the only formulation that reaches the
+#: parser exactly. FR-052.
 _CM_WS_LEADING = " \t\n\r\x0b\x0c"
-_CM_WS_TRAILING = " \t\n\r"
+#: Where the destination scan stops. Not a strip set: the first occurrence ends the path.
+_CM_WS_SCAN_STOP = " \t\n\r"
+
+
+def _destination(path_part: str) -> str:
+    """The destination a Markdown link denotes, per CommonMark: strip the left, cut at the right."""
+    q = path_part.lstrip(_CM_WS_LEADING)
+    cut = len(q)
+    for i, c in enumerate(q):
+        if c in _CM_WS_SCAN_STOP:
+            cut = i
+            break
+    return q[:cut]
 
 
 def _dangling_target(href: str, linking_file: Path) -> Path | None:
@@ -127,7 +142,7 @@ def _dangling_target(href: str, linking_file: Path) -> Path | None:
     # It came from borrowing FR-046/FR-047's reasoning — *"those spellings denote the same
     # destination"* — which is true of a revealed scheme or absolute path and FALSE of whitespace:
     # `%20a.md` and ` a.md` are different destinations. One clause, five documents, four rounds.
-    raw_stripped = path_part.lstrip(_CM_WS_LEADING).rstrip(_CM_WS_TRAILING)
+    raw_stripped = _destination(path_part)
     if not raw_stripped:
         return None
     decoded = unquote(raw_stripped)

@@ -266,8 +266,8 @@ be fixed, or the ceiling raised, *before* the pin moves — not after.
   is the filesystem's answer and this axis exists to ask the filesystem, but the asymmetry is real
   and is stated here rather than left for a consumer to discover from a red build on one OS only.
 
-  The whitespace stripped MUST
-  be **CommonMark's, which is ASCII** — space, tab, LF, VT, FF, CR — and never Python's
+  The whitespace involved MUST
+  be **ASCII**, that being what CommonMark counts — and never Python's
   `str.strip()` default, which also removes NBSP and the ideographic space. Those are ordinary
   characters: a file can be named `\xa0a.md`, so stripping them makes a link to a **missing** file
   resolve to an existing neighbour and report clean. That is a false green, in the one function

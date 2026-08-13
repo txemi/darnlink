@@ -100,12 +100,25 @@ occurrences across thirteen repositories.
 
 - ⚠️ **LIVE — balanced parentheses in a destination are truncated at the first `)`** (#71).
   CommonMark allows them; `MD_LINK_RE` does not, so the link is cut short and reported dead while
-  the file it names sits on disk. **104 occurrences in one repository**, clustered in mirrored
-  attachment filenames (`(Parte 1)`, `(February - Monthly)`). The report conceals itself: its own
-  `(resolves to …)` supplies the missing parenthesis, so the truncated path reads as complete, and
-  a reader who checks finds the file present and concludes the *gate* is broken. That repo runs
-  `dangling: warn`, so these print rather than gate — **raising it to `repo` would close the wall on
-  104 files that exist.** Pre-existing and orthogonal to this release.
+  the file it names sits on disk, clustered in mirrored attachment filenames (`(Parte 1)`,
+  `(February - Monthly)`). The report conceals itself: its own `(resolves to …)` supplies the
+  missing parenthesis, so the truncated path reads as complete, and a reader who checks finds the
+  file present and concludes the *gate* is broken.
+
+  **Size it by 20, not by 104.** Two measurements of the same repository, and only the first is what
+  a wall would enforce:
+
+  | measurement | count |
+  |---|---:|
+  | `dangling` findings the gate **emits** that are truncations | **20** |
+  | truncated links **in the tree** whose paren-completed target exists | 104 |
+
+  An earlier version of this entry printed only the 104 and said raising `dangling` to `repo` "would
+  close the wall on 104 files that exist". That is wrong: a wall counts what the axis emits, and
+  most of the 104 never reach it. The gap between the two is filters this note does not fully
+  account for, which is exactly why the actionable number is the one measured at the gate.
+
+  Pre-existing and orthogonal to this release.
 
 - **`--write` detaches a pandoc attribute block** (#65). The anchor lands between the link and its
   `{…}`, so the block stops applying. Pre-existing: a non-empty link text has always done it. The
