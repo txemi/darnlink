@@ -63,6 +63,22 @@ $ignoreBlocks = @(CfgOr 'ignore_blocks' @())
 $rawWeb = if ($null -ne $env:DARNLINK_GATE_WEB) { $env:DARNLINK_GATE_WEB } else { CfgOr 'web' '' }
 $web = -not ([string]::IsNullOrWhiteSpace([string]$rawWeb) -or
              ([string]$rawWeb).Trim().ToLower() -in @('0','false','no','off'))
+# OWN_WEB (opt-in, needs `web`): the owners you control. A destination owned by one of them whose .md
+# has no uuid stops being "someone else's problem" and becomes a gate failure - feature 016. A LIST of
+# names, never a sentinel: `own_web_from_origin` is its own key precisely so an owner literally called
+# `origin` stays expressible, the same reason the CLI has a flag instead of `--own auto`.
+$ownWeb = @(CfgOr 'own_web' @())
+$rawOWFO = if ($null -ne $env:DARNLINK_GATE_OWN_WEB_FROM_ORIGIN) { $env:DARNLINK_GATE_OWN_WEB_FROM_ORIGIN } else { CfgOr 'own_web_from_origin' '' }
+$ownWebFromOrigin = -not ([string]::IsNullOrWhiteSpace([string]$rawOWFO) -or
+                          ([string]$rawOWFO).Trim().ToLower() -in @('0','false','no','off'))
+# A budget, so the rung is adoptable before a repo reaches zero. Non-numeric counts as ABSENT, never as
+# infinite: silently WIDENING an allowance is the one direction a config typo must not be able to go.
+$rawOWM = if ($null -ne $env:DARNLINK_GATE_OWN_WEB_MAX) { $env:DARNLINK_GATE_OWN_WEB_MAX } else { CfgOr 'own_web_max' '' }
+$ownWebMax = ''
+if (-not [string]::IsNullOrWhiteSpace([string]$rawOWM)) {
+  if (([string]$rawOWM).Trim() -match '^\d+$') { $ownWebMax = ([string]$rawOWM).Trim() }
+  else { Write-Warning "darnlink-gate: own_web_max='$rawOWM' is not a non-negative integer - ignoring it." }
+}
 # CREATE_README (opt-in, mode=max): also run --create-readme — a directory link whose target folder has
 # no README (no uuid) FAILS the gate (dry-run detects it; fix with --create-readme --write).
 $rawCR = if ($null -ne $env:DARNLINK_GATE_CREATE_README) { $env:DARNLINK_GATE_CREATE_README } else { CfgOr 'create_readme' '' }
@@ -139,8 +155,22 @@ if ($scope -ne 'staged') {
       $webArgs = @()
       foreach ($e in $excludes)     { if ($e) { $webArgs += @('--exclude', $e) } }
       foreach ($b in $ignoreBlocks) { if ($b) { $webArgs += @('--ignore-block', $b) } }
+      foreach ($o in $ownWeb)       { if ($o) { $webArgs += @('--own', $o) } }
+      if ($ownWebFromOrigin) { $webArgs += '--own-from-origin' }
+      if ($ownWebMax)        { $webArgs += @('--own-max', $ownWebMax) }
       & uvx --from $ref darnlink web-check . --online @webArgs
-      exit $LASTEXITCODE
+      $webRc = $LASTEXITCODE
+      # EXIT 1 IS A USAGE ERROR, NOT A VERDICT ABOUT THE REPO, and feature 016 makes it reachable from
+      # CONFIGURATION: own_web_max without own_web, an empty owner name, or own_web_from_origin in a
+      # tree with no GitHub `origin`. Reporting it as a red gate would send someone hunting for broken
+      # links that do not exist. Say what is wrong and drop the axis for this run.
+      if ($webRc -eq 1) {
+        Write-Warning "darnlink-gate: web-check rejected its own arguments (exit 1) - this is a CONFIG"
+        Write-Warning "  error, not a finding about this repository. Check own_web /"
+        Write-Warning "  own_web_from_origin / own_web_max in darnlink-gate.json. The web axis did NOT run."
+        $webRc = 0
+      }
+      exit $webRc
     }
   } else {
     & uvx --from $ref darnlink check . @dlArgs @args   # `darnlink check` → 0/2/3 (mode=check|repair)

@@ -6,6 +6,30 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- **`darnlink-gate`: the `own_web` keys, so feature 016 can actually be switched on.** The rule
+  shipped in v0.21.0 lives in the CLI; until now no gate invoked it, so it protected nothing. Both
+  recipes — bash and PowerShell — now read `own_web` (a list of owners), `own_web_from_origin` (bool)
+  and `own_web_max` (int) and pass them through.
+
+  Three details keep it honest, and each is the same rule an existing key already follows:
+
+  - **`own_web_from_origin` is its own key, not a sentinel inside the list** — an owner literally
+    called `origin` has to stay expressible, the same reason the CLI has a flag rather than
+    `--own auto`.
+  - **A non-numeric budget counts as ABSENT, never as infinite.** Silently widening an allowance is
+    the one direction a config typo must not be able to go (`dangling_max` established this).
+  - **Exit 1 is a CONFIG error, not a verdict about the repository.** Feature 016 makes it reachable
+    from configuration — a budget with no owners, an unresolvable origin — and reporting it as a red
+    gate would send someone hunting for broken links that do not exist. It is not routed to `bail()`
+    either: that exits the script, which would skip every axis after this one, the bug this same pass
+    was fixed for once already.
+
+  The wiring is asserted on the **invocation**, not the verdict: without a token an unreadable
+  destination is `web_unverifiable` and the gate exits 0 whether or not the flags were passed, so a
+  verdict-based test cannot tell — and did not. Dropping the `--own` loop entirely left every other
+  recipe test green until the shim started recording argv.
+
 ## [0.21.0] — 2026-08-13
 
 ### Added
