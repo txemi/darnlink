@@ -179,10 +179,30 @@ def test_a_bom_in_the_destination_does_not_hide_its_uuid(tmp_path):
     invariant for the LOCAL path; the web path was left out of it."""
     _w(tmp_path / "src.md", f"see [x]({OWNED})\n")
     bom = (200, "\ufeff" + f"---\nuuid: {UUID}\n---\n# dest\n")
-    kinds, _, edits = _kinds(tmp_path, _fetcher({OWNED: bom}))
+    kinds, findings, edits = _kinds(tmp_path, _fetcher({OWNED: bom}))
     assert kinds == ["web_anchor"] and edits          # NOT web_own_no_uuid
+    # the uuid too, not just the kind: a "fix" that invented one would pass on kind alone
+    assert findings[0].anchored_uuid == UUID
     assert _run_web_check_cli([str(tmp_path), "--online", "--own", "owned"],
                               fetcher=_fetcher({OWNED: bom})) == 3
+
+
+def test_the_wire_half_of_the_bom_fix_is_pinned_too(monkeypatch):
+    """The `utf-8-sig` decode in `_fetch_once` is the belt to the `lstrip`'s braces, and it is
+    unobservable through the CLI — the strip neutralises it downstream, so no end-to-end test can kill
+    it. Pinned at the seam instead: bytes off the wire, text out."""
+    import io
+    from darnlink.weblinks import _fetch_once
+
+    class _Resp(io.BytesIO):
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr("urllib.request.urlopen",
+                        lambda *a, **k: _Resp(b"\xef\xbb\xbf---\nuuid: x\n---\n"))
+    status, text = _fetch_once(GithubUrl("o", "r", "main", "a.md"), None)
+    assert status == 200 and text.startswith("---")   # not "\ufeff---"
 
 
 def test_a_bom_does_not_invent_a_uuid_either(tmp_path):
