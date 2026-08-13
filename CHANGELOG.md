@@ -16,13 +16,15 @@ All notable changes to darnlink are documented here. The format is based on
 > never *candidates*, so a tree full of broken embeds reported `dangling: 0`. Making them visible can
 > only push the count up.
 >
-> **How likely is it to be you?** Measured across a ten-repository fleet, each with its own config,
+> **How likely is it to be you?** Measured across a nine-repository fleet, each with its own config,
 > same command, only the version changing. Seven of them run `dangling: "repo"` with no ceiling — the
 > setting that turns a finding into a closed push wall — and **two go red: 0 → 7 and 0 → 1. The other
-> five stay at 0 and notice nothing.** One more, already at `warn`, moves 1704 → 1716.
+> five stay at 0 and notice nothing.** An eighth, already at `warn`, moves 1704 → 1716; the ninth has
+> the axis off.
 >
-> So: a minority, but not a rarity, and the size is unrelated to how big the repo is — it tracks how
-> many converted documents it carries.
+> So: a minority, but not a rarity. Every single finding across the whole fleet was the same shape —
+> `media/imageN.{jpeg,png,emf}` or a `foto-*.jpg` inside a CV or attachment converted by pandoc — so
+> what it tracks is how many converted documents a tree carries.
 >
 > **Before you upgrade:** run the axis at `dangling: "warn"` to see your own number, then fix the
 > links or raise the ceiling. This is a fix uncovering debt you already had, not a new failure — but
