@@ -8,6 +8,21 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [0.22.0] — 2026-08-13
 
+> ### ⚠️ Moving your pin to this release CAN turn a green gate red — without you changing anything
+>
+> Not because of the new keys: those are opt-in, and a repo that sets none of them behaves exactly as
+> it did on v0.21.0. It is the **dangling** fix below. Links with empty text — `![](photo.jpg)`, the
+> shape pandoc emits for every image in a converted document — were not being filtered out, they were
+> never *candidates*, so a tree full of broken embeds reported `dangling: 0`. Making them visible can
+> only push the count up.
+>
+> Measured on one corpus, same command, only the version changing: **0 → 2**. A repo at
+> `dangling: "repo"` with `dangling_max` unset closes its push wall the moment the pin moves.
+>
+> **Before you upgrade:** run the axis at `dangling: "warn"` to see your real number, then fix the
+> links or raise the ceiling. This is a fix uncovering debt you already had, not a new failure — but
+> it arrives as a red build either way, and being told afterwards is not being told.
+
 ### Added
 - **`darnlink-gate`: the `own_web` keys, so feature 016 can actually be switched on.** The rule
   shipped in v0.21.0 lives in the CLI; until now no gate invoked it, so it protected nothing. Both
@@ -55,43 +70,7 @@ All notable changes to darnlink are documented here. The format is based on
   a script that does not start. CI now parses it. Parsing is not testing — it never runs the gate —
   but it is the one failure mode a bash-only fleet cannot see at all.
 
-## [0.21.0] — 2026-08-13
 
-### Added
-- **`web-check --online` can fail on a destination *you own* that has no `uuid`** — feature 016,
-  opt-in (`specs/016-own-repo-web-strictness/spec.md`). The web axis is forgiving by design: a
-  destination that fetches 200 without a `uuid` is `web_unverifiable` and the run still exits 0,
-  because the file lives in someone else's repository and cannot be fixed from here. When it is
-  **yours** that is not an external limitation — it is a missing two-line edit in a repo you control,
-  and nothing ever said so.
-
-  - **`--own OWNER`** (repeatable, stripped and case-folded) names the owners you control.
-    **`--own-from-origin`** adds this repo's `origin` owner — a separate flag rather than a magic
-    `--own auto`, so an owner literally called `auto` stays expressible. If it cannot resolve, the run
-    is a **usage error**, even when explicit owners were given: it is a request, not a fallback.
-  - **`web_own_no_uuid`** at exit **4**, not 3 — 3 promises "re-run with `--write`", and darnlink
-    cannot fix this one. The message names owner, repo and path, and never suggests `--write`.
-  - **`--own-max N`** budgets it so a repo can adopt the rule before reaching zero. The budget
-    silences the *verdict*, never the *finding*, and never shields another exit-4 cause. The report
-    says where the count stands in all four cases — including **over** the budget, because a budget
-    that goes silent exactly when it is exceeded is the one moment its number is worth reading.
-  - **`<!-- darnlink-own-exempt -->`** exempts a link whose destination is machine-regenerated, where
-    a `uuid` is futile — from the new finding, from anchoring, and from `web_mismatch`, since a
-    regenerating destination is precisely one whose uuid drifts. Honoured **with or without an owner
-    set**: it states a property of the link, not of the run.
-
-  Two exclusions, textual and offline: a destination that is not `.md` can never carry frontmatter,
-  and one pinned to a **commit SHA** can never be given one retroactively. Tags are deliberately not
-  excluded — a tag is textually indistinguishable from a branch of the same name.
-
-  With no owner set, behaviour is unchanged byte for byte in the **text report, the exit code and the
-  files on disk**, with two named departures: the exemption marker, and three keys that
-  `--json` gains unconditionally — the two new counters at zero, and `own_max` — so a consumer can
-  tell both that the axis ran and what budget it ran under.
-
-## [0.20.5] — 2026-08-13
-
-### Fixed
 - **A link with empty text — `![](photo.jpg)`, what pandoc emits for every image in a converted
   `.docx`/`.odt` — was invisible to every axis, not merely unreported.** `MD_LINK_RE` required at
   least one character of link text (`[^\]]+`), so such a link never matched: it was not a finding
@@ -118,26 +97,6 @@ All notable changes to darnlink are documented here. The format is based on
   so an anchored empty-text link cannot be plain to one function and robust to another — a coupling
   that matters to the **repair** axis and has its own tests, since reverting that half alone leaves
   every `dangling` test green. FR-051.
-- **A tokenless `403` is the anonymous rate limit, not a private repo — and the web axis now says so
-  instead of printing a quiet `clean`.** `web-check` reported *"cannot read destination: private repo
-  and no token provided"* for any `403` without a token. That was wrong every time: GitHub answers
-  **404**, not 403, for a private repo you cannot see — as `_classify` already explained thirteen
-  lines below the message. A tokenless 403 is the **60/h-per-public-IP anonymous quota**, shared by
-  every machine behind the same NAT, so the message sent readers hunting for a permissions problem
-  they did not have, on destinations that were public and returned 200 in a browser.
-
-  **This is not only a mislabel: it can be a false green.** An un-anchored web link is only
-  discoverable if the destination can be **read**. Measured on one tree, minutes apart: *without*
-  token `exit 0`, *with* token `exit 3` — the link needed anchoring and the tokenless run could not
-  tell. So `ok 0 | unverifiable N` means *"could not look"*, not *"nothing to verify"*, and it is
-  indistinguishable from a repo with no cross-repo links at all.
-
-  Three surfaces changed accordingly: the finding text now names the quota and the remedy; the
-  summary line no longer says plain `clean` when anything was unverifiable; and both recipes (bash
-  and PowerShell) warn when the axis runs without a token. The docs that promised *"public repos work
-  tokenless"* and *"never a false green"* are corrected — **give the axis a token even for public
-  destinations**: private ones need it for permission, public ones for quota.
-
 ### Known issues — read this before moving a pin
 
 None is introduced by this release, but they belong where a consumer deciding on an upgrade will
@@ -177,6 +136,63 @@ occurrences across thirteen repositories.
   a trailing space makes `names_md` false, the link is classified as a directory link and becomes a
   `CONFLICT` diagnosed as *"path and uuid disagree"* — which is untrue, and `--write` never heals
   it, so the gate stays red.
+
+## [0.21.0] — 2026-08-13
+
+### Added
+- **`web-check --online` can fail on a destination *you own* that has no `uuid`** — feature 016,
+  opt-in (`specs/016-own-repo-web-strictness/spec.md`). The web axis is forgiving by design: a
+  destination that fetches 200 without a `uuid` is `web_unverifiable` and the run still exits 0,
+  because the file lives in someone else's repository and cannot be fixed from here. When it is
+  **yours** that is not an external limitation — it is a missing two-line edit in a repo you control,
+  and nothing ever said so.
+
+  - **`--own OWNER`** (repeatable, stripped and case-folded) names the owners you control.
+    **`--own-from-origin`** adds this repo's `origin` owner — a separate flag rather than a magic
+    `--own auto`, so an owner literally called `auto` stays expressible. If it cannot resolve, the run
+    is a **usage error**, even when explicit owners were given: it is a request, not a fallback.
+  - **`web_own_no_uuid`** at exit **4**, not 3 — 3 promises "re-run with `--write`", and darnlink
+    cannot fix this one. The message names owner, repo and path, and never suggests `--write`.
+  - **`--own-max N`** budgets it so a repo can adopt the rule before reaching zero. The budget
+    silences the *verdict*, never the *finding*, and never shields another exit-4 cause. The report
+    says where the count stands in all four cases — including **over** the budget, because a budget
+    that goes silent exactly when it is exceeded is the one moment its number is worth reading.
+  - **`<!-- darnlink-own-exempt -->`** exempts a link whose destination is machine-regenerated, where
+    a `uuid` is futile — from the new finding, from anchoring, and from `web_mismatch`, since a
+    regenerating destination is precisely one whose uuid drifts. Honoured **with or without an owner
+    set**: it states a property of the link, not of the run.
+
+  Two exclusions, textual and offline: a destination that is not `.md` can never carry frontmatter,
+  and one pinned to a **commit SHA** can never be given one retroactively. Tags are deliberately not
+  excluded — a tag is textually indistinguishable from a branch of the same name.
+
+  With no owner set, behaviour is unchanged byte for byte in the **text report, the exit code and the
+  files on disk**, with two named departures: the exemption marker, and three keys that
+  `--json` gains unconditionally — the two new counters at zero, and `own_max` — so a consumer can
+  tell both that the axis ran and what budget it ran under.
+
+## [0.20.5] — 2026-08-13
+
+### Fixed
+- **A tokenless `403` is the anonymous rate limit, not a private repo — and the web axis now says so
+  instead of printing a quiet `clean`.** `web-check` reported *"cannot read destination: private repo
+  and no token provided"* for any `403` without a token. That was wrong every time: GitHub answers
+  **404**, not 403, for a private repo you cannot see — as `_classify` already explained thirteen
+  lines below the message. A tokenless 403 is the **60/h-per-public-IP anonymous quota**, shared by
+  every machine behind the same NAT, so the message sent readers hunting for a permissions problem
+  they did not have, on destinations that were public and returned 200 in a browser.
+
+  **This is not only a mislabel: it can be a false green.** An un-anchored web link is only
+  discoverable if the destination can be **read**. Measured on one tree, minutes apart: *without*
+  token `exit 0`, *with* token `exit 3` — the link needed anchoring and the tokenless run could not
+  tell. So `ok 0 | unverifiable N` means *"could not look"*, not *"nothing to verify"*, and it is
+  indistinguishable from a repo with no cross-repo links at all.
+
+  Three surfaces changed accordingly: the finding text now names the quota and the remedy; the
+  summary line no longer says plain `clean` when anything was unverifiable; and both recipes (bash
+  and PowerShell) warn when the axis runs without a token. The docs that promised *"public repos work
+  tokenless"* and *"never a false green"* are corrected — **give the axis a token even for public
+  destinations**: private ones need it for permission, public ones for quota.
 
 ### Added
 - **The English-only gate now covers the surfaces that are actually published**: commit messages,
