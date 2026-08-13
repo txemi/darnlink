@@ -431,7 +431,16 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
             print(f"  WROTE {wrote} file(s).")
         elif anchors_pending:
             print("  (dry-run — nothing written. Re-run with --write to anchor.)")
+        # "clean" must not be printed over a pass that could not LOOK. An unverifiable destination is
+        # not a verified one: with the anonymous 60/h-per-IP quota exhausted, every cross-repo link
+        # comes back unverifiable and this line used to summarise it as `clean` — which is how the
+        # axis went unnoticed for months. And it is not merely a missing measurement: an un-anchored
+        # web link is only discoverable if the destination can be READ, so the same tree can exit 0
+        # without a token and 3 with one. Say what was not looked at, right where the verdict is read.
         outcome = {0: "clean", 3: "anchors pending", 4: "integrity failure"}[code]
+        if code == 0 and unverifiable:
+            outcome = (f"clean of what could be READ — {len(unverifiable)} unverifiable, "
+                       f"NOT verified (export GITHUB_TOKEN)")
         print(f"  -> exit {code} ({outcome})")
 
     return code

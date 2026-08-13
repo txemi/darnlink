@@ -281,7 +281,8 @@ Why it's safe to add to an existing fail-closed gate:
   for where a moved target went (no web-side index to walk deterministically) — that's left to the
   human/LLM layer, which re-anchors once it knows the new URL.
 
-Add it as one extra step in the wall (pre-push + CI), gated on having a token for any private targets.
+Add it as one extra step in the wall (pre-push + CI), and give it a token — for **quota** on public
+targets, for **permission** on private ones.
 
 ## Checklist
 
@@ -294,4 +295,5 @@ Add it as one extra step in the wall (pre-push + CI), gated on having a token fo
 - [ ] Gap = 0 → flip the gate to `--create-frontmatter`.
 - [ ] Wire the walls: pre-commit (staged) · pre-push (whole repo) · CI/self-hosted (whole repo).
 - [ ] **If you have cross-repo web links:** anchor them with `web-check --online --write`, add
-      `web-check --online` to the pre-push/CI wall, and provide a token for any private destinations.
+      `web-check --online` to the pre-push/CI wall, and provide a token (quota for public destinations,
+      permission for private ones).

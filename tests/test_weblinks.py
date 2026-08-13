@@ -129,7 +129,7 @@ def test_online_dest_has_no_uuid_is_mismatch(tmp_path):
     assert findings[0].kind == "web_mismatch"
 
 
-# --- failure cases: 404, private-no-token, unparseable, network error ---
+# --- failure cases: 404, 403-without-token, unparseable, network error ---
 
 def test_online_404_WITH_token_is_web_not_found_exits_4(tmp_path, monkeypatch):
     """WITH a token, a 404 is a real break: the token distinguishes 'moved/deleted' from
@@ -159,7 +159,7 @@ def test_online_403_without_a_token_is_reported_as_quota_not_as_a_private_repo(t
     """A tokenless 403 is the ANONYMOUS RATE LIMIT, not a private repo.
 
     This test used to be called `..._private_no_token_...` and its fixture comment said
-    "private repo, no token -> 403". That is backwards, and `_finding_for` says so itself:
+    "private repo, no token -> 403". That is backwards, and `_classify` says so itself:
     GitHub answers **404**, not 403, for a private repo we cannot see. So a 403 without a
     token is essentially always the 60/h-per-IP anonymous quota — which is what a caller
     behind a shared NAT hits. Naming it "private repo" sent readers hunting for a

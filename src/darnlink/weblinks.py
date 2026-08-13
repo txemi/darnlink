@@ -199,7 +199,8 @@ def _repo_accessible(owner: str, repo: str, token: Optional[str]) -> bool:
             return resp.status == 200
     except urllib.error.HTTPError as e:
         if e.code in (403, 404):
-            return False  # genuinely not readable with this token (private cross-org repo)
+            return False  # not readable with this token. NB 403 here is usually QUOTA (or a blocked
+            # repo), not permission — a private repo answers 404. Same distinction as _classify.
         return True       # 5xx/429/other: an outage/throttle, NOT inaccessible -> fall back to 404-is-broken
     except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException, ValueError):
         return True   # network blip: don't downgrade a persistent 404 to unverifiable on a transient error
@@ -255,8 +256,8 @@ def _classify(link: WebLink, gu: Optional[GithubUrl], status: int, dest_uuid: Op
         # ANONYMOUS RATE LIMIT (60/h per public IP, shared by every machine behind the same NAT),
         # and naming it "private repo" sent readers to look for a permissions problem they did not
         # have, on destinations that were public and returned 200 to a browser.
-        why = ("anonymous request rejected (403: the 60/h per-IP quota is exhausted, or the caller "
-               "is blocked) — export GITHUB_TOKEN to verify" if not have_token
+        why = (f"anonymous request rejected ({status}: the 60/h per-IP quota is exhausted, or the "
+               "caller is blocked) — export GITHUB_TOKEN to verify" if not have_token
                else "token rejected (403/401)")
         return WebFinding("web_unverifiable", f, link.href, f"cannot read destination: {why}")
     if status == -2:

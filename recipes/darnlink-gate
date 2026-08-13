@@ -331,7 +331,7 @@ if [ "$SCOPE" != "staged" ]; then
     # core failure surfaces first). web-check takes the SAME `--exclude` and `--ignore-block` as the core
     # (since 0.12.0) — pass both so it skips vendored clones / mirrors instead of fetching and anchoring
     # web links INSIDE someone else's checkout. Fail-closed on a broken public web link; web_unverifiable
-    # (private w/o token, or offline) is exit 0. Needs a ref with web-check + its --exclude (v0.12.0+).
+    # (no token — public OR private — or offline) is exit 0. Needs a ref with web-check + its --exclude (v0.12.0+).
     if [ "$rc" -eq 0 ] && [ -n "$WEB" ]; then
       # web-check needs $GITHUB_TOKEN. If it's not already exported, read it from a read-only PAT FILE
       # (default ~/.config/github_token_ro; override with DARNLINK_GATE_TOKEN_FILE) — a git hook's env
