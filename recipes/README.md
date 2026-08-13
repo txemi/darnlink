@@ -174,7 +174,7 @@ not snippets to assemble (assembling the CI one wrong yields a wall that fails *
 any CI can fetch it **without a token** (no private checkout, no cred):
 
 ```bash
-VER=$(jq -re '.ref | split("@") | last' darnlink-gate.json)   # THE pin, read from the json
+VER=$(jq -re 'if has("ref") then .ref else error("darnlink-gate.json has no \"ref\"") end | split("@") | last' darnlink-gate.json)
 curl -fsSL "https://raw.githubusercontent.com/txemi/darnlink/$VER/recipes/darnlink-gate" -o darnlink-gate
 chmod +x darnlink-gate
 ```
@@ -202,7 +202,7 @@ why the distinction matters:
 
 | What it is | Lives in | Right tool |
 |---|---|---|
-| **Vendored** — a foreign repo or generated tree you **committed** on purpose | in git, every clone | `excludes` ✅ (that is what the examples above do) |
+| **Vendored or generated everywhere** — a foreign repo you committed, or a tree every machine regenerates (`.pytest_cache`, `output`) | in git, or in every clone alike | `excludes` ✅ |
 | **CI litter** — what another stage wrote into the workspace this build | nowhere, only on that agent | **clean it up** ❌ not `excludes` |
 
 Excluding litter silences *this* gate and leaves every other tree-scanning check in your pipeline

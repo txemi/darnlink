@@ -36,7 +36,7 @@ stage('darnlink gate (links)') {
       # `ref` is optional to the recipe (it falls back to a default frozen at v0.7.0 — old, and NOT
       # the version you fetched), but this example insists on it: an unpinned gate is not a wall.
       VER=$(python3 -c 'import json,sys
-cfg = json.load(open(sys.argv[1]))
+cfg = json.load(open(sys.argv[1], encoding="utf-8-sig"))   # -sig: jq tolerates a BOM; python must too
 if "ref" not in cfg:
     sys.exit("darnlink-gate.json has no \\"ref\\": pin the version there, not in the Jenkinsfile")
 print(cfg["ref"].rsplit("@", 1)[1])' "$ROOT/darnlink-gate.json")

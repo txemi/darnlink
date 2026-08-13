@@ -116,7 +116,8 @@ read_cfg() { python3 - "$cfg" "$1" "$2" <<'PY' 2>/dev/null || printf '%s' "$2"
 import json, sys
 cfg, key, default = sys.argv[1], sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else ""
 try:
-    d = json.load(open(cfg, encoding="utf-8"))
+    d = json.load(open(cfg, encoding="utf-8-sig"))   # -sig: reads plain UTF-8 identically, but
+    # a BOM would otherwise raise -> the except below silently reverts EVERY key to its default
 except Exception:
     d = {}
 v = d.get(key, default)
@@ -131,7 +132,7 @@ PY
 read_cfg_len() { python3 - "$cfg" "$1" <<'PY' 2>/dev/null || printf '0'
 import json, sys
 try:
-    d = json.load(open(sys.argv[1], encoding="utf-8"))
+    d = json.load(open(sys.argv[1], encoding="utf-8-sig"))   # -sig: same reason as read_cfg above
 except Exception:
     d = {}
 v = d.get(sys.argv[2])
