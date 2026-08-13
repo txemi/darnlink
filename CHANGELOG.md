@@ -48,6 +48,22 @@ All notable changes to darnlink are documented here. The format is based on
     destination with no uuid — turns into **0** under the default, with the suite green.
 
 ### Fixed
+- **Balanced parentheses in a link destination are no longer truncated** (#71). CommonMark allows
+  them; `[^)]+` stopped at the first, so `[r](Log%20Analysis%20(February).docx)` was cut short and
+  reported dead while the file was on disk. The report **concealed the cut** — its own
+  `(resolves to …)` wrapper supplied the missing parenthesis, so the truncated path read as
+  complete, and a reader who checked found the file present and concluded the *gate* was broken.
+
+  Measured across the fleet, adjudicated against the reference CommonMark implementation: of 413
+  hrefs containing a `(`, **266** are the real case (balanced, spaces already `%20`-encoded), 141
+  carry raw spaces and are **not links at all** in CommonMark, 6 are unbalanced. Gate-scope
+  differential: **1867 → 1862** dangling — five false reds removed, **zero findings gained**.
+
+  ⚠️ **Bounded at two levels of nesting, with a deliberate fallback.** CommonMark allows arbitrary
+  depth and a regex cannot; the pattern ends in `|[^)]+` so that a link nested past the bound
+  degrades to the **old truncating behaviour** rather than ceasing to match. Without that, it would
+  become invisible — a false green, which is strictly worse than the false red being removed.
+  Arbitrary depth needs the scanner tracked in #74; it occurs 0 times in the fleet.
 - **Nothing had ever parsed `recipes/darnlink-gate.ps1`.** The recipe tests skip on Windows and no CI
   job ran `pwsh`, so a syntax error in the shipped PowerShell recipe would have reached consumers as
   a script that does not start. CI now parses it. Parsing is not testing — it never runs the gate —

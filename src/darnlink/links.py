@@ -12,14 +12,31 @@ from typing import List, Sequence, Tuple
 
 # A robust link: a Markdown link immediately followed (any whitespace) by a uuid HTML comment.
 ROBUST_LINK_RE = re.compile(
-    r"\[(?P<text>[^\]]*)\]\((?P<href>[^)]+)\)\s*<!--\s*uuid:\s*(?P<uuid>[0-9a-fA-F-]{36})\s*-->"
+    r"\[(?P<text>[^\]]*)\]\((?P<href>(?:[^()]|\((?:[^()]|\([^()]*\))*\))+|[^)]+)\)\s*<!--\s*uuid:\s*(?P<uuid>[0-9a-fA-F-]{36})\s*-->"
 )
 # Any inline Markdown link. `text` is `*`, not `+`: `[](dest)` is a link with empty text, and the
 # empty alt of `![](dest)` is what pandoc emits for every image in a converted .docx/.odt. Requiring
 # one character there made the whole link invisible -- not reported as bad, *absent* -- so a tree
 # full of broken image embeds passed the dangling axis as clean (FR-051). `href` stays `+`: a link
 # with no destination at all has nothing to check.
-MD_LINK_RE = re.compile(r"\[(?P<text>[^\]]*)\]\((?P<href>[^)]+)\)")
+#: The destination may contain BALANCED parentheses — CommonMark says so, and filenames from
+#: document systems are full of them (`Log%20Analysis%20(February).docx`). `[^)]+` stopped at
+#: the first `)`, truncating the path and reporting it dead while the file was on disk. Measured
+#: on the fleet: **266** links of that shape. The report concealed the cut, because its own
+#: `(resolves to …)` wrapper supplied the missing parenthesis and the path read as complete.
+#:
+#: ⚠️ **Bounded at two levels of nesting, and that bound is a known limit, not a property.**
+#: CommonMark allows arbitrary depth; a regex cannot. Adjudicated against the reference
+#: implementation: `[^)]+` agrees with `cmark` on 3 of 9 probe shapes, one level on 7, two on 8.
+#: The ninth is triple nesting, which no bounded pattern reaches — it needs the scanner tracked
+#: in #74, and it occurs 0 times in the fleet.
+#:
+#: ⚠️ The trailing `|[^)]+` is what makes the bound SAFE, and it is the whole point of the
+#: alternation. Without it, a link nested past the bound stops matching **at all** — it becomes
+#: invisible, which is a FALSE GREEN, and a false green is strictly worse than the false red
+#: this change removes. With it, such a link degrades to exactly the old truncating behaviour:
+#: still wrong, still visible, still reported. Never trade a false red for a false green.
+MD_LINK_RE = re.compile(r"\[(?P<text>[^\]]*)\]\((?P<href>(?:[^()]|\((?:[^()]|\([^()]*\))*\))+|[^)]+)\)")
 # A uuid comment that immediately follows a link (used to tell plain from robust).
 # No `^`: it is applied with .match(content, pos), which already anchors at pos.
 _TRAILING_UUID_RE = re.compile(r"\s*<!--\s*uuid:\s*[0-9a-fA-F-]{36}\s*-->")

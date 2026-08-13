@@ -316,3 +316,60 @@ def test_whitespace_around_a_destination_is_NOT_stripped_here(tmp_path):
     found = _dangling(plan_robustify(tmp_path))
     assert len(found) == 1, "the whitespace rule (#74) appears to have been re-landed silently"
     assert " B.md " in found[0].detail
+
+
+def test_balanced_parentheses_in_a_destination_are_not_truncated(tmp_path):
+    """#71: CommonMark allows balanced parentheses in a destination; `[^)]+` stopped at the first.
+
+    The link was cut short and reported dead while the file was on disk — and the report **concealed
+    the cut**, because its own `(resolves to …)` wrapper supplied the missing parenthesis, so the
+    truncated path read as complete and correct. Someone checking it finds the file present and
+    concludes the *gate* is broken, which is how an axis gets switched off rather than fixed.
+
+    The shape is not exotic: it is what document systems name their attachments
+    (`Log%20Analysis%20(February).docx`). Measured on the fleet: **266** links of this shape.
+    """
+    _w(tmp_path / "Log%20Analysis%20(February).docx", "x\n")
+    _w(tmp_path / "doc.md",
+       f"---\nuuid: {U_A}\n---\n\n[r](Log%20Analysis%20(February).docx)\n")
+
+    assert _dangling(plan_robustify(tmp_path)) == []
+
+
+def test_a_truncated_destination_is_still_reported_when_it_really_is_missing(tmp_path):
+    """The other half: widening the grammar must not hide a genuinely dead link of the same shape."""
+    _w(tmp_path / "doc.md", f"---\nuuid: {U_A}\n---\n\n[r](gone%20(Parte%201).docx)\n")
+
+    found = _dangling(plan_robustify(tmp_path))
+    assert len(found) == 1 and "gone%20(Parte%201).docx" in found[0].detail
+
+
+def test_nesting_beyond_two_levels_is_a_known_limit_not_a_property(tmp_path):
+    """The bound is written down, and pinned, because the pattern it replaced had one too.
+
+    CommonMark allows arbitrary nesting; a regex cannot. Adjudicated against the reference
+    implementation, `[^)]+` agrees with `cmark` on 3 of 9 probe shapes, one level of nesting on 7,
+    two on 8. The ninth is triple nesting, and this test states that darnlink does not see it —
+    **0 occurrences in the fleet**, and closing it needs the scanner tracked in #74.
+
+    Pinned rather than left implicit: an unstated bound is exactly how the old pattern truncated 266
+    real links for years without anyone calling it a bug.
+    """
+    _w(tmp_path / "a(b(c(d)e)f).md", "x\n")
+    _w(tmp_path / "doc.md", f"---\nuuid: {U_A}\n---\n\n[r](a(b(c(d)e)f).md)\n")
+
+    found = _dangling(plan_robustify(tmp_path))
+    assert len(found) == 1, "triple nesting is now matched — good, but the docs say it is not"
+    assert "a(b(c(d" in found[0].detail          # truncated at the bound, as documented
+
+
+def test_prose_parentheses_after_a_link_are_not_swallowed(tmp_path):
+    """The risk of widening: `[x](a.md) (an aside)` must stay one link plus prose, not one long href.
+
+    A pattern that allowed unbalanced parens would eat the aside; the balanced form cannot, and this
+    pins it — the same class of check that the empty-text widening needed at its own boundary.
+    """
+    _w(tmp_path / "a.md", "x\n")
+    _w(tmp_path / "doc.md", f"---\nuuid: {U_A}\n---\n\n[r](a.md) (un inciso entre parentesis)\n")
+
+    assert _dangling(plan_robustify(tmp_path)) == []
