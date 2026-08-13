@@ -340,15 +340,39 @@ def test_absorbing_a_stray_anchor_does_not_eat_an_attribute_block(tmp_path):
     `![](B.md) <!-- uuid: X -->{.cls` : the block silently becomes prose.
 
     Attribute-block tests exist and detached-anchor tests exist; **no fixture combined them**, so
-    the deletion boundary had no guard at all. Seeded (a `_hspace_start` that steps over `}`) it
-    passes the whole suite. This is the last unguarded write path in the module.
+    the deletion boundary had no guard at all.
+
+    Asserts the whole line, and the reason is not style. The first version of this test used
+    `"{.cls}" in a` plus an anchor count, and **three** distinct corruptions of this exact splice
+    walked through it: an end offset one too high (eats the final newline — a document character in
+    any line with prose after the anchor), one too low (leaves a literal `>` in the document), and a
+    boundary that does not walk back at all (leaves a trailing space). The sibling repair test was
+    rewritten in the very commit that added this one, for exactly this reason; writing the weak form
+    here reintroduced the defect one test below its own fix.
     """
     _w(tmp_path / "B.md", f"---\nuuid: {EXISTING}\n---\n# B\n")
-    original = f"![](B.md){{.cls}} <!-- uuid: {EXISTING} -->\n"
-    _w(tmp_path / "A.md", original)
+    _w(tmp_path / "A.md", f"![](B.md){{.cls}} <!-- uuid: {EXISTING} -->\n")
 
     apply_robustify(plan_robustify(tmp_path))
 
     a = (tmp_path / "A.md").read_text()
-    assert "{.cls}" in a, f"the attribute block lost a brace: {a!r}"
-    assert a.count("<!-- uuid:") == 1, f"the stray was duplicated rather than absorbed: {a!r}"
+    assert a == f"![](B.md) <!-- uuid: {EXISTING} -->{{.cls}}\n", f"bad rewrite: {a!r}"
+
+
+def test_absorbing_a_stray_does_not_eat_a_closing_paren_of_prose(tmp_path):
+    """Same deletion boundary, the other character it could walk back over.
+
+    `(see [x](B.md)) <!-- uuid: X -->` — the comment follows the *parenthetical's* `)`, not the
+    link's, so it is a stray and the absorb path runs. A boundary that walks back over `)` as well
+    as whitespace deletes a character of the author's prose and leaves `(see [x](B.md)` unbalanced.
+
+    The sibling fixture cannot reach this: its attribute block sits between the link and the space,
+    so no `)` is ever adjacent to the boundary. One shape per character the walk-back could eat.
+    """
+    _w(tmp_path / "B.md", f"---\nuuid: {EXISTING}\n---\n# B\n")
+    _w(tmp_path / "A.md", f"(see [x](B.md)) <!-- uuid: {EXISTING} -->\n")
+
+    apply_robustify(plan_robustify(tmp_path))
+
+    a = (tmp_path / "A.md").read_text()
+    assert a == f"(see [x](B.md) <!-- uuid: {EXISTING} -->)\n", f"bad rewrite: {a!r}"

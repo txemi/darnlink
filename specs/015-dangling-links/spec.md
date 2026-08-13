@@ -245,7 +245,13 @@ be fixed, or the ceiling raised, *before* the pin moves — not after.
   rule is applied to the **decoded path with the fragment removed**, on the same terms as FR-046 and
   FR-047 — those spellings denote the same destination, and a rule applied to one of them is a rule
   with a way around it. Guarding the raw href alone left `[](%20)` and `[]( #sec)` still emitting
-  the forbidden finding, the second on a legal in-page anchor (FR-046).
+  the forbidden finding, the second on a legal in-page anchor (FR-046). The whitespace stripped MUST
+  be **CommonMark's, which is ASCII** — space, tab, LF, VT, FF, CR — and never Python's
+  `str.strip()` default, which also removes NBSP and the ideographic space. Those are ordinary
+  characters: a file can be named `\xa0a.md`, so stripping them makes a link to a **missing** file
+  resolve to an existing neighbour and report clean. That is a false green, in the one function
+  this feature owns — and NBSP is exactly what a Word or HTML paste emits, which is the corpus this
+  feature exists for.
 
 ### Key Entities
 

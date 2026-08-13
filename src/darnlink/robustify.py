@@ -68,6 +68,16 @@ def _anchor_target(href: str, linking_file: Path, extra_targets: AbstractSet[Pat
     return None
 
 
+#: CommonMark whitespace, which is ASCII-only: space, tab, LF, VT, FF, CR. Deliberately NOT
+#: `str.strip()`'s default — that removes every character Python calls whitespace, including NBSP
+#: (`\xa0`) and the ideographic space (`　`), which CommonMark treats as ordinary characters.
+#: A file really can be named `\xa0a.md`, and stripping the NBSP made a link to a MISSING file
+#: resolve to an existing neighbour and report clean: a false green, in the one function this
+#: feature owns. NBSP is also exactly what arrives from a Word or HTML paste — the same corpus
+#: that motivated the feature. FR-052.
+_CM_WHITESPACE = " \t\n\r\x0b\x0c"
+
+
 def _dangling_target(href: str, linking_file: Path) -> Path | None:
     """The resolved path of a local link that points at **nothing**, or None (feature 015).
 
@@ -108,10 +118,10 @@ def _dangling_target(href: str, linking_file: Path) -> Path | None:
     # branch was never stripped at all. Result: `[x]( B.md #s )` and `[x](%20B.md )` resolved to
     # `dir/B.md ` and `dir/ B.md` and were reported dead while `B.md` sat right there. A rule is only
     # applied where its value is used.
-    stripped = decoded.strip()
+    stripped = decoded.strip(_CM_WHITESPACE)
     if not stripped:
         return None
-    raw_stripped = path_part.strip()
+    raw_stripped = path_part.strip(_CM_WHITESPACE)
     # Decoding can change *what kind of thing* the href is, not just how it is spelled:
     # `%2Fetc%2Fpasswd` becomes an absolute path and `http%3A//x` regains its scheme. Both pass
     # `is_local_relative` while encoded, so judging only the raw form would let the encoding walk

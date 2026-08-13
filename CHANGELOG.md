@@ -33,8 +33,9 @@ All notable changes to darnlink are documented here. The format is based on
   so an anchored empty-text link cannot be plain to one function and robust to another — a coupling
   that matters to the **repair** axis and has its own tests, since reverting that half alone leaves
   every `dangling` test green. FR-051.
-- **The whitespace around a link destination is no longer treated as part of it**, as CommonMark
-  requires. Two halves:
+- **Within the `dangling` axis**, the whitespace around a link destination is no longer treated as
+  part of it, as CommonMark requires. (Only that axis — `repair`, `robustify` and `--create-readme`
+  still do not strip; see *Known issues* and #67.) Two halves:
 
   *A destination that is only whitespace is not reported at all.* `[x]( )`, `[x](%20)` and
   `[x]( #sec)` resolved to the linking file's own directory under a blank name, giving a finding
@@ -46,7 +47,11 @@ All notable changes to darnlink are documented here. The format is based on
   denotes `B.md`; judged literally it resolved to `dir/ B.md ` and was reported dead while the file
   sat right there — a **false red on a live file**, which is how a gate gets switched off rather
   than fixed. Applied to the decoded path with the fragment removed, and — the part a first version
-  got wrong — at every place that value is *used*, not only where it is tested. FR-052.
+  got wrong — at every place inside this axis that the value is *used*, not only where it is tested.
+  **ASCII whitespace only**, which is what CommonMark counts: a bare `str.strip()` also removes NBSP
+  and the ideographic space, and since a file really can be named `\xa0a.md`, that turned a link to
+  a **missing** file into a resolved one and reported clean — a false green, and NBSP is precisely
+  what a Word or HTML paste produces. FR-052.
 
   Note this **removes** findings from the pre-existing surface rather than adding any: with a
   non-empty text these shapes were reported before this release. Measured across thirteen local
@@ -75,18 +80,23 @@ All notable changes to darnlink are documented here. The format is based on
 
 ### Known issues — read this before moving a pin
 
-Neither is introduced by this release and both are latent (**0 occurrences across thirteen
+None of the three is introduced by this release and all are latent (**0 occurrences across thirteen
 repositories**), but this release routes more links towards the first, so they belong where a
 consumer deciding on an upgrade will see them — not buried under *Fixed*.
 
 - **`--write` detaches a pandoc attribute block** (#65). The anchor lands between the link and its
   `{…}`, so the block stops applying. Pre-existing: a non-empty link text has always done it. The
   tests added here pin that the block is never *deleted*, which is the worse neighbour of the two.
+- **`--write` silently drops a file's UTF-8 BOM** (#68) on all four write paths. CRLF is preserved
+  meticulously; the BOM is not, and three places in this repo imply otherwise — including the CI
+  Windows matrix, whose stated purpose is BOM/CRLF and whose BOM fixture only covers the *read*
+  path, so it cannot see this.
 - **Whitespace around a destination is stripped by `dangling` but not by `repair`, `robustify` or
   `--create-readme`** (#67), so one link can get two verdicts. The `repair` case is the sharp one:
   a trailing space makes `names_md` false, the link is classified as a directory link and becomes a
   `CONFLICT` diagnosed as *"path and uuid disagree"* — which is untrue, and `--write` never heals
   it, so the gate stays red. FR-052 is deliberately scoped to the `dangling` axis for now.
+
 ### Added
 - **The English-only gate now covers the surfaces that are actually published**: commit messages,
   PR titles/descriptions, issues, and `.md` documentation. Until now it judged one thing —

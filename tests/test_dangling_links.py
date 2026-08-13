@@ -372,3 +372,22 @@ def test_encoded_and_fragment_spellings_of_a_real_target_are_stripped(tmp_path):
         _w(tmp_path / f"doc{i}.md", f"---\nuuid: {U_A}\n---\n\n[x]({href})\n")
 
     assert _dangling(plan_robustify(tmp_path)) == []
+
+
+def test_only_ascii_whitespace_is_stripped_from_a_destination(tmp_path):
+    """FR-052 strips CommonMark whitespace, which is ASCII. `\\xa0` is an ordinary character.
+
+    `str.strip()` removes everything Python calls whitespace — NBSP, the ideographic space, and
+    ~20 more — but CommonMark counts only space, tab, LF, VT, FF and CR. A file really can be named
+    `\\xa0a.md`, so stripping the NBSP made a link to a MISSING file resolve to an existing
+    neighbour and report **clean**: a false green, in the function this feature owns.
+
+    Not academic: NBSP is what a Word or HTML paste produces, which is the same corpus of converted
+    documents that motivated the whole feature.
+    """
+    _w(tmp_path / "a.md", "# a\n")          # exists — the neighbour a bare .strip() would find
+    for i, href in enumerate(["\xa0a.md", "\u3000a.md", "a.md\xa0"]):
+        _w(tmp_path / f"doc{i}.md", f"---\nuuid: {U_A}\n---\n\n[x]({href})\n")
+
+    found = _dangling(plan_robustify(tmp_path))
+    assert len(found) == 3, f"a non-ASCII space was treated as whitespace: {found}"
