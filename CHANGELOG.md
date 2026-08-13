@@ -94,9 +94,18 @@ All notable changes to darnlink are documented here. The format is based on
 
 ### Known issues — read this before moving a pin
 
-None of the three is introduced by this release and all are latent (**0 occurrences across thirteen
-repositories**), but this release routes more links towards the first, so they belong where a
-consumer deciding on an upgrade will see them — not buried under *Fixed*.
+None is introduced by this release, but they belong where a consumer deciding on an upgrade will
+see them rather than buried under *Fixed*. **One of them is live**; the rest are latent at 0
+occurrences across thirteen repositories.
+
+- ⚠️ **LIVE — balanced parentheses in a destination are truncated at the first `)`** (#71).
+  CommonMark allows them; `MD_LINK_RE` does not, so the link is cut short and reported dead while
+  the file it names sits on disk. **104 occurrences in one repository**, clustered in mirrored
+  attachment filenames (`(Parte 1)`, `(February - Monthly)`). The report conceals itself: its own
+  `(resolves to …)` supplies the missing parenthesis, so the truncated path reads as complete, and
+  a reader who checks finds the file present and concludes the *gate* is broken. That repo runs
+  `dangling: warn`, so these print rather than gate — **raising it to `repo` would close the wall on
+  104 files that exist.** Pre-existing and orthogonal to this release.
 
 - **`--write` detaches a pandoc attribute block** (#65). The anchor lands between the link and its
   `{…}`, so the block stops applying. Pre-existing: a non-empty link text has always done it. The
