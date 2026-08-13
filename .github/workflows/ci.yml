@@ -42,8 +42,10 @@ jobs:
           # Full history: the commit-message step below ranges over the commits this PR adds,
           # and with the default depth of 1 there is no range to walk.
           fetch-depth: 0
-      # No setup step on purpose: the gate is pure stdlib, so it cannot fail for reasons
-      # unrelated to what it guards — which is how a gate keeps its credibility.
+      # `uv` IS a setup step now, and that is the cost of the migration stated plainly: the gate used
+      # to be pure stdlib and could not fail for reasons unrelated to what it guards. It is bought
+      # back by a package that has tests and one place to fix a bug for five repos.
+      - uses: astral-sh/setup-uv@v5
       - name: English-only gate — tracked files (fail-closed, baseline pinned at 0)
         run: |
           . tools/darnlang_ref.sh
