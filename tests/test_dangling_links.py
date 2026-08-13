@@ -244,7 +244,8 @@ def test_image_embed_with_an_empty_alt_is_reported(tmp_path):
     `MD_LINK_RE` required at least one character of link text, so a link whose text is empty did not
     match *at all*. That is the worst failure mode a gate has: the link was not reported as bad, it
     was absent, and the axis printed `dangling: 0` over a tree full of broken embeds. Regression
-    #52 — measured on one real corpus: 7 links of this shape, 7 of them broken, 0 visible.
+    #52 — measured on one real corpus in its own gate scope: 127 links with empty text, 7 of them
+    pointing at a target that does not exist, and the axis reported `dangling: 0`.
     """
     _w(tmp_path / "doc.md", f"---\nuuid: {U_A}\n---\n\n![](gone.png)\n")
 
@@ -264,9 +265,9 @@ def test_pandoc_attribute_suffix_does_not_hide_the_target(tmp_path):
     """#52 reported the `{width="…"}` suffix as the cause. It is not — but it must keep working.
 
     `![alt](x){width="1.1in"}` was already visible: the regex stops at the `)` and never looks at
-    what follows. This pins the empty-alt half; the non-empty-alt half is the test below, and both
-    are needed — a wrong fix that widened the grammar to *consume* the suffix would pass this one
-    alone, since every other test in this file uses an empty alt.
+    what follows. This pins that the suffix does not hide the target; that the suffix stays OUT of
+    the match span is a separate property, and it needs a separate test — see the write case below,
+    because detection alone cannot tell the two apart.
     """
     _w(tmp_path / "doc.md", f'---\nuuid: {U_A}\n---\n\n![](gone.png){{width="1.1in"}}\n')
 
@@ -285,9 +286,8 @@ def test_a_plain_link_with_empty_text_is_reported_too(tmp_path):
 def test_a_non_empty_alt_with_the_pandoc_suffix_is_still_seen(tmp_path):
     """The other half of the suffix pin: a link WITH text and a `{…}` suffix must keep working.
 
-    Without this case, a wrong fix that widened the grammar to *consume* `{width="…"}` would pass
-    every other test in this file — they all use an empty alt, so none of them exercises the suffix
-    against a link the old regex already matched.
+    The old regex already matched this one, so it guards the direction the empty-alt cases cannot:
+    that widening the *text* did not disturb a link that was never affected.
     """
     _w(tmp_path / "doc.md", f'---\nuuid: {U_A}\n---\n\n![shot](gone.png){{width="1.1in"}}\n')
 
@@ -304,5 +304,30 @@ def test_a_whitespace_only_href_is_not_a_dangling_target(tmp_path):
     finding about the *href*.
     """
     _w(tmp_path / "doc.md", f"---\nuuid: {U_A}\n---\n\n[]( )\n")
+
+    assert _dangling(plan_robustify(tmp_path)) == []
+
+
+def test_a_percent_encoded_space_is_not_a_dangling_target(tmp_path):
+    """FR-052 is judged on the DECODED path: `[](%20)` is the same link as `[]( )`.
+
+    Guarding the raw href alone left this one still emitting `line 5: %20: target does not exist`,
+    the exact finding the rule forbids, because `%20` is not whitespace until it is decoded. The
+    three spellings of "no destination" have to be one rule, for the same reason FR-046 and FR-047
+    judge the decoded form.
+    """
+    _w(tmp_path / "doc.md", f"---\nuuid: {U_A}\n---\n\n[](%20)\n")
+
+    assert _dangling(plan_robustify(tmp_path)) == []
+
+
+def test_whitespace_before_a_bare_fragment_is_not_a_dangling_target(tmp_path):
+    """`[x]( #section)` is a legal in-page anchor, and FR-046 says a bare fragment is never reported.
+
+    Splitting the fragment leaves a path of pure whitespace, so this is FR-052's case — but reaching
+    it requires the guard to sit *after* `split_fragment`. Before that, this was reported as a dead
+    link: not merely a cosmetic finding, a false positive on valid CommonMark.
+    """
+    _w(tmp_path / "doc.md", f"---\nuuid: {U_A}\n---\n\n[x]( #section)\n")
 
     assert _dangling(plan_robustify(tmp_path)) == []

@@ -81,18 +81,24 @@ def _dangling_target(href: str, linking_file: Path) -> Path | None:
     """
     if not is_local_relative(href):
         return None                       # FR-046: scheme, protocol-relative, absolute, bare #frag
-    # FR-052: an href that is only whitespace names no destination, so there is nothing to check.
-    # `[]()` never matched (`href` is `[^)]+`), but `[]( )` does, and resolving it yields the linking
-    # file's own directory with a blank name -- a finding whose text reads `line 5:  : target does
-    # not exist`, naming nothing the reader can go and look for.
-    if not href.strip():
-        return None
     # FR-047: `resolve_href` does not percent-decode, so `my%20file.md` resolves to a path that never
     # exists. Judging the raw spelling alone would report every percent-encoded link in a tree — the
     # kind of false positive that gets a gate switched off rather than fixed.
     path_part, _ = split_fragment(href)
     decoded = unquote(path_part)
     encoded = decoded != path_part
+    # FR-052: a path that is only whitespace names no destination, so there is nothing to check.
+    # Resolving it yields the linking file's own directory under a blank name — a finding reading
+    # `line 5:  : target does not exist`, which names nothing a reader can go and look for.
+    #
+    # This is judged on the DECODED path, after the fragment is split off, for the same reason
+    # FR-046/FR-047 are: the three spellings are the same link. Testing the raw href instead left
+    # `[](%20)` (a percent-encoded space) and `[]( #x)` (whitespace plus a fragment) still emitting
+    # the exact finding this rule forbids — and the second is worse than cosmetic, since a bare
+    # fragment must never be reported at all (FR-046), so ` #section` was a legal in-page anchor
+    # being called a dead link.
+    if not decoded.strip():
+        return None
     # Decoding can change *what kind of thing* the href is, not just how it is spelled:
     # `%2Fetc%2Fpasswd` becomes an absolute path and `http%3A//x` regains its scheme. Both pass
     # `is_local_relative` while encoded, so judging only the raw form would let the encoding walk

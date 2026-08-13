@@ -219,3 +219,39 @@ def test_robustify_ignored_target_gets_no_uuid(tmp_path):
     assert (tmp_path / "A.md").read_text() == "see [G](G.md)\n"  # link left plain
     # a link to an ignored target must NOT be reported as no_frontmatter (misleading)
     assert not any(fi.kind is Kind.NO_FRONTMATTER for fi in result.findings)
+
+
+def test_write_preserves_the_bang_of_an_image_embed(tmp_path):
+    """FR-051: the widening routes empty-alt embeds into the WRITE path for the first time.
+
+    The `!` sits outside the match span, so a rewrite must leave it in place. Detection cannot pin
+    this — the finding looks identical either way — and a rewrite that swallowed it would silently
+    turn every repaired image into a text link, which renders as a filename instead of a picture.
+    Seeded before writing this: an emitter that consumes the `!` leaves the whole suite green.
+    """
+    _w(tmp_path / "B.md", f"---\nuuid: {EXISTING}\n---\n# B\n")
+    _w(tmp_path / "A.md", "![](B.md)\n")
+
+    apply_robustify(plan_robustify(tmp_path))
+
+    a = (tmp_path / "A.md").read_text()
+    assert a.startswith("!"), f"the image embed lost its bang: {a!r}"
+    links = find_robust_links(a)
+    assert len(links) == 1 and links[0].href == "B.md" and links[0].text == ""
+
+
+def test_write_leaves_a_pandoc_attribute_suffix_untouched(tmp_path):
+    """The suffix must stay OUT of the match span, and only a write can prove it.
+
+    #52 blamed `{width="…"}` for hiding the link. The fix must not "help" by consuming the suffix:
+    a regex ending `\\)(?:\\{[^}]*\\})?` passes every detection test in the suite — measured, all
+    260 of them — while `--write` silently **deletes the attributes** from the document. Detection
+    reports the same finding either way, so this is the only place the difference is observable.
+    """
+    _w(tmp_path / "B.md", f"---\nuuid: {EXISTING}\n---\n# B\n")
+    _w(tmp_path / "A.md", '![](B.md){width="1.1in" height="2in"}\n')
+
+    apply_robustify(plan_robustify(tmp_path))
+
+    a = (tmp_path / "A.md").read_text()
+    assert 'width="1.1in"' in a and 'height="2in"' in a, f"attributes were eaten: {a!r}"

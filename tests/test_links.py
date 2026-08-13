@@ -151,9 +151,12 @@ def test_an_empty_text_image_anchor_is_robust_not_plain():
 def test_emit_round_trips_an_empty_text_link():
     """`emit_robust_link("")` must produce a link the grammar reads back identically.
 
-    The `!` of an image embed sits outside the match span, so a rewrite must leave it in place: an
-    emitter that dropped it would silently turn every repaired image into a text link.
+    Scope, stated because an earlier version of this test overreached: this is emit → parse for an
+    empty text, nothing more. Whether a *rewrite* keeps the `!` of an embed is span arithmetic in
+    `robustify`, which this never calls — it lives in
+    `test_robustify.test_write_preserves_the_bang_of_an_image_embed`.
     """
     out = emit_robust_link("", "new/B.md", U)
-    back = find_robust_links(f"![{out[1:]}" if out.startswith("[") else out)
+    assert out.startswith("[](")
+    back = find_robust_links(out)
     assert len(back) == 1 and back[0].href == "new/B.md" and back[0].text == ""

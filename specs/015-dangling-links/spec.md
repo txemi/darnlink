@@ -125,9 +125,17 @@ once, which is what made the suffix the plausible-looking cause. Both are pinned
 true cause cannot be re-diagnosed later from the same coincidence.
 
 `href` keeps its `+`: a link with no destination has nothing to check. That was stated before it was
-true — `[]()` never matched, but `[]( )` did, and resolved to the linking file's own directory with a
-blank name, producing a finding that read `line 5:  : target does not exist`. FR-052 makes the
-behaviour match the claim.
+true — `[]()` never matched, but `[x]( )` did, and resolved to the linking file's own directory with
+a blank name, producing a finding that read `line 5:  : target does not exist`. FR-052 makes the
+behaviour match the claim. Two notes on scope, both learned by being wrong about them first:
+
+- **It is a subtraction, not an addition.** With a non-empty text those shapes were reported *before*
+  this release, so FR-052 removes findings from the pre-existing surface. Measured across eleven
+  local repositories: 0 occurrences, so no consumer's count moves — but "0 findings lost" is a claim
+  about the widening, and this rule is the one exception to it.
+- **The guard belongs after `split_fragment` and `unquote`, not before.** Written against the raw
+  href it missed `[](%20)` and `[]( #sec)` — the same link, spelled differently — and the second was
+  a false positive on valid CommonMark rather than a cosmetic finding.
 
 `ROBUST_LINK_RE` widens with `MD_LINK_RE` deliberately — leaving it narrow would make an anchored
 `[](path) <!-- uuid: … -->` plain to one function and robust to another, and the tool's uuid
@@ -145,9 +153,17 @@ Measured on the same repository:
 | Consumer | Effect |
 |---|---|
 | `dangling` | +7 findings, all real broken image embeds; **0 findings lost** |
-| web axis (`find_web_links`) | **+36** links newly visible. None is a `/blob/` URL, so no anchor is demanded and the gate does not flip — but that is the shape of *these* URLs, not a property of the change. One `[](https://github.com/o/r/blob/main/x.md)` anywhere would now exit 3 |
-| `robustify --write` | an existing target behind an empty-text link now receives a uuid anchor; the `!` of an embed sits outside the match span and is preserved |
+| web axis (`find_web_links`) | **+36** links newly visible. None is a `/blob/` URL, so no anchor is demanded and the gate does not flip — but that is the shape of *these* URLs, not a property of the change. One `[](https://github.com/o/r/blob/main/x.md)` anywhere would exit **3** if the destination reads and carries no uuid, and **4** — integrity failure, the harder stop — if it 404s with a token |
+| `robustify --write` | an existing target behind an empty-text link now receives a uuid anchor, and the `!` of an embed is preserved (both tested in `test_robustify.py`). **0 occurrences in the measured corpus**: all 83 empty-text links with a live target point at `.jpg`/`.jpeg`, which are unanchorable |
 | `--create-readme` | `[](sub/)` and `![](media/)` can now **create** `sub/README.md`. 0 occurrences in the measured corpus, so this is live but unexercised |
+
+⚠️ **One pre-existing write defect this widens the exposure to.** When a link carries a pandoc
+attribute suffix, `--write` inserts the anchor *between* the link and its attributes —
+`[](B.md) <!-- uuid: … -->{.cls}` — which detaches them, since pandoc requires the block to follow
+the `)` immediately. This is **not introduced here**: a non-empty text does the same and always has.
+But the corpus that motivated this feature is converted documents, where the suffix is ubiquitous,
+so the widening routes many more links towards it. Filed separately rather than folded in — mixing a
+behaviour change into a regression fix is how a fix stops being reviewable.
 | `find_detached_anchors` | absorption changes only where an empty-text link now legitimately claims a trailing comment. `DetachedAnchor` is not a reported `Kind`, so no finding disappears |
 
 **Adopting a darnlink with this change is not a no-op for a consumer at `dangling: repo` with
@@ -192,9 +208,13 @@ be fixed, or the ceiling raised, *before* the pin moves — not after.
   the same terms as one with text. The link text is what a reader sees; it has no bearing on whether
   the destination is there, and requiring at least one character of it made such links invisible to
   every axis, not merely unreported. See below.
-- **FR-052**: An href that is **only whitespace** MUST NOT be reported. It names no destination, so
-  there is nothing to check, and resolving it yields the linking file's own directory under a blank
-  name — a finding that names nothing a reader can act on.
+- **FR-052**: An href whose path is **only whitespace** MUST NOT be reported. It names no
+  destination, so there is nothing to check, and resolving it yields the linking file's own
+  directory under a blank name — a finding that names nothing a reader can act on. The rule is
+  applied to the **decoded path with the fragment removed**, on the same terms as FR-046 and
+  FR-047: `[]( )`, `[](%20)` and `[]( #sec)` are one link written three ways, and guarding only the
+  raw spelling left the last two still emitting the finding this rule forbids — the third also
+  violating FR-046, since ` #section` is a legal in-page anchor being called a dead link.
 
 ### Key Entities
 

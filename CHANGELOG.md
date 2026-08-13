@@ -33,9 +33,16 @@ All notable changes to darnlink are documented here. The format is based on
   so an anchored empty-text link cannot be plain to one function and robust to another — a coupling
   that matters to the **repair** axis and has its own tests, since reverting that half alone leaves
   every `dangling` test green. FR-051.
-- **`[]( )` — an href of pure whitespace — was reported as a dangling target.** It resolved to the
-  linking file's own directory with a blank name, so the finding read `line 5:  : target does not
-  exist`, naming nothing anyone could go and look for. FR-052.
+- **An href that names no destination is no longer reported.** `[x]( )`, `[x](%20)` and `[x]( #sec)`
+  all resolved to the linking file's own directory under a blank name, giving a finding that read
+  `line 5:  : target does not exist` — naming nothing anyone could go and look for. The last one was
+  worse than cosmetic: ` #section` is a legal in-page anchor, and FR-046 says a bare fragment is
+  never reported, so a valid link was being called dead. Judged on the **decoded** path after the
+  fragment is split off, because the three spellings are one link. FR-052.
+
+  Note this **removes** findings from the pre-existing surface rather than adding any: with a
+  non-empty text these shapes were reported before this release. Measured across eleven local
+  repositories: **0 occurrences**, so no consumer's count moves.
 - **A tokenless `403` is the anonymous rate limit, not a private repo — and the web axis now says so
   instead of printing a quiet `clean`.** `web-check` reported *"cannot read destination: private repo
   and no token provided"* for any `403` without a token. That was wrong every time: GitHub answers
