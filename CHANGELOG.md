@@ -67,11 +67,11 @@ All notable changes to darnlink are documented here. The format is based on
   old truncating behaviour rather than ceasing to match. Both restore *visible and wrong* rather
   than *silent*.
 
-  ⚠️ **Bounded at two levels of nesting.** CommonMark allows arbitrary
-  depth and a regex cannot; the pattern ends in `|[^)]+` so that a link nested past the bound
-  degrades to the **old truncating behaviour** rather than ceasing to match. Without that, it would
-  become invisible — a false green, which is strictly worse than the false red being removed.
-  Arbitrary depth needs the scanner tracked in #74; it occurs 0 times in the fleet.
+  ⚠️ **Bounded at two levels of nesting**, which is 0 times exceeded in the fleet; arbitrary depth
+  needs the scanner tracked in #74. And the swallow class is **narrowed, not closed**: a
+  backslash-escaped `\(` or an angle-bracket destination still hands the pattern an unmatched
+  opener. That cannot turn the gate green — the merged destination never resolves — but it collapses
+  N findings into 1 with a mangled name. 0 instances in the fleet.
 - **Nothing had ever parsed `recipes/darnlink-gate.ps1`.** The recipe tests skip on Windows and no CI
   job ran `pwsh`, so a syntax error in the shipped PowerShell recipe would have reached consumers as
   a script that does not start. CI now parses it. Parsing is not testing — it never runs the gate —

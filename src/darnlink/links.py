@@ -46,6 +46,28 @@ ROBUST_LINK_RE = re.compile(
 #:
 #: Both restore the OLD truncating behaviour rather than silence: still wrong, still visible,
 #: still reported. **Never trade a false red for a false green.**
+#:
+#: ⚠️ **The swallow class is NARROWED, not closed, and saying otherwise would be the same kind of
+#: false claim this pattern exists to avoid.** Two producers survive, both handing an unmatched `(`
+#: with no whitespace in the absorbed span:
+#:
+#: * a **backslash-escaped** `\(` — CommonMark's own way to write a literal paren, which this
+#:   pattern has no escape handling for and reads as an opener;
+#: * an **angle-bracket destination** `(<…(…>)` — there is no `<…>` branch here at all, which is
+#:   awkward precisely because the whitespace rule above cites `<…>` as its exception.
+#:
+#: What bounds the harm: the merged destination never resolves, so the gate stays RED. It is an
+#: under-count with a mangled target name, not a green gate — N findings collapse to 1. The sharper
+#: cost is on the web axis, where the swallowed neighbours stop being fetched at all. Measured
+#: across 13.984 files in the gated fleet: **0 escaped-paren destinations, 0 angle destinations
+#: containing a paren, 0 adjacent-link shapes**. Closing it needs the scanner in #74.
+#:
+#: And the whitespace class is **wider than CommonMark's**: `\s` is Unicode-aware, while cmark
+#: terminates a destination only on ASCII space, tab and newline — it accepts NBSP, `\v`, `\f`,
+#: U+2000–200A and others as ordinary characters. So 12 characters are excluded needlessly. Kept
+#: because measured: with no parens the fallback returns those destinations byte-perfect (14/14),
+#: and with parens the result is exactly the old truncation. Nothing becomes invisible; the cost is
+#: precision, not safety.
 MD_LINK_RE = re.compile(r"\[(?P<text>[^\]]*)\]\((?P<href>(?:[^()\s]|\((?:[^()\s]|\([^()\s]*\))*\))+|[^)]+)\)")
 # A uuid comment that immediately follows a link (used to tell plain from robust).
 # No `^`: it is applied with .match(content, pos), which already anchors at pos.

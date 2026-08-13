@@ -390,3 +390,41 @@ def test_an_unbalanced_paren_must_not_swallow_the_next_link(tmp_path):
     detalles = " ".join(f.detail for f in found)
     assert "t.md) tail" not in detalles, f"the following link was swallowed: {detalles}"
     assert "f(x.md" in detalles, f"the unbalanced link should still be reported: {detalles}"
+
+
+def test_the_swallow_class_that_survives_is_pinned_as_a_known_limit(tmp_path):
+    """The whitespace producer is fixed; the escaped-paren one is NOT, and that is on the record.
+
+    `\\(` is CommonMark's own way to write a literal parenthesis. This pattern has no escape
+    handling, so it reads the `(` as an opener, and with no whitespace in the span it runs on and
+    merges the following link into one mangled destination.
+
+    What bounds the harm — and what this test asserts — is that the gate stays **RED**: the merged
+    destination cannot resolve, so it is an under-count with a bad name, never a green gate. That
+    distinction is the whole reason this is a documented limit rather than a blocker.
+
+    Measured across the gated fleet: 0 instances. Closing it needs the scanner in #74.
+
+    ⚠️ When #74 lands this test must **invert** — assert two findings — not disappear. Deleting it
+    would unpin the property in either direction.
+    """
+    _w(tmp_path / "doc.md",
+       f"---\nuuid: {U_A}\n---\n\n[r](docs/Log\\(Feb.md)[s](gone.md))\n")
+
+    found = _dangling(plan_robustify(tmp_path))
+    assert len(found) == 1, f"the surviving swallow class changed shape: {found}"
+    assert "gone.md" in found[0].detail, "the neighbour was absorbed, so it must at least be named"
+
+
+def test_the_nesting_bound_is_two_levels_and_that_is_pinned(tmp_path):
+    """The PR's headline bound had NO test: dropping it to one level left the suite green.
+
+    A one-level pattern still matches `a(b).md`, which every other test here uses, and the
+    beyond-the-bound test asserts a string the FALLBACK produces — so neither could see the change.
+    This one needs the second level: `a(b(c)d).md` matches only with it, and its target exists, so
+    a narrower bound turns this into a false red.
+    """
+    _w(tmp_path / "a(b(c)d).md", "# x\n")
+    _w(tmp_path / "doc.md", f"---\nuuid: {U_A}\n---\n\n[r](a(b(c)d).md)\n")
+
+    assert _dangling(plan_robustify(tmp_path)) == [], "the bound dropped below two levels"
