@@ -55,8 +55,11 @@ function Invoke-Bail([string]$reason) {
 $excludes     = @(CfgOr 'excludes' @())
 $ignoreBlocks = @(CfgOr 'ignore_blocks' @())
 # WEB (opt-in, mode=max): add a `web-check --online` pass — cross-repo links to OTHER GitHub repos must
-# resolve to the destination's uuid (read online). Public needs no token; private sends $GITHUB_TOKEN if
-# set, else web_unverifiable (a warning). Fail-closed on a broken public web link. Same normalise dance.
+# resolve to the destination's uuid (read online). ⚠️ PUBLIC destinations need a token TOO — not for
+# permission but for QUOTA: anonymous API calls are 60/h per public IP. Without one the pass reports
+# web_unverifiable (a warning), which reads like "nothing to check" and can be a FALSE GREEN: an
+# un-anchored web link is only discoverable if the destination can be READ. Fail-closed on a broken
+# public web link. Same normalise dance.
 $rawWeb = if ($null -ne $env:DARNLINK_GATE_WEB) { $env:DARNLINK_GATE_WEB } else { CfgOr 'web' '' }
 $web = -not ([string]::IsNullOrWhiteSpace([string]$rawWeb) -or
              ([string]$rawWeb).Trim().ToLower() -in @('0','false','no','off'))
@@ -109,8 +112,10 @@ if ($scope -ne 'staged') {
     # web-check takes the SAME --exclude + --ignore-block as the core (since 0.12.0) -> pass both so it
     # skips vendored clones / mirrors instead of fetching+anchoring web links inside them.
     if ($rc -eq 0 -and $web) {
-      # web-check needs $GITHUB_TOKEN for PRIVATE destinations; if not already set, read it from a
-      # read-only PAT file (default ~/.config/github_token_ro; override DARNLINK_GATE_TOKEN_FILE).
+      # web-check needs $GITHUB_TOKEN for BOTH kinds of destination: private ones for permission,
+      # PUBLIC ones for quota (anonymous API = 60/h per public IP, shared by every machine behind the
+      # same NAT). If not already set, read it from a read-only PAT file (default
+      # ~/.config/github_token_ro; override DARNLINK_GATE_TOKEN_FILE).
       if ([string]::IsNullOrWhiteSpace($env:GITHUB_TOKEN)) {
         $tf = if ($env:DARNLINK_GATE_TOKEN_FILE) { $env:DARNLINK_GATE_TOKEN_FILE } else { Join-Path $env:USERPROFILE ".config/github_token_ro" }
         # PathType Leaf = a file, not a dir. try/catch so a read error can't terminate the gate under
@@ -118,6 +123,18 @@ if ($scope -ne 'staged') {
         if (Test-Path $tf -PathType Leaf) {
           try { $env:GITHUB_TOKEN = (Get-Content $tf -Raw -ErrorAction Stop).Trim() } catch { }
         }
+      }
+      # SAY IT when the axis cannot actually verify — same wording as the bash recipe on purpose, so
+      # the two surfaces cannot drift into telling the operator different stories.
+      if ([string]::IsNullOrWhiteSpace($env:GITHUB_TOKEN)) {
+        Write-Warning "darnlink-gate: web axis running WITHOUT a token -> anonymous 60/h-per-IP quota."
+        Write-Warning "  An 'ok 0 | unverifiable N' from web-check in this run means COULD NOT LOOK,"
+        Write-Warning "  not 'nothing to verify' - and it is indistinguishable from a repo with no"
+        Write-Warning "  cross-repo links at all."
+        Write-Warning "  THIS CAN BE A FALSE GREEN: an un-anchored web link is only discoverable if"
+        Write-Warning "  the destination can be READ. Measured: without token rc=0, with token rc=3."
+        Write-Warning "  Export GITHUB_TOKEN, and quote the token condition next to any web figure -"
+        Write-Warning "  without it the number is not comparable between two runs, let alone two repos."
       }
       $webArgs = @()
       foreach ($e in $excludes)     { if ($e) { $webArgs += @('--exclude', $e) } }

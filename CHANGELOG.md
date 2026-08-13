@@ -6,6 +6,27 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+- **A tokenless `403` is the anonymous rate limit, not a private repo — and the web axis now says so
+  instead of printing a quiet `clean`.** `web-check` reported *"cannot read destination: private repo
+  and no token provided"* for any `403` without a token. That was wrong every time: GitHub answers
+  **404**, not 403, for a private repo you cannot see — as `_classify` already explained thirteen
+  lines below the message. A tokenless 403 is the **60/h-per-public-IP anonymous quota**, shared by
+  every machine behind the same NAT, so the message sent readers hunting for a permissions problem
+  they did not have, on destinations that were public and returned 200 in a browser.
+
+  **This is not only a mislabel: it can be a false green.** An un-anchored web link is only
+  discoverable if the destination can be **read**. Measured on one tree, minutes apart: *without*
+  token `exit 0`, *with* token `exit 3` — the link needed anchoring and the tokenless run could not
+  tell. So `ok 0 | unverifiable N` means *"could not look"*, not *"nothing to verify"*, and it is
+  indistinguishable from a repo with no cross-repo links at all.
+
+  Three surfaces changed accordingly: the finding text now names the quota and the remedy; the
+  summary line no longer says plain `clean` when anything was unverifiable; and both recipes (bash
+  and PowerShell) warn when the axis runs without a token. The docs that promised *"public repos work
+  tokenless"* and *"never a false green"* are corrected — **give the axis a token even for public
+  destinations**: private ones need it for permission, public ones for quota.
+
 ### Added
 - **The English-only gate now covers the surfaces that are actually published**: commit messages,
   PR titles/descriptions, issues, and `.md` documentation. Until now it judged one thing —

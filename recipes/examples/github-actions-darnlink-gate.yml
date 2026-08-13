@@ -18,7 +18,7 @@ jobs:
   gate:
     runs-on: ubuntu-latest
     env:
-      DARNLINK_REF: git+https://github.com/txemi/darnlink@v0.7.0
+      DARNLINK_REF: git+https://github.com/txemi/darnlink@v0.20.4
       DARNLINK_GATE_FAIL_CLOSED: "1"     # ← the wall MUST fail closed (prefer the env var; see recipe)
     steps:
       - uses: actions/checkout@v4
@@ -26,8 +26,18 @@ jobs:
       - name: Fetch the pinned recipe (public repo → no token)
         run: |
           # -f: fail on a 404 (a moved/typo'd tag), instead of silently writing "404: Not Found".
-          curl -fsSL "https://raw.githubusercontent.com/txemi/darnlink/v0.7.0/recipes/darnlink-gate" \
+          curl -fsSL "https://raw.githubusercontent.com/txemi/darnlink/v0.20.4/recipes/darnlink-gate" \
             -o "$RUNNER_TEMP/darnlink-gate"
           chmod +x "$RUNNER_TEMP/darnlink-gate"
       - name: darnlink gate (whole repo)
+        # Only needed with `"web": true`, and the reason is QUOTA, not permission: anonymous GitHub
+        # API calls are 60/h per public IP, so without a token the web axis reports `ok 0` — which
+        # reads as "nothing to check" and means "could not look". It can even be a FALSE GREEN: an
+        # un-anchored web link is only discoverable if the destination can be read.
+        #
+        # ⚠️ This automatic token covers THIS repo only. If your Markdown links into OTHER private
+        # repos, it will not read them — that half is permission, and needs a PAT or a GitHub App
+        # token scoped to those repos.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: "$RUNNER_TEMP/darnlink-gate"   # scope=repo from darnlink-gate.json

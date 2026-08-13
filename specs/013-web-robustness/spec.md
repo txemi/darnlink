@@ -174,6 +174,15 @@ for the `--online` mode** — every other principle stands.
 4. **Moved / 404.** Destination 404s → `web_not_found`, exit 4 (darnlink does not hunt for the new path).
 5. **Private, no token.** Destination returns 403 and no `$GITHUB_TOKEN` → `web_unverifiable`, exit 0
    (honest, never a false pass); with a token the same fetch returns 200 and verifies.
+
+   > ⚠️ **Superseded by \<Unreleased\>, on two counts — kept as written because a spec records what
+   > was designed, not what was later learned.**
+   > **(a) The cause is wrong.** A tokenless `403` is the **anonymous 60/h-per-IP quota**, not a
+   > private repo: GitHub answers **404** for a private repo you cannot see, as scene 4 and FR-006
+   > already imply. Public destinations hit this too.
+   > **(b) "never a false pass" does not hold.** An un-anchored web link is only discoverable if the
+   > destination can be READ, so the same tree exits **0 without a token and 3 with one**. Exit 0 here
+   > means the axis could not look — not that there was nothing to find.
 6. **Core untouched.** `darnlink` / `--robustify` / `check` ignore the web link entirely (exit 0).
 7. **Off by default.** Without `--online`, the fetcher is never called; report-only; exit 0.
 8. **Report-only unless --write.** The verify path never mutates disk (checksums unchanged).

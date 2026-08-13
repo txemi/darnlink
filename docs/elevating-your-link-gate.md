@@ -263,15 +263,26 @@ Why it's safe to add to an existing fail-closed gate:
 - **It won't fight your core gate.** The anchor it writes is `<!-- web-uuid: X -->`, a *different*
   marker from the core's `<!-- uuid: X -->` — the core ignores it entirely, so a web anchor never
   trips the local `unresolvable` check. (This is the whole reason it uses its own marker.)
-- **Honest about what it can't reach.** A **private** destination needs a `GITHUB_TOKEN`/`GH_TOKEN`
-  (public repos work tokenless); without one it reports `web_unverifiable` and does **not** fail the
-  build — never a false green, never a crash. Run the online layer wherever a token already lives (a
-  self-hosted CI runner with a GitHub App is the natural home).
+- **Honest about what it can't reach — but give it a token anyway, and here is why.** A `GITHUB_TOKEN`
+  is needed for **both** kinds of destination: private ones for *permission*, **public ones for
+  *quota*** (anonymous GitHub API calls are **60/h per public IP**, shared by every machine behind the
+  same NAT). Without one it reports `web_unverifiable` and does **not** fail the build — never a
+  crash.
+
+  ⚠️ **But "does not fail the build" is not the same as "never a false green", which this page used
+  to claim.** An un-anchored web link is only discoverable if the destination can be **read**.
+  Measured on one tree, minutes apart: **without token `rc=0`** (green), **with token `rc=3`** — the
+  link needed anchoring and the tokenless run could not tell. So an `ok 0 | unverifiable N` is *"could
+  not look"*, not *"nothing to verify"*, and it is indistinguishable from a repo with no cross-repo
+  links at all. Quote the token condition next to any web figure, or it is not comparable between two
+  runs. Run the online layer wherever a token already lives (a self-hosted CI runner with a GitHub
+  App is the natural home).
 - **Narrow by design.** It *anchors* a plain link and *verifies* an anchored one; it does **not** hunt
   for where a moved target went (no web-side index to walk deterministically) — that's left to the
   human/LLM layer, which re-anchors once it knows the new URL.
 
-Add it as one extra step in the wall (pre-push + CI), gated on having a token for any private targets.
+Add it as one extra step in the wall (pre-push + CI), and give it a token — for **quota** on public
+targets, for **permission** on private ones.
 
 ## Checklist
 
@@ -284,4 +295,5 @@ Add it as one extra step in the wall (pre-push + CI), gated on having a token fo
 - [ ] Gap = 0 → flip the gate to `--create-frontmatter`.
 - [ ] Wire the walls: pre-commit (staged) · pre-push (whole repo) · CI/self-hosted (whole repo).
 - [ ] **If you have cross-repo web links:** anchor them with `web-check --online --write`, add
-      `web-check --online` to the pre-push/CI wall, and provide a token for any private destinations.
+      `web-check --online` to the pre-push/CI wall, and provide a token (quota for public destinations,
+      permission for private ones).

@@ -129,7 +129,7 @@ def test_online_dest_has_no_uuid_is_mismatch(tmp_path):
     assert findings[0].kind == "web_mismatch"
 
 
-# --- failure cases: 404, private-no-token, unparseable, network error ---
+# --- failure cases: 404, 403-without-token, unparseable, network error ---
 
 def test_online_404_WITH_token_is_web_not_found_exits_4(tmp_path, monkeypatch):
     """WITH a token, a 404 is a real break: the token distinguishes 'moved/deleted' from
@@ -155,12 +155,23 @@ def test_online_404_WITHOUT_token_is_unverifiable_exits_0(tmp_path, monkeypatch)
     assert _run_web_check_cli([str(tmp_path), "--online"], fetcher=fetch) == 0
 
 
-def test_online_private_no_token_is_unverifiable(tmp_path):
+def test_online_403_without_a_token_is_reported_as_quota_not_as_a_private_repo(tmp_path):
+    """A tokenless 403 is the ANONYMOUS RATE LIMIT, not a private repo.
+
+    This test used to be called `..._private_no_token_...` and its fixture comment said
+    "private repo, no token -> 403". That is backwards, and `_classify` says so itself:
+    GitHub answers **404**, not 403, for a private repo we cannot see. So a 403 without a
+    token is essentially always the 60/h-per-IP anonymous quota — which is what a caller
+    behind a shared NAT hits. Naming it "private repo" sent readers hunting for a
+    permissions problem they did not have, on destinations that were public and returned
+    200 to a browser.
+    """
     _w(tmp_path / "conta.md", f"see [topo]({URL}) <!-- web-uuid: {UUID} -->\n")
-    fetch = _fetcher({URL: (403, None)})  # private repo, no token -> 403
+    fetch = _fetcher({URL: (403, None)})  # anonymous call, quota exhausted -> 403
     findings, _ = check_web_links_online(tmp_path, token=None, fetcher=fetch)
     assert findings[0].kind == "web_unverifiable"
-    assert "no token provided" in findings[0].detail
+    assert "quota" in findings[0].detail
+    assert "private repo" not in findings[0].detail
     # unverifiable does not fail the exit (not a broken link, just unconfirmed)
     assert _run_web_check_cli([str(tmp_path), "--online"], fetcher=fetch) == 0
 
@@ -460,3 +471,37 @@ def test_default_fetcher_404_no_token_skips_repo_check(monkeypatch):
     monkeypatch.setattr(wl, "_repo_accessible", lambda o, r, t: called.__setitem__("n", called["n"]+1) or False)
     assert wl.default_fetcher(gu, None, attempts=1, sleep=lambda _s: None) == (404, None)
     assert called["n"] == 0  # no token -> no repo check
+
+
+# --- the verdict line: it must not advise a remedy that cannot be taken ---
+
+def test_verdict_line_is_plain_clean_when_nothing_was_unverifiable(tmp_path, capsys):
+    _w(tmp_path / "conta.md", f"see [topo]({URL}) <!-- web-uuid: {UUID} -->\n")
+    fetch = _fetcher({URL: (200, f"---\nuuid: {UUID}\n---\n")})
+    assert _run_web_check_cli([str(tmp_path), "--online"], fetcher=fetch) == 0
+    assert "-> exit 0 (clean)" in capsys.readouterr().out
+
+
+def test_verdict_line_does_not_offer_a_token_that_would_not_help(tmp_path, capsys):
+    """`web_unverifiable` has seven causes and a token fixes two. Do not advise it over the other five.
+
+    This is the defect the axis warning itself was added to prevent, one floor down: an alert that
+    fires when it cannot help is learned and ignored. Measured on darnlink's own tree, where all 14
+    unverifiable are non-GitHub URLs: the figure is IDENTICAL with and without a token, and the line
+    still told the operator to export one they had already exported.
+    """
+    # A non-GitHub URL: unverifiable forever, with or without credentials.
+    _w(tmp_path / "conta.md", "see [ext](https://example.com/a/b.md)\n")
+    assert _run_web_check_cli([str(tmp_path), "--online"], fetcher=_fetcher({})) == 0
+    out = capsys.readouterr().out
+    assert "unverifiable, NOT verified" in out          # it still says it did not look
+    assert "GITHUB_TOKEN" not in out                    # but offers no remedy that cannot be taken
+
+
+def test_verdict_line_offers_the_token_when_it_WOULD_help(tmp_path, capsys, monkeypatch):
+    """The mirror case: a tokenless 403 is quota, and a token really does resolve it."""
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    _w(tmp_path / "conta.md", f"see [topo]({URL}) <!-- web-uuid: {UUID} -->\n")
+    assert _run_web_check_cli([str(tmp_path), "--online"], fetcher=_fetcher({URL: (403, None)})) == 0
+    out = capsys.readouterr().out
+    assert "1 of them would resolve with GITHUB_TOKEN" in out
