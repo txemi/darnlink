@@ -4,7 +4,8 @@
 # Wires up three events, all of them by flipping one switch (core.hooksPath=hooks):
 #   git commit  ->  hooks/pre-commit   the darnlink quality gate (broken/unresolvable link,
 #                                      invalid YAML frontmatter)
-#               ->  hooks/commit-msg   the commit MESSAGE must be English (tools/lang_gate.py)
+#               ->  hooks/commit-msg   the commit MESSAGE must be English (darnlang, pinned by
+#                                      tools/darnlang_ref.sh)
 #   git push    ->  hooks/pre-push     the same gate over the whole repo
 # The gates themselves live in those files; this script only flips the switch.
 # git won't auto-run versioned hooks on clone (security) — hence this installer.

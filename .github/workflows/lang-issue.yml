@@ -28,6 +28,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
+      # Resolve the tool in its OWN step. Merging "install" and "judge" into one `uvx` call was a
+      # critical defect: uvx exits 1 when it cannot resolve the ref -- offline, bad tag, network
+      # policy -- which is indistinguishable from "found something". On this workflow that meant a
+      # perfectly English issue got LABELLED and publicly told its language was wrong because the
+      # runner could not reach a git tag. Separated, a resolve failure fails this step and turns the
+      # job red without touching anybody's issue, and the judging step below can only exit with
+      # darnlang's own codes.
+      - name: Install darnlang
+        run: |
+          . tools/darnlang_ref.sh
+          uv tool install "darnlang[strict] @ $DARNLANG_REF"
 
       - name: Judge the issue title and body
         id: check
@@ -38,10 +49,8 @@ jobs:
           ISSUE_BODY: ${{ github.event.issue.body }}
         run: |
           printf '%s\n\n%s\n' "$ISSUE_TITLE" "$ISSUE_BODY" > "$RUNNER_TEMP/issue.txt"
-          . tools/darnlang_ref.sh
           set +e
-          uvx --from "darnlang[strict] @ $DARNLANG_REF" darnlang prose \
-            "$RUNNER_TEMP/issue.txt" --strict --label issue
+          darnlang prose "$RUNNER_TEMP/issue.txt" --strict --label issue
           rc=$?
           set -e
           # THE EXIT CODE IS A CONTRACT, and this is the one place where confusing its values hurts

@@ -19,7 +19,7 @@ that is only broken where nobody measures.
 | Surface | What checks it | Can it block? |
 |---|---|---|
 | `.py` comments/docstrings, `.md` docs, file NAMES | `darnlang check` (`tools/check.sh`, `lang` CI job), pinned by `tools/darnlang_ref.sh` | yes — pre-commit, pre-push, CI |
-| Commit message | `hooks/commit-msg` + the CI step over the PR's commits | yes |
+| Commit message | `hooks/commit-msg` + the CI step, one message at a time | **conditionally** — the hook SKIPS when `uvx` is absent or the pin cannot be resolved (offline). CI is the wall that always runs |
 | PR title / description | CI step in the `lang` job | yes — the merge is blocked |
 | Issue title / body | `.github/workflows/lang-issue.yml` | **no** — GitHub cannot gate an issue before it is published, so it labels `needs-english` and comments once |
 
