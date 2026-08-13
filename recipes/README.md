@@ -100,11 +100,17 @@ The gate runs at three layers, each at the scope that fits — **deliberate, not
 [`docs/elevating-your-link-gate.md §7`](../docs/elevating-your-link-gate.md) <!-- uuid: e95eaed1-9866-4c48-a0d7-99a6382f5bf9 -->): staged & fast locally,
 whole-repo where it's the wall.
 
-**1. Config** — `darnlink-gate.json` at the repo root (all keys optional):
+**1. Config** — `darnlink-gate.json` at the repo root (all keys optional). Replace `<latest-tag>`
+with a real tag from [releases](https://github.com/txemi/darnlink/releases) — a pin, never a branch.
+
+⚠️ **Do not add `//` comments to it.** JSON has none, and a config that does not parse does not fail
+loudly on every surface: the local hooks revert *every* key to its default and go green having
+validated a policy written in no file. (This very document shipped two commented examples for
+exactly one commit. Copied verbatim, they ran an old pinned version with zero excludes, green.)
 
 ```json
 {
-  "ref": "git+https://github.com/txemi/darnlink@<latest-tag>",   // see /releases; a pin, never a branch
+  "ref": "git+https://github.com/txemi/darnlink@<latest-tag>",
   "excludes": ["secrets", "external_repos"],
   "ignore_blocks": ["txmd-autogrid"],
   "mode": "check",
@@ -119,7 +125,7 @@ the mirror. Two keys make that expressible:
 
 ```json
 {
-  "ref": "git+https://github.com/txemi/darnlink@<latest-tag>",   // create_readme needs >= v0.18.0
+  "ref": "git+https://github.com/txemi/darnlink@<latest-tag>",
   "mode": "check",
   "create_readme": true,
   "create_readme_excludes": ["mirrors"],

@@ -835,3 +835,33 @@ def test_a_bom_does_not_silently_turn_the_config_into_defaults(sandbox, tmp_path
     assert log.exists(), run_again.stdout + run_again.stderr
     assert log.read_text() != check_argv, (
         "a BOM'd config reverted to the defaults instead of being honoured:\n" + log.read_text())
+
+
+def test_a_bom_is_honoured_by_the_LENGTH_reader_too(sandbox, tmp_path):
+    """The sibling reader, which the first BOM test did NOT gate.
+
+    `read_cfg_len` is a second, separate python block, and mutating ONLY its encoding left the other
+    test green -- a surviving mutant: a line that read as covered and was not.
+
+    ⚠️ It cannot be asserted on the argv. `--own` reaches the CLI through `read_cfg` (which works),
+    so the invocation is byte-identical whether or not `read_cfg_len` parsed. The only observable
+    that depends on it is the WARNING it guards: `OWN_WEB_N` is the total the gate compares against
+    the owners it actually used, so with `OWN_WEB_N = 0` the "some entries were empty" warning never
+    fires -- and fewer owners get enforced than the config lists, silently, in green. Two mutants had
+    to be hunted here to find an assertion that fails for the right reason.
+    """
+    repo, run = sandbox
+    cfg = {"mode": "max", "web": True, "own_web": ["", "owned"]}   # 1 of 2 entries empty -> warns
+
+    r = run(cfg)
+    assert "empty entry/entries" in r.stderr, "el caso base ya no avisa: " + r.stderr
+
+    run(cfg)                                                        # reescribe el config...
+    f = repo / "darnlink-gate.json"
+    f.write_bytes(b"\xef\xbb\xbf" + f.read_bytes())                # ...y se le antepone el BOM
+    r2 = subprocess.run(["bash", str(RECIPE)], cwd=repo, capture_output=True, text=True,
+                        env={**_clean_env(), "DARNLINK_BIN": _darnlink_bin(),
+                             "PATH": f"{repo.parent / 'shimbin'}{os.pathsep}"
+                                     + _clean_env().get("PATH", "")})
+    assert "empty entry/entries" in r2.stderr, (
+        "con BOM, read_cfg_len devolvio 0 y el aviso de owners vacios no salio:\n" + r2.stderr)
