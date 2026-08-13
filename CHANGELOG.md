@@ -33,16 +33,29 @@ All notable changes to darnlink are documented here. The format is based on
   so an anchored empty-text link cannot be plain to one function and robust to another — a coupling
   that matters to the **repair** axis and has its own tests, since reverting that half alone leaves
   every `dangling` test green. FR-051.
-- **An href that names no destination is no longer reported.** `[x]( )`, `[x](%20)` and `[x]( #sec)`
-  all resolved to the linking file's own directory under a blank name, giving a finding that read
-  `line 5:  : target does not exist` — naming nothing anyone could go and look for. The last one was
-  worse than cosmetic: ` #section` is a legal in-page anchor, and FR-046 says a bare fragment is
-  never reported, so a valid link was being called dead. Judged on the **decoded** path after the
-  fragment is split off, because the three spellings are one link. FR-052.
+- **The whitespace around a link destination is no longer treated as part of it**, as CommonMark
+  requires. Two halves:
+
+  *A destination that is only whitespace is not reported at all.* `[x]( )`, `[x](%20)` and
+  `[x]( #sec)` resolved to the linking file's own directory under a blank name, giving a finding
+  that read `line 5:  : target does not exist` — naming nothing anyone could go and look for. The
+  last was worse than cosmetic: ` #section` is a legal in-page anchor, and FR-046 says a bare
+  fragment is never reported, so a valid link was called dead.
+
+  *A destination with whitespace **around a real name** is stripped before resolving.* `[x]( B.md )`
+  denotes `B.md`; judged literally it resolved to `dir/ B.md ` and was reported dead while the file
+  sat right there — a **false red on a live file**, which is how a gate gets switched off rather
+  than fixed. Applied to the decoded path with the fragment removed, and — the part a first version
+  got wrong — at every place that value is *used*, not only where it is tested. FR-052.
 
   Note this **removes** findings from the pre-existing surface rather than adding any: with a
-  non-empty text these shapes were reported before this release. Measured across eleven local
-  repositories: **0 occurrences**, so no consumer's count moves.
+  non-empty text these shapes were reported before this release. Measured across thirteen local
+  repositories: **0** whitespace-only destinations, and **6** with surrounding whitespace, none of
+  which changes a verdict — only the path the finding names. No consumer's count moves.
+- **Known, not fixed here: `--write` detaches a pandoc attribute block** — the anchor lands between
+  the link and its `{…}`, so the block stops applying. Pre-existing (a non-empty text has always
+  done it) and 0 occurrences today, but this release routes many more links towards it. Tracked in
+  #65; the tests here pin that the block is never *deleted*, which is the worse neighbour.
 - **A tokenless `403` is the anonymous rate limit, not a private repo — and the web axis now says so
   instead of printing a quiet `clean`.** `web-check` reported *"cannot read destination: private repo
   and no token provided"* for any `403` without a token. That was wrong every time: GitHub answers

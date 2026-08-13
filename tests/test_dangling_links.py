@@ -354,3 +354,21 @@ def test_whitespace_around_a_missing_destination_still_dangles(tmp_path):
 
     found = _dangling(plan_robustify(tmp_path))
     assert len(found) == 1 and "gone.md" in found[0].detail
+
+
+def test_encoded_and_fragment_spellings_of_a_real_target_are_stripped(tmp_path):
+    """FR-052 has to be applied where its value is USED, not only where it is tested.
+
+    A version of this rule computed the stripped path for the emptiness check and then resolved
+    `href.strip()` — a different string. `.strip()` on the raw href cannot reach a space sitting
+    before a `#`, and the percent-encoded branch was never stripped at all, so all three of these
+    resolved to `dir/ B.md ` or `dir/B.md ` and were reported dead while `B.md` sat right there.
+
+    A false RED on a live file is not the mirror of a false green, it is how a gate gets switched
+    off — so it is pinned per spelling, not as one case.
+    """
+    _w(tmp_path / "B.md", "# B\n")
+    for i, href in enumerate(["%20B.md ", " B.md #s", "B.md #s", " B.md "]):
+        _w(tmp_path / f"doc{i}.md", f"---\nuuid: {U_A}\n---\n\n[x]({href})\n")
+
+    assert _dangling(plan_robustify(tmp_path)) == []

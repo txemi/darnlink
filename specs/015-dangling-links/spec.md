@@ -130,10 +130,12 @@ a blank name, producing a finding that read `line 5:  : target does not exist`. 
 behaviour match the claim. Two notes on scope, both learned by being wrong about them first:
 
 - **It is a subtraction, not an addition.** With a non-empty text those shapes were reported *before*
-  this release, so FR-052 removes findings from the pre-existing surface. Measured across thirteen
-  local repositories, 14.446 Markdown files and 52.932 in-prose links: **0 occurrences**, so no
-  consumer's count moves — but "0 findings lost" is a claim about the widening, and this rule is the
-  one exception to it.
+  this release, so FR-052 removes findings from the pre-existing surface — the one exception to the
+  "0 findings lost" claim, which is about the widening. Measured across thirteen local repositories:
+  **0** whitespace-only destinations, and **6** with whitespace around a real name (all in one
+  repo's chat-transcript mirror). None of the 6 changes a verdict: they were dangling before and
+  after, and what changed is the path the finding names. So no consumer's count moves — but the rule
+  is **not inert**, which the bare "0 occurrences" of an earlier draft implied.
 - **The guard belongs after `split_fragment` and `unquote`, not before.** Written against the raw
   href it missed `[](%20)` and `[]( #sec)` — the same destination, spelled differently — and the
   second was a false positive on valid CommonMark rather than a cosmetic finding.
@@ -199,7 +201,7 @@ be fixed, or the ceiling raised, *before* the pin moves — not after.
   > The line, link and resolved path travel in the finding's `detail`. This requirement used to add
   > *"no finding kind has ever carried a line field, and widening the shared `Finding` record is
   > outside this feature"* — **no longer true**: `Finding` grew an optional `line` (`report.py:37`)
-  > for the gate recipe's added-lines ratchet, and `robustify.py:397` fills it. The `detail` text is
+  > for the gate recipe's added-lines ratchet, and `_dangling_target`'s caller fills it. The `detail` text is
   > kept because callers parse it, not because the field is unavailable.
 - **FR-042**: `dangling` MUST be **report-only**. No mode, including `--write`, may create, move or
   otherwise alter anything in response to it.

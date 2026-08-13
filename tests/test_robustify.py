@@ -235,13 +235,14 @@ def test_write_preserves_the_bang_of_an_image_embed(tmp_path):
     apply_robustify(plan_robustify(tmp_path))
 
     a = (tmp_path / "A.md").read_text()
-    # Assert the `!` is still attached to THIS link, not merely present somewhere on the line:
-    # the emitted anchor `<!-- uuid: … -->` contains a `!`, so `"!" in a` is true even when the
-    # embed's own bang has been eaten, and `a.startswith("!")` only holds while the fixture happens
-    # to begin with the link. Both are green under a seed that swallows it.
-    assert "![](B.md)" in a, f"the image embed lost its bang: {a!r}"
+    # Assert the WHOLE line, because every weaker form is satisfiable while the behaviour is wrong:
+    # `"!" in a` is true from the anchor's own `<!--`; `a.startswith("!")` only holds while the
+    # fixture begins with the link; and `"![](B.md)" in a` is satisfied by `!![](B.md)`, which is
+    # what an emitter that adds a bang unconditionally would produce. The fixture is deterministic
+    # apart from the uuid, so there is no reason to assert anything less than the output.
     links = find_robust_links(a)
     assert len(links) == 1 and links[0].href == "B.md" and links[0].text == ""
+    assert a == f"see ![](B.md) <!-- uuid: {EXISTING} --> here\n", f"unexpected rewrite: {a!r}"
 
 
 def test_write_leaves_any_pandoc_attribute_suffix_untouched(tmp_path):
@@ -259,12 +260,70 @@ def test_write_leaves_any_pandoc_attribute_suffix_untouched(tmp_path):
     fixture is a claim about a population, and a single sample is the weakest possible one.
     """
     shapes = ['{width="1.1in" height="2in"}', "{.cls}", "{#anchor}", '{.a .b key="v"}']
+    # Vary the LINK TEXT as well as the attribute shape. A version of this test that used an empty
+    # alt throughout was defeated by a seed that ate the block only when the text is non-empty —
+    # 266/266 green while `![alt text](B.md){width=…}` lost its attributes. The text is the axis
+    # this whole feature is about, so it is the last one that should have been held constant.
+    texts = ["", "alt text", "x"]
     _w(tmp_path / "B.md", f"---\nuuid: {EXISTING}\n---\n# B\n")
-    for i, suffix in enumerate(shapes):
-        _w(tmp_path / f"A{i}.md", f"![](B.md){suffix}\n")
+    cases = [(t, s) for t in texts for s in shapes]
+    for i, (text, suffix) in enumerate(cases):
+        _w(tmp_path / f"A{i}.md", f"![{text}](B.md){suffix}\n")
 
     apply_robustify(plan_robustify(tmp_path))
 
-    for i, suffix in enumerate(shapes):
+    for i, (text, suffix) in enumerate(cases):
         a = (tmp_path / f"A{i}.md").read_text()
-        assert suffix in a, f"attribute block {suffix!r} was eaten: {a!r}"
+        assert suffix in a, f"attribute block {suffix!r} was eaten after text {text!r}: {a!r}"
+
+
+def test_repair_write_leaves_a_pandoc_attribute_suffix_untouched(tmp_path):
+    """`ROBUST_LINK_RE` widened too, and it has its OWN write path: `repair`.
+
+    Two regexes were widened and two write paths exist, but only `robustify`'s was guarded. Seeding
+    `\\)(?:\\{[^}]*\\})?` into `ROBUST_LINK_RE` passes the whole suite while `repair --write` moves
+    the link and **deletes the attribute block on the way** — the same corruption as the robustify
+    case, reached through the other door. Round 1 found this half untested for *detection*; its
+    write side stayed untested two rounds longer.
+    """
+    from darnlink.frontmatter_index import build_index
+    from darnlink.repair import plan_repairs, apply_repairs
+
+    # The anchor goes BEFORE the attribute block, because that is where darnlink's own `--write`
+    # puts it (see #65). Writing it the way a human would — `![](x){.cls} <!-- uuid: … -->` — does
+    # not even match `ROBUST_LINK_RE`, which requires the comment to follow the `)` with only
+    # whitespace between; such a link is plain with a detached anchor, and is not this test's case.
+    _w(tmp_path / "new" / "B.md", f"---\nuuid: {EXISTING}\n---\n# B\n")
+    _w(tmp_path / "A.md", f'![](old/B.md) <!-- uuid: {EXISTING} -->{{width="1.1in"}}\n')
+
+    apply_repairs(plan_repairs(tmp_path, build_index(tmp_path)))
+
+    a = (tmp_path / "A.md").read_text()
+    assert "new/B.md" in a, f"repair did not move the link: {a!r}"
+    assert 'width="1.1in"' in a, f"repair ate the attribute block: {a!r}"
+
+
+def test_an_attribute_block_before_the_anchor_is_not_a_robust_link(tmp_path):
+    """The span boundary of `ROBUST_LINK_RE`, pinned where a seed can reach it.
+
+    `![](x){.cls} <!-- uuid: … -->` — attributes between the `)` and the comment — is NOT robust:
+    the grammar allows only whitespace there, so this is a plain link with a detached anchor, and
+    `repair` must leave the file alone. Seeding `\\)(?:\\{[^}]*\\})?` into `ROBUST_LINK_RE` makes it
+    robust, and `repair --write` then rewrites the link and **deletes the block**.
+
+    The sibling test above cannot catch that seed: its fixture puts the block *after* the comment,
+    where the seeded alternative never matches. Two shapes, two tests — the first version of this
+    pair guarded only the shape the seed does not touch, which is no guard at all.
+    """
+    from darnlink.frontmatter_index import build_index
+    from darnlink.repair import plan_repairs, apply_repairs
+
+    _w(tmp_path / "new" / "B.md", f"---\nuuid: {EXISTING}\n---\n# B\n")
+    original = f'![](old/B.md){{width="1.1in"}} <!-- uuid: {EXISTING} -->\n'
+    _w(tmp_path / "A.md", original)
+
+    assert find_robust_links(original) == []
+
+    apply_repairs(plan_repairs(tmp_path, build_index(tmp_path)))
+
+    assert (tmp_path / "A.md").read_text() == original

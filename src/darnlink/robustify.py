@@ -101,21 +101,29 @@ def _dangling_target(href: str, linking_file: Path) -> Path | None:
     # spellings denote the same destination, and a rule applied to only one of them is a rule with a
     # way around it. Guarding the raw href alone left `[](%20)` and `[]( #x)` still emitting the
     # finding this rule forbids, the second on a legal in-page anchor.
+    # `path_part` already has the fragment off, so stripping it here is the whole rule -- and every
+    # resolution below has to use these stripped forms, not the raw href. A first version computed
+    # `stripped` for the emptiness test only and then resolved `href.strip()`, which is a DIFFERENT
+    # string: `.strip()` on the raw href cannot reach a space sitting before a `#`, and the encoded
+    # branch was never stripped at all. Result: `[x]( B.md #s )` and `[x](%20B.md )` resolved to
+    # `dir/B.md ` and `dir/ B.md` and were reported dead while `B.md` sat right there. A rule is only
+    # applied where its value is used.
     stripped = decoded.strip()
     if not stripped:
         return None
+    raw_stripped = path_part.strip()
     # Decoding can change *what kind of thing* the href is, not just how it is spelled:
     # `%2Fetc%2Fpasswd` becomes an absolute path and `http%3A//x` regains its scheme. Both pass
     # `is_local_relative` while encoded, so judging only the raw form would let the encoding walk
     # around FR-046 — suppressing a finding because `/etc/passwd` happens to exist, or inventing one
     # for a URL. The decoded spelling is held to the same rule as the raw one.
-    if encoded and not is_local_relative(decoded):
+    if encoded and not is_local_relative(stripped):
         return None
-    t = resolve_href(href.strip(), linking_file)  # drops the fragment
+    t = resolve_href(raw_stripped, linking_file)
     if t.exists():
         return None
     if encoded:
-        d = resolve_href(decoded, linking_file)
+        d = resolve_href(stripped, linking_file)
         # Report the DECODED path: it is the one the link denotes, and the one to look for on disk.
         return None if d.exists() else d
     return t
