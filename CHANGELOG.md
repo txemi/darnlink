@@ -50,7 +50,7 @@ All notable changes to darnlink are documented here. The format is based on
 ### Fixed
 - **`--write` no longer deletes a file's UTF-8 BOM** (#68). The read side uses `utf-8-sig`, which
   consumes the mark so it cannot sit before the `---`; writing the resulting string back as plain
-  utf-8 removed it from the file, on **all four write paths**. This module's contract is byte
+  utf-8 removed it from the file, on **all five write paths**, including `web-check --online --write` — a call site in another module that none of the original fixtures reached. This module's contract is byte
   preservation — it keeps CRLF meticulously — so dropping the BOM contradicted it.
 
   Worth recording *why it survived*: the CI Windows matrix exists for *"Windows-authored files

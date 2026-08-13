@@ -87,3 +87,44 @@ def test_a_created_readme_has_no_bom(tmp_path):
 
     readme = tmp_path / "sub" / "README.md"
     assert readme.exists() and not _has_bom(readme)
+
+
+# --- the FIFTH write path. The commit that opened this file said "all four"; `web-check --online
+# --write` is a fifth call site, in a different module, and none of the six fixtures above reached
+# it. The fix covers it because it lives in the shared writer -- but the COUNT is the audit trail
+# the next person trusts, and it was wrong. Verified live: under a plain-utf-8 seed this path did
+# delete the BOM_BYTES.
+import json
+
+from darnlink.cli import _run_web_check_cli
+
+UUID = "3f9c1a2b-4d5e-6f70-8192-a3b4c5d6e7f8"
+URL = "https://github.com/example-org/handbook/blob/main/docs/living/service-topology.md"
+BOM_BYTES = b"\xef\xbb\xbf"
+
+
+def _fetcher(responses):
+    def f(gu, token):
+        key = f"https://github.com/{gu.owner}/{gu.repo}/blob/{gu.ref}/{gu.path}"
+        return responses.get(key, (404, None))
+    return f
+
+
+def test_web_check_write_keeps_the_bom(tmp_path, capsys):
+    (tmp_path / "conta.md").write_bytes(BOM_BYTES + f"see [topo]({URL})\n".encode())
+    fetch = _fetcher({URL: (200, f"---\nuuid: {UUID}\n---\n")})
+    code = _run_web_check_cli([str(tmp_path), "--online", "--write", "--json"], fetcher=fetch)
+    out = json.loads(capsys.readouterr().out)
+    assert code == 0 and out["wrote"] == 1
+    raw = (tmp_path / "conta.md").read_bytes()
+    assert raw.startswith(BOM_BYTES), "web-check --write deleted the BOM_BYTES"
+    assert not raw[3:].startswith(BOM_BYTES), "web-check --write doubled the BOM_BYTES"
+    assert raw == BOM_BYTES + f"see [topo]({URL}) <!-- web-uuid: {UUID} -->\n".encode()
+
+
+def test_web_check_write_does_not_invent_a_bom(tmp_path, capsys):
+    (tmp_path / "conta.md").write_bytes(f"see [topo]({URL})\n".encode())
+    fetch = _fetcher({URL: (200, f"---\nuuid: {UUID}\n---\n")})
+    _run_web_check_cli([str(tmp_path), "--online", "--write", "--json"], fetcher=fetch)
+    capsys.readouterr()
+    assert not (tmp_path / "conta.md").read_bytes().startswith(BOM_BYTES), "a BOM_BYTES was invented"
