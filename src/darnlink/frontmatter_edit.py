@@ -35,9 +35,33 @@ def read_text_keep_newlines(path) -> str:
 
 
 def write_text_keep_newlines(path, content: str) -> None:
-    r"""Write text verbatim — do NOT translate '\n' to the platform's os.linesep."""
-    with open(path, "w", encoding="utf-8", newline="") as f:
+    r"""Write text verbatim — do NOT translate '\n' to the platform's os.linesep, and keep the BOM.
+
+    The read side uses `utf-8-sig`, which *consumes* a leading BOM so it cannot sit before the `---`
+    and break frontmatter detection. That is right, but it means the BOM is absent from the string
+    handed back — and writing that string as plain utf-8 silently deleted it from the file.
+
+    The BOM is recovered from the file **on disk** rather than threaded through every caller: this
+    function already knows the path, and the flag would have to cross four write paths to arrive at
+    the same answer. A file that does not exist yet (`--create-readme`, `--create-frontmatter`) has
+    no BOM to preserve, which is also correct.
+
+    Worth the three lines because this module's whole contract is byte preservation — it goes to
+    real trouble to keep CRLF exactly — and dropping the BOM contradicted that on all four write
+    paths at once. The CI matrix exists for *"Windows-authored files (BOM, CRLF, path separators)"*
+    and could not see it: its BOM fixtures only ever covered files that are **read**. #68.
+    """
+    with open(path, "w", encoding=_encoding_preserving_bom(path), newline="") as f:
         f.write(content)
+
+
+def _encoding_preserving_bom(path) -> str:
+    """`utf-8-sig` if the file on disk already starts with a BOM, else plain `utf-8`."""
+    try:
+        with open(path, "rb") as f:
+            return "utf-8-sig" if f.read(3) == b"\xef\xbb\xbf" else "utf-8"
+    except OSError:
+        return "utf-8"          # a file that does not exist yet has no BOM to keep
 
 
 def read_uuid_from_content(content: str) -> Optional[str]:

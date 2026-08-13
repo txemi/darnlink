@@ -72,6 +72,15 @@ All notable changes to darnlink are documented here. The format is based on
     destination with no uuid — turns into **0** under the default, with the suite green.
 
 ### Fixed
+- **`--write` no longer deletes a file's UTF-8 BOM** (#68). The read side uses `utf-8-sig`, which
+  consumes the mark so it cannot sit before the `---`; writing the resulting string back as plain
+  utf-8 removed it from the file, on **all five write paths**, including `web-check --online --write` — a call site in another module that none of the original fixtures reached. This module's contract is byte
+  preservation — it keeps CRLF meticulously — so dropping the BOM contradicted it.
+
+  Worth recording *why it survived*: the CI Windows matrix exists for *"Windows-authored files
+  (BOM, CRLF, path separators)"* and could not see this, because every BOM fixture put the mark on
+  a file that gets **read**, never on one that gets **rewritten**. Coverage on the wrong side of an
+  operation still reads as coverage.
 - **Balanced parentheses in a link destination are no longer truncated** (#71). CommonMark allows
   them; `[^)]+` stopped at the first, so `[r](Log%20Analysis%20(February).docx)` was cut short and
   reported dead while the file was on disk. The report **concealed the cut** — its own
