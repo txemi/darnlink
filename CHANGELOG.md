@@ -6,6 +6,8 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.22.0] — 2026-08-13
+
 ### Added
 - **`darnlink-gate`: the `own_web` keys, so feature 016 can actually be switched on.** The rule
   shipped in v0.21.0 lives in the CLI; until now no gate invoked it, so it protected nothing. Both
@@ -773,7 +775,10 @@ First public release.
 - Ships a [pre-commit](https://pre-commit.com/) hook (`darnlink`, `darnlink-repair`).
 - Format specification: [FORMAT.md](FORMAT.md) <!-- uuid: 9052d864-2a45-4ed4-8725-d8a394e7a7ef -->.
 
-[Unreleased]: https://github.com/txemi/darnlink/compare/v0.20.4...HEAD
+[Unreleased]: https://github.com/txemi/darnlink/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/txemi/darnlink/compare/v0.21.0...v0.22.0
+[0.21.0]: https://github.com/txemi/darnlink/compare/v0.20.5...v0.21.0
+[0.20.5]: https://github.com/txemi/darnlink/compare/v0.20.4...v0.20.5
 [0.20.4]: https://github.com/txemi/darnlink/compare/v0.20.3...v0.20.4
 [0.20.3]: https://github.com/txemi/darnlink/compare/v0.20.2...v0.20.3
 [0.20.2]: https://github.com/txemi/darnlink/compare/v0.20.1...v0.20.2
