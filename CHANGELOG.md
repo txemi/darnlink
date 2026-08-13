@@ -6,6 +6,8 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.21.0] — 2026-08-13
+
 ### Added
 - **`web-check --online` can fail on a destination *you own* that has no `uuid`** — feature 016,
   opt-in (`specs/016-own-repo-web-strictness/spec.md`). The web axis is forgiving by design: a
