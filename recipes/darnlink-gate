@@ -68,9 +68,10 @@
 #        them named by any other axis. Expect a number.
 #   mode ∈ { repair | check | max } — see WHAT IT DOES. Raising it is a one-way ratchet: only up.
 #   web (mode=max only): add a `web-check --online` pass — cross-repo links to OTHER GitHub repos must
-#     resolve to the destination's uuid (read online). Public targets need no token; private ones send
-#     $GITHUB_TOKEN if set, else `web_unverifiable` (a warning, never a failure). Fail-closed on a broken
-#     public web link.
+#     resolve to the destination's uuid (read online). ⚠️ PUBLIC targets need a token too — not for
+#     permission but for QUOTA: anonymous API calls are 60/h per public IP. Without one the pass
+#     reports `web_unverifiable` (a warning, never a failure), which reads like "nothing to check".
+#     Fail-closed on a broken public web link.
 #   create_readme (ANY mode, since the mirror update): also run `--create-readme` — a directory link whose
 #     target folder has no README (no uuid to anchor to) FAILS the gate (dry-run detects it; fix with
 #     `--create-readme --write`). It runs as its OWN dry-run pass, filtered to the `create_readme` findings,
@@ -125,8 +126,10 @@ FAIL_CLOSED="${DARNLINK_GATE_FAIL_CLOSED:-$(read_cfg fail_closed "")}"
 case "${FAIL_CLOSED,,}" in ""|0|false|no|off) FAIL_CLOSED="" ;; *) FAIL_CLOSED=1 ;; esac
 # WEB (opt-in): when on, mode=max adds a 3rd whole-repo pass — `web-check --online` — that verifies
 # cross-repo Markdown links to OTHER GitHub repos still resolve to the destination file's uuid (read
-# online, anchored with `<!-- web-uuid: X -->`). Public destinations need NO token; private ones send
-# $GITHUB_TOKEN if set, else are reported `web_unverifiable` (a warning, NOT a failure — never a crash).
+# online, anchored with `<!-- web-uuid: X -->`). ⚠️ BOTH kinds of destination need $GITHUB_TOKEN:
+# private ones for permission, PUBLIC ones for quota (anonymous API = 60/h per public IP, shared by
+# every machine behind the same NAT). Without it they are reported `web_unverifiable` (a warning, NOT
+# a failure — never a crash), and the gate now says so instead of printing a quiet zero.
 # Fail-closed only on a genuinely broken/moved public web link. Same normalise-the-string dance as above.
 WEB="${DARNLINK_GATE_WEB:-$(read_cfg web "")}"
 case "${WEB,,}" in ""|0|false|no|off) WEB="" ;; *) WEB=1 ;; esac
@@ -330,14 +333,29 @@ if [ "$SCOPE" != "staged" ]; then
     # web links INSIDE someone else's checkout. Fail-closed on a broken public web link; web_unverifiable
     # (private w/o token, or offline) is exit 0. Needs a ref with web-check + its --exclude (v0.12.0+).
     if [ "$rc" -eq 0 ] && [ -n "$WEB" ]; then
-      # web-check needs $GITHUB_TOKEN for PRIVATE destinations (public are tokenless). If it's not
-      # already exported, read it from a read-only PAT FILE (default ~/.config/github_token_ro; override
-      # with DARNLINK_GATE_TOKEN_FILE) — a git hook's env usually lacks it. Without a token a private
-      # destination 404s and reads as broken; with it, it verifies. Missing file → stays unverifiable.
+      # web-check needs $GITHUB_TOKEN. If it's not already exported, read it from a read-only PAT FILE
+      # (default ~/.config/github_token_ro; override with DARNLINK_GATE_TOKEN_FILE) — a git hook's env
+      # usually lacks it. Missing file → stays unverifiable.
+      #
+      # ⚠️ It is NOT only about private destinations. PUBLIC ones need it too, for a different reason:
+      # anonymous GitHub API calls are capped at 60/h PER PUBLIC IP, shared by every machine behind the
+      # same NAT. Measured on a public repo linking only to itself, same tree, minutes apart:
+      #     without token -> ok 0 | unverifiable 52
+      #     with token    -> ok 7 | unverifiable 45
+      # So the axis silently stops verifying depending on WHAT TIME the build runs.
       if [ -z "${GITHUB_TOKEN:-}" ]; then
         _tf="${DARNLINK_GATE_TOKEN_FILE:-$HOME/.config/github_token_ro}"
         # -f: a REGULAR file (not a directory — `-r` alone passes on a dir, then `< dir` fails).
         [ -f "$_tf" ] && [ -r "$_tf" ] && { GITHUB_TOKEN="$(tr -d '\r\n' < "$_tf")"; export GITHUB_TOKEN; }
+      fi
+      # SAY IT when the axis cannot actually verify. `ok 0 | unverifiable N` reads as "nothing to
+      # check" and means "could not look" — and it is indistinguishable from a repo that genuinely has
+      # no cross-repo links. Staying quiet is how this axis ran for months without measuring anything
+      # while the build stayed green. Not a failure: committing offline must keep working.
+      if [ -z "${GITHUB_TOKEN:-}" ]; then
+        echo "darnlink-gate: web axis running WITHOUT a token → anonymous 60/h-per-IP quota." >&2
+        echo "  'ok 0' below means COULD NOT LOOK, not 'nothing to verify'. Quote the token" >&2
+        echo "  condition next to any web figure, or it is not comparable between runs." >&2
       fi
       WEB_ARGS=()
       for e in "${EXCLUDES[@]}";      do [ -n "$e" ] && WEB_ARGS+=(--exclude "$e"); done
