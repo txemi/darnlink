@@ -27,7 +27,10 @@ All notable changes to darnlink are documented here. The format is based on
   Nothing reads it, which is the shape of a mine rather than a bug: harmless until someone adds
   `--version` or trusts `darnlink.__version__`, at which point the tool lies about itself. Derived
   from the installed package metadata now, and **lazily** (PEP 562): importing it eagerly cost
-  **+33 ms, +34 %** on `import darnlink.cli`, and darnlink runs as a pre-commit hook on every commit.
+  **+34 %** on `import darnlink.cli` — `importlib.metadata` drags in the whole `email` stack — and
+  darnlink runs as a pre-commit hook on every commit. The percentage is what reproduces: two
+  independent runs of the same A/B agreed on ~34 % and disagreed on the absolute (+33 ms vs +45 ms),
+  so the milliseconds belong to the machine and are not quoted as a property of the change.
 
 ### Added
 - **`tests/test_recipe_examples.py` — the examples are code, and nothing had ever run them.** The

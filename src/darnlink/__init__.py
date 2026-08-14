@@ -14,9 +14,11 @@ See the project Constitution in .specify/memory/constitution.md.
 # or trusts `darnlink.__version__`, at which point the tool lies about itself with a straight face.
 #
 # LAZY (PEP 562), and that is not premature optimisation: `importlib.metadata` drags in the whole
-# `email` stack, and importing it at module level cost **+33 ms, +34 %** on `import darnlink.cli`
-# (median of interleaved runs, same tree, only this file swapped). darnlink runs as a pre-commit hook
-# on every commit across a fleet, so a third of the startup for an attribute nothing reads yet is the
+# `email` stack, and importing it at module level cost **+34 %** on `import darnlink.cli` (median of
+# interleaved runs, same tree, only this file swapped). Quoted as a percentage on purpose: two
+# independent runs of the same A/B agreed on ~34 % and disagreed on the absolute (+33 ms vs +45 ms),
+# so the milliseconds are the machine's, not the change's. darnlink runs as a pre-commit hook on
+# every commit across a fleet, so a third of the startup for an attribute nothing reads yet is the
 # wrong trade. This way the cost lands only on whoever actually asks for the version.
 __all__ = ["__version__"]
 
