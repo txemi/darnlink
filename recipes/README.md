@@ -188,7 +188,9 @@ chmod +x darnlink-gate
 The tag comes from your `darnlink-gate.json`, so the gate is deterministic and there is only ever
 one place to bump. **A moving ref (`main`, or a major alias like `v1`) is not a pin** — both resolve
 and both fetch different code over time. Do not grep the json for a version either: a regex happily
-matches one inside some OTHER key and fetches a real-but-wrong tag with no error at all. Windows agents fetch `darnlink-gate.ps1` the same
+matches one inside some OTHER key and fetches a real-but-wrong tag with no error at all.
+
+Windows agents fetch `darnlink-gate.ps1` the same
 way. Locally, drop it on your `PATH` (e.g. `~/.local/bin`).
 
 ## If your CI reuses its workspace, clean up after every other stage

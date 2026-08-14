@@ -46,7 +46,12 @@
 #       gh release view -R txemi/darnlink --json tagName -q .tagName
 #   A concrete tag written into this comment is exactly how the example rotted last time: it sat at
 #   v0.7.0 for thirteen releases and quietly recommended two rungs below what its own author was
-#   running. Any pin printed here ages the moment it is committed, so nothing is printed.
+#   running. Any pin printed here ages the moment it is committed, so no pin is RECOMMENDED here.
+#
+#   The one tag this file does print -- the `ref` fallback further down -- is not a recommendation:
+#   it is the version this script runs when a repo declares none, and it is frozen at whatever it
+#   was when written, which is precisely why an unpinned gate is not a wall. Do not read it as
+#   "the current version": read it as the cost of not pinning.
 #
 #   ADOPTING AN EXISTING REPO? Do not paste the above on day one; it will fail on contact with a
 #   tree that has never been gated, and a gate that fails on arrival gets deleted. Climb instead,
