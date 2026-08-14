@@ -6,6 +6,48 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+- **The shipped CI examples carried their own copy of the pin, and both had rotted.** Measured
+  against the tags on the day this changed: the GitHub Actions example was pinned at `v0.20.4` with
+  **3** releases published since, the Jenkins one at `v0.7.0` with **23** — and `v0.7.0` is 23 days
+  old, in a project that is 34 days old. The drift is measured in releases, not in time: this moves
+  fast enough that a pin can be twenty-three releases stale and less than a month old.
+  They are the copy-paste templates for the very consumption path a release exists to serve, so a new
+  adopter silently installed a gate far behind the one being documented. The canonical
+  `recipes/README.md` was worse: its `curl` block *told you* to pin `v0.7.0`.
+
+  Both examples now **derive** the version from the `ref` in `darnlink-gate.json`, reading the **key**
+  with the JSON parser the recipe already depends on — not grepping the file, where a version string
+  anywhere else (an excluded path, say) would win silently, which is the same "quietly picks a
+  version" failure the step exists to prevent, one layer up. Any ref shape the recipe accepts works:
+  tag, branch or SHA. The one it does not cover is a `ref` with no `@version` at all, and it says so.
+
+  *Nothing fails when two copies of a version number drift* — which is why the second copy is gone
+  rather than synchronised.
+
+- **`__version__` said `0.5.0` against `0.22.0` in `pyproject.toml`** — seventeen minors adrift.
+  Nothing reads it, which is the shape of a mine rather than a bug: harmless until someone adds
+  `--version` or trusts `darnlink.__version__`, at which point the tool lies about itself. Derived
+  from the installed package metadata now, and **lazily** (PEP 562): importing it eagerly cost
+  **+34 %** on `import darnlink.cli` — `importlib.metadata` drags in the whole `email` stack — and
+  darnlink runs as a pre-commit hook on every commit. The percentage is what reproduces: two
+  independent runs of the same A/B agreed on ~34 % and disagreed on the absolute (+33 ms vs +45 ms),
+  so the milliseconds belong to the machine and are not quoted as a property of the change.
+
+### Added
+- **`tests/test_recipe_examples.py` — the examples are code, and nothing had ever run them.** The
+  release that added a `ps1-syntax` job on exactly that argument then put non-trivial shell into two
+  example files with no gate at all. The tests **extract** the commands from the example files and
+  execute them: against tag, branch, SHA and `@`-in-the-host refs, against a decoy version elsewhere
+  in the JSON, and against the four cases that must fail loudly. Extracted rather than copied, so the
+  examples cannot drift while the test passes against its own private copy.
+
+- **A rung for feature 016 in `docs/elevating-your-link-gate.md`.** The ladder that tells a consumer
+  how to climb never mentioned the rule, two releases after it shipped. §9 covers the keys, the
+  exemption marker, and the traps that only show up when measured — including that **the pin and the
+  keys must move in the same commit**, because an older CLI turns the whole axis into a green no-op,
+  and that a **bare URL is invisible to the web axis** (only Markdown-syntax links are seen).
+
 ## [0.22.0] — 2026-08-13
 
 > ### ⚠️ Moving your pin to this release CAN turn a green gate red — without you changing anything

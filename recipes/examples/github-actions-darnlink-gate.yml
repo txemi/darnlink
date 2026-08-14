@@ -6,9 +6,12 @@
 # with zero files validated.
 #
 # INSTALL: save as `.github/workflows/darnlink-gate.yml`. Per-repo policy (excludes, mode, scope)
-#          AND the version live in `darnlink-gate.json` — ONE pin, derived below, never copied here.
-#          Do not set `DARNLINK_REF`: the recipe reads it as an ENV OVERRIDE THAT WINS over the json,
-#          so a tag left in a committed workflow silently overrides what the repo asked for.
+#          lives in `darnlink-gate.json` — INCLUDING the pin, which this file DERIVES rather than
+#          repeats. Two copies of a version number is one copy too many: this file carried its own
+#          tag and it went stale, because nothing fails when two copies drift. Deriving makes the
+#          drift impossible instead of asking you to remember. Bump `darnlink-gate.json` and both CI
+#          surfaces move with it. (Not the local hooks: those `exec darnlink-gate` off your PATH, so
+#          `ref` moves the CLI they run, not the recipe script itself.)
 name: darnlink-gate
 
 on: [push, pull_request]
@@ -24,15 +27,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
+      - name: Derive the pin from darnlink-gate.json (single source)
+        run: |
+          # Read the `ref` KEY, not the file. A grep for a version-shaped string takes the first
+          # match anywhere in the json — an excluded path or a comment that happens to contain one
+          # would win silently, which is the same "silently picks a version" failure this step exists
+          # to prevent, one layer up. Any ref the recipe accepts works here: tag, branch or SHA.
+          # python3 is already a hard dependency of the recipe itself (it parses this same file).
+          VER=$(python3 -c 'import json;print(json.load(open("darnlink-gate.json"))["ref"].rsplit("@",1)[1])') \
+            || { echo "::error::cannot derive the pin: darnlink-gate.json has no ref key, or its ref has no @version"; exit 1; }
+          echo "DARNLINK_GATE_VERSION=$VER" >> "$GITHUB_ENV"
       - name: Fetch the pinned recipe (public repo → no token)
         run: |
-          # THE pin, parsed as JSON. Do NOT grep the file for a version: a regex happily matches one
-          # inside some OTHER key (an `excludes` entry, say) and fetches a real-but-wrong tag.
-          # `has("ref")` on purpose: without it a missing key dies on jq's internal type error,
-          # which is loud but says nothing about what to fix.
-          VER=$(jq -re 'if has("ref") then .ref else error("darnlink-gate.json has no \"ref\": pin the version there, not in this workflow") end | split("@") | last' darnlink-gate.json)
           # -f: fail on a 404 (a moved/typo'd tag), instead of silently writing "404: Not Found".
-          curl -fsSL "https://raw.githubusercontent.com/txemi/darnlink/$VER/recipes/darnlink-gate" \
+          curl -fsSL "https://raw.githubusercontent.com/txemi/darnlink/${DARNLINK_GATE_VERSION}/recipes/darnlink-gate" \
             -o "$RUNNER_TEMP/darnlink-gate"
           chmod +x "$RUNNER_TEMP/darnlink-gate"
       - name: darnlink gate (whole repo)

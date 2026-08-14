@@ -284,6 +284,65 @@ Why it's safe to add to an existing fail-closed gate:
 Add it as one extra step in the wall (pre-push + CI), and give it a token — for **quota** on public
 targets, for **permission** on private ones.
 
+## 9. The last rung: stop letting your OWN repos off the hook (`own_web`)
+
+Everything in §8 is forgiving on purpose. A destination that fetches 200 but has no `uuid` is
+`web_unverifiable` and the run still exits 0, because the file lives in **someone else's**
+repository: you cannot add frontmatter to a repo you do not control, and a gate that fails on
+something you cannot fix is a gate people delete.
+
+That reasoning stops applying the moment the destination is **yours**. Then it is not an external
+limitation — it is a missing two-line edit in a repo you control, and until this rung existed nothing
+ever said so. The link stayed un-anchorable forever, counted in the same bucket as a link into a
+stranger's repository.
+
+Your `darnlink-gate.json` needs `"web": true` and `"mode": "max"` already; then add the keys. It is
+**one JSON object** — the block below shows the three keys together, not three separate files, and it
+has no comments in it, because the recipe parses this file with a strict JSON reader and swallows the
+error: a file it cannot parse gives you *every key at its default*, silently, including a `ref` far
+older than yours.
+
+```json
+{
+  "own_web_from_origin": true,
+  "own_web": ["your-org", "your-user"],
+  "own_web_max": 5
+}
+```
+
+`own_web_from_origin` adds this repo's own GitHub owner; `own_web` names owners explicitly (the two
+combine); `own_web_max` is a budget, so you can adopt before you are at zero.
+
+A finding is `web_own_no_uuid`, and it names owner, repo and path so you know which file to open. It
+never suggests `--write`: darnlink cannot fix this one from here — the edit belongs in the other
+repository. It fails the gate at **exit 4** — *unless* a budget covers it, which is exactly what
+`own_web_max` is for: under the budget the finding is still reported, only the verdict is silenced.
+
+Three things worth knowing before turning it on:
+
+- **The pin and the keys must move in the SAME commit.** A CLI older than v0.21.0 does not know the
+  flags, so `web-check` exits 1 as a usage error, the recipe reads that as a config problem and drops
+  the axis — with a warning on stderr, but a **green** exit under the default fail-open. Measured.
+- **`<!-- darnlink-own-exempt -->` exempts a link — placed immediately after it, on the SAME line.**
+  For a destination that is machine-generated, where adding frontmatter is not yours to decide.
+  Never anchored, never stale.
+  ⚠️ On the line *above* — which is the natural way to write it, and how the tests name that case —
+  it does **not** exempt: measured, the link still reports `own_no_uuid` and the run still exits 4.
+  That is deliberate. A marker that reached across a newline would let one placed on its own line
+  silently exempt whatever link happened to sit above it, which is a false green in the direction
+  that matters.
+- **Only Markdown-syntax links are seen.** A bare `https://…` URL pasted into a list is invisible to
+  the entire web axis: not anchored, not verified, not even counted as unverifiable. Measured with
+  both spellings of the same URL in the same file — one finding, not two. So a clean web number is a
+  statement about your `[text](url)` links, and about nothing else.
+
+**Expect a backlog on the first run, and budget for it.** Measured on a nine-repository fleet the day
+this feature was specified: **17 confirmed** links to files we owned and had never given a `uuid`
+(and up to 24 counting the unresolved). That is why `own_web_max` exists — it is a budget, not a
+cliff. Once that debt is paid the number stays at or near zero and the rung changes job: on the same
+fleet two days later, with the eight web-enabled repos cleaned up, switching the rule on found
+**one**. Both numbers are real; which one you get depends entirely on whether you have paid yet.
+
 ## Checklist
 
 - [ ] Read the gap with `--robustify --create-frontmatter`; split into Bucket A / Bucket B.
