@@ -22,5 +22,12 @@
     ".yaml",
     ".yml"
   ],
+  "scanned_names": [
+    "Containerfile",
+    "Dockerfile",
+    "Jenkinsfile",
+    "Makefile",
+    "Vagrantfile"
+  ],
   "files": {}
 }
