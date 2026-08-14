@@ -18,7 +18,7 @@ that is only broken where nobody measures.
 
 | Surface | What checks it | Can it block? |
 |---|---|---|
-| every text file (19 extensions: source, docs, and configuration/CI — comments only in the latter two), file NAMES | `darnlang check` (`tools/check.sh`, `lang` CI job), pinned by `tools/darnlang_ref.sh` | yes — pre-commit, pre-push, CI |
+| every text file (19 extensions). **Source and config/CI** (`.py` `.pyi` `.yml` `.toml` `.sh` `.groovy` …, `Jenkinsfile`, `Dockerfile`): **comments only** — a value is data. **Documents** (`.md` `.rst` `.txt` `.html` …): **all prose** except fenced blocks. Plus file NAMES | `darnlang check` (`tools/check.sh`, `lang` CI job), pinned by `tools/darnlang_ref.sh` | yes — pre-commit, pre-push, CI |
 | Commit message | `hooks/commit-msg` + the CI step, one message at a time | **conditionally** — the hook SKIPS when `uvx` is absent or the pin cannot be resolved (offline). CI is the wall that always runs |
 | PR title / description | CI step in the `lang` job | yes — the merge is blocked |
 | Issue title / body | `.github/workflows/lang-issue.yml` | **no** — GitHub cannot gate an issue before it is published, so it labels `needs-english` and comments once |
