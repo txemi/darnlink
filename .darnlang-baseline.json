@@ -2,8 +2,13 @@
   "count": 0,
   "note": "Legacy foreign-language lines. This number may only DECREASE.",
   "scanned_exts": [
+    ".bash",
+    ".cfg",
+    ".gradle",
+    ".groovy",
     ".htm",
     ".html",
+    ".ini",
     ".j2",
     ".jinja",
     ".markdown",
@@ -11,7 +16,11 @@
     ".py",
     ".pyi",
     ".rst",
-    ".txt"
+    ".sh",
+    ".toml",
+    ".txt",
+    ".yaml",
+    ".yml"
   ],
   "files": {}
 }
