@@ -115,8 +115,8 @@ whole-repo where it's the wall.
 ⚠️ **`vX.Y.Z` is a placeholder, and it is the one thing here you must not copy verbatim.** Resolve it
 when you paste — `gh release view -R txemi/darnlink --json tagName -q .tagName` — because this is the
 *only* pin: every CI surface derives from it. A concrete tag printed in a document is how the last
-one rotted; it sat at `v0.7.0` through **22** releases, quietly recommending a gate from well over a
-year earlier. The recipe itself says the same thing about its own header, for the same reason.
+one rotted; it sat at `v0.7.0` through **23** releases, quietly recommending a gate far behind the one
+documented beside it. The recipe itself says the same thing about its own header, for the same reason.
 
 **Repos with a big `mirrors/` tree** (a faithful local copy of an external system) usually want a
 fourth shape: enforce robustify + the create-readme axis, but skip README-creation *under the mirror*
@@ -187,7 +187,7 @@ chmod +x darnlink-gate
 ```
 
 **One pin, and it lives in `darnlink-gate.json`.** This block used to hard-code a tag and tell you to
-keep it pinned — and that instruction is what rotted: it sat at `v0.7.0` for **22 releases**, quietly
+keep it pinned — and that instruction is what rotted: it sat at `v0.7.0` for **23 releases**, quietly
 telling every new adopter to install a gate far behind the one documented right above it. Nothing
 fails when two copies of a version number drift, so the second copy has to go rather than be kept in
 sync. `-f` so a moved or typo'd version is a 404 instead of a file containing the words

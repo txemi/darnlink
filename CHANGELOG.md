@@ -9,7 +9,9 @@ All notable changes to darnlink are documented here. The format is based on
 ### Fixed
 - **The shipped CI examples carried their own copy of the pin, and both had rotted.** Measured
   against the tags on the day this changed: the GitHub Actions example was pinned at `v0.20.4` with
-  **2** releases published since, the Jenkins one at `v0.7.0` with **22** — wrong for over a year.
+  **3** releases published since, the Jenkins one at `v0.7.0` with **23** — and `v0.7.0` is 23 days
+  old, in a project that is 34 days old. The drift is measured in releases, not in time: this moves
+  fast enough that a pin can be twenty-three releases stale and less than a month old.
   They are the copy-paste templates for the very consumption path a release exists to serve, so a new
   adopter silently installed a gate far behind the one being documented. The canonical
   `recipes/README.md` was worse: its `curl` block *told you* to pin `v0.7.0`.

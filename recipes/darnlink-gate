@@ -45,8 +45,11 @@
 #   Resolve it when you paste:
 #       gh release view -R txemi/darnlink --json tagName -q .tagName
 #   A concrete tag written into this comment is exactly how the example rotted last time: it sat at
-#   v0.7.0 for thirteen releases and quietly recommended two rungs below what its own author was
-#   running. Any pin printed here ages the moment it is committed, so no pin is RECOMMENDED here.
+#   v0.7.0 and quietly recommended two rungs below what its own author was running. Any pin printed
+#   here ages the moment it is committed, so no pin is RECOMMENDED here.
+#   (This note used to say "for thirteen releases". It was 13 when written and 23 by v0.22.0 — a
+#   count in prose ages exactly like the pin it warns about, so the number is gone rather than
+#   maintained. The current figure lives in recipes/README.md, where it is dated.)
 #
 #   The one tag this file does print -- the `ref` fallback further down -- is not a recommendation:
 #   it is the version this script runs when a repo declares none, and it is frozen at whatever it

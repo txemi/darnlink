@@ -99,7 +99,7 @@ def test_the_two_examples_derive_the_pin_identically():
 ], ids=lambda p: p.name)
 def test_no_shipped_recipe_doc_carries_a_literal_pin(path):
     """The failure this whole approach exists to prevent: a second copy of the version number.
-    Measured on the day it was replaced — one file was 2 releases stale, the other 22 — and nothing
+    Measured on the day it was replaced — one file was 3 releases stale, the other 23 — and nothing
     had ever checked, which is exactly why both drifted."""
     literal = re.findall(r"darnlink[/@]v\d+\.\d+\.\d+", path.read_text(encoding="utf-8"))
     assert not literal, f"{path.name} reintroduced a literal pin: {literal}"
@@ -116,6 +116,37 @@ def test_the_actions_example_is_valid_yaml_and_wires_the_derivation_through():
     assert "GITHUB_ENV" in derive["run"]
     assert "${DARNLINK_GATE_VERSION}" in fetch["run"]
     assert steps.index(derive) < steps.index(fetch)
+
+
+def test_the_jenkins_example_fetches_the_version_it_derived():
+    """The Actions example had this check and Jenkins did not, so the Jenkins file could derive
+    `$VER` correctly and then fetch a hard-coded tag with the whole suite green — the exact failure
+    this PR exists to prevent, surviving in the file it claimed to have covered. Measured: pointing
+    its curl at a fixed tag left every test passing.
+
+    Asserted on the fetch line rather than by parsing Groovy: what matters is that the URL consumes
+    the derived value and nothing else, and no-literal-pin (above) is what stops it being replaced
+    by a tag."""
+    text = JENKINS.read_text(encoding="utf-8")
+    fetch = next((l for l in text.splitlines() if "raw.githubusercontent.com" in l), None)
+    assert fetch, "no curl of the recipe found in the Jenkins example"
+    assert "$VER" in fetch, f"the fetch does not consume the derived version: {fetch.strip()}"
+    assert "-f" in fetch, "curl must fail on a 404 rather than write '404: Not Found' to disk"
+    assert text.index("VER=$(") < text.index("raw.githubusercontent.com"), "derive before fetch"
+
+
+@pytest.mark.parametrize("path", [ACTIONS, JENKINS, EXAMPLES.parent / "README.md"],
+                         ids=lambda p: p.name)
+def test_every_recipe_fetch_points_at_this_repo(path):
+    """These files are copy-paste templates that download a script and run it. Repointing the host
+    or the owner is the highest-consequence single-token edit in the repo and nothing checked it:
+    swapping `txemi/darnlink` for another owner left the whole suite green, in both examples and in
+    the canonical README."""
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if "raw.githubusercontent.com" not in line:
+            continue
+        assert "raw.githubusercontent.com/txemi/darnlink/" in line, (
+            f"{path.name} fetches the recipe from somewhere else: {line.strip()}")
 
 
 @pytest.mark.parametrize("ref,expected", [

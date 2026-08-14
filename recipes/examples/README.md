@@ -27,8 +27,9 @@ the *CLI* they run but not the recipe script itself — that one is deployed, no
 
 This paragraph used to say "keep them in sync, bump both together", and that is precisely how they
 rotted. Measured against the tags on the day this changed: the Actions example was pinned at `v0.20.4`
-with **2** releases published since, and the Jenkins one at `v0.7.0` with **22** — the second had been
-wrong for well over a year. **Nothing fails when two copies of a version number drift.** If you copy
+with **3** releases published since, and the Jenkins one at `v0.7.0` with **23** — and that `v0.7.0`
+is 23 days old, in a project 34 days old. Staleness here is counted in releases, not in months.
+**Nothing fails when two copies of a version number drift.** If you copy
 these into a repo, do not reintroduce a literal tag.
 
 The derivation reads the `ref` **key** rather than grepping the file for something version-shaped —

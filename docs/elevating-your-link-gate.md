@@ -323,8 +323,14 @@ Three things worth knowing before turning it on:
 - **The pin and the keys must move in the SAME commit.** A CLI older than v0.21.0 does not know the
   flags, so `web-check` exits 1 as a usage error, the recipe reads that as a config problem and drops
   the axis — with a warning on stderr, but a **green** exit under the default fail-open. Measured.
-- **`<!-- darnlink-own-exempt -->`** next to a link exempts it — for a destination that is
-  machine-generated, where adding frontmatter is not yours to decide. Never anchored, never stale.
+- **`<!-- darnlink-own-exempt -->` exempts a link — placed immediately after it, on the SAME line.**
+  For a destination that is machine-generated, where adding frontmatter is not yours to decide.
+  Never anchored, never stale.
+  ⚠️ On the line *above* — which is the natural way to write it, and how the tests name that case —
+  it does **not** exempt: measured, the link still reports `own_no_uuid` and the run still exits 4.
+  That is deliberate. A marker that reached across a newline would let one placed on its own line
+  silently exempt whatever link happened to sit above it, which is a false green in the direction
+  that matters.
 - **Only Markdown-syntax links are seen.** A bare `https://…` URL pasted into a list is invisible to
   the entire web axis: not anchored, not verified, not even counted as unverifiable. Measured with
   both spellings of the same URL in the same file — one finding, not two. So a clean web number is a
