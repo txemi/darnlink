@@ -46,7 +46,12 @@
 #       gh release view -R txemi/darnlink --json tagName -q .tagName
 #   A concrete tag written into this comment is exactly how the example rotted last time: it sat at
 #   v0.7.0 for thirteen releases and quietly recommended two rungs below what its own author was
-#   running. Any pin printed here ages the moment it is committed, so nothing is printed.
+#   running. Any pin printed here ages the moment it is committed, so no pin is RECOMMENDED here.
+#
+#   The one tag this file does print -- the `ref` fallback further down -- is not a recommendation:
+#   it is the version this script runs when a repo declares none, and it is frozen at whatever it
+#   was when written, which is precisely why an unpinned gate is not a wall. Do not read it as
+#   "the current version": read it as the cost of not pinning.
 #
 #   ADOPTING AN EXISTING REPO? Do not paste the above on day one; it will fail on contact with a
 #   tree that has never been gated, and a gate that fails on arrival gets deleted. Climb instead,
@@ -111,12 +116,41 @@ set -euo pipefail
 root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cfg="$root/darnlink-gate.json"
 
+# A config that EXISTS but does not parse is a hard error, in both fail modes.
+#
+# Every reader below swallows a parse error into an empty dict, which is the right thing for a
+# MISSING file -- all keys are optional -- and a silent disaster for a BROKEN one: every key reverts
+# to its default, so the gate runs an old pinned version at mode=check with no excludes and reports
+# a verdict about a policy that is written in no file. Green, and about nothing.
+#
+# It is NOT a `bail`: bail exists for "I cannot run here" (no uv, no network) and skips when
+# fail-open, because CI still covers the wall. A malformed config is not that -- CI would hit the
+# same broken file. So it fails loudly on every surface, fail-open included.
+#
+# Fixing the encoding alone (utf-8-sig, for a BOM) closed one shape and left the class open: a
+# trailing comma, a UTF-16 file -- which is what PowerShell 5.1 writes by default, the very source
+# the BOM fix cites -- and a truncated write all still defaulted in silence.
+# ⚠️ `command -v python3` primero, y NO es defensivo de mas: sin el, `! python3 …` es cierto por
+# ausencia del interprete y esto acusaria de config invalida a un fichero perfecto. Son dos
+# condiciones distintas -"no puedo validar" vs "esto esta roto"- y la de arriba ya la trata el
+# `bail` de mas abajo. Lo cazo un test que simula python3 ausente: convertia un exit 3 en 127.
+if [ -f "$cfg" ] && command -v python3 >/dev/null 2>&1 \
+   && ! python3 -c 'import json,sys; json.load(open(sys.argv[1], encoding="utf-8-sig"))' "$cfg" 2>/dev/null; then
+  echo "darnlink-gate: $cfg exists but is not valid JSON -> FAILING." >&2
+  echo "  Nothing was validated. Every key would have silently reverted to its default," >&2
+  echo "  including the pinned version, mode and excludes. Parse error:" >&2
+  python3 -c 'import json,sys; json.load(open(sys.argv[1], encoding="utf-8-sig"))' "$cfg" 2>&1 \
+    | tail -1 | sed 's/^/    /' >&2
+  exit 1
+fi
+
 # --- read config (JSON, all optional) via python; env wins over file ---
 read_cfg() { python3 - "$cfg" "$1" "$2" <<'PY' 2>/dev/null || printf '%s' "$2"
 import json, sys
 cfg, key, default = sys.argv[1], sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else ""
 try:
-    d = json.load(open(cfg, encoding="utf-8"))
+    d = json.load(open(cfg, encoding="utf-8-sig"))   # -sig: reads plain UTF-8 identically, but
+    # a BOM would otherwise raise -> the except below silently reverts EVERY key to its default
 except Exception:
     d = {}
 v = d.get(key, default)
@@ -131,7 +165,7 @@ PY
 read_cfg_len() { python3 - "$cfg" "$1" <<'PY' 2>/dev/null || printf '0'
 import json, sys
 try:
-    d = json.load(open(sys.argv[1], encoding="utf-8"))
+    d = json.load(open(sys.argv[1], encoding="utf-8-sig"))   # -sig: same reason as read_cfg above
 except Exception:
     d = {}
 v = d.get(sys.argv[2])

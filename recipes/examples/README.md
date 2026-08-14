@@ -20,8 +20,14 @@ recipe ([`../darnlink-gate`](../darnlink-gate)) at the scope that fits each laye
 staged locally so parallel contributors don't block each other; whole-repo where the gate is the wall.
 A whole-repo **pre-commit** would deadlock — don't; that's what pre-push is for.
 
-**Keep the pinned tag in sync.** Every example pins `@v0.7.0`; that must match your
-`darnlink-gate.json`'s `ref`. Bump both together.
+**ONE pin, and it lives in `darnlink-gate.json`.** No example here hardcodes a version: the two CI
+ones derive it from that file's `ref`, and the two hooks never pinned anything. So a `ref` bump takes
+effect everywhere the moment you commit it — there is nothing to "keep in sync".
+
+⚠️ **Do not reach for `DARNLINK_REF` to pin instead.** The recipe reads it as an env override that
+**wins over the json**, so a tag left in a committed workflow silently overrides what the repo asked
+for, and bumping the json does nothing. It is for trying an unreleased build from one branch; never
+commit it.
 
 **Raising to fail-closed links (`mode=max`)** is a one-line change in `darnlink-gate.json`
 (`"mode": "max"`) once the repo's gap is 0 — the hooks and CI here need no edit. Follow
