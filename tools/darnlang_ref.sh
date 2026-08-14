@@ -14,4 +14,4 @@
 # shared and none of them had a test for. This repo is where the prose surfaces were invented and
 # where they were most complete, so migrating it is not a downgrade in any axis -- verified before
 # switching, surface by surface.
-export DARNLANG_REF="git+https://github.com/txemi/darnlang@v0.7.0"
+export DARNLANG_REF="git+https://github.com/txemi/darnlang@v0.9.0"
