@@ -58,7 +58,7 @@ jobs:
           . tools/darnlang_ref.sh
           uv tool install "darnlang[strict] @ $DARNLANG_REF"
       - name: English-only gate — tracked files (fail-closed, baseline pinned at 0)
-        run: darnlang check --ext .py,.md
+        run: darnlang check --ext all
 
       # Commit messages: a surface no file gate can see, and one the local `hooks/commit-msg` cannot
       # be trusted to have covered — hooks are opt-in per clone and one `--no-verify` away. Measured
