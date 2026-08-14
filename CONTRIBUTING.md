@@ -39,10 +39,11 @@ CI (`.github/workflows/ci.yml`) runs on every PR; please make sure it's green. A
 commit messages, PR titles/descriptions, and issues. [`darnlang`](https://github.com/txemi/darnlang) enforces it on four surfaces, pinned by
 `tools/darnlang_ref.sh`:
 
-- **tracked files** — `.py`/`.pyi` (comments and docstrings only) and
-  `.md`/`.markdown`/`.rst`/`.txt`/`.html`/`.htm`/`.jinja`/`.j2` (all prose except fenced code
-  blocks). Config and CI files — `.yml`, `.toml`, `.sh`, `Jenkinsfile` — are **not** judged, so a
-  comment in them is on you. `tools/check.sh` and the `lang` CI job. File NAMES are judged too;
+- **tracked files**, in three families: `.py`/`.pyi` and configuration/CI
+  (`.yml` `.yaml` `.toml` `.cfg` `.ini` `.sh` `.bash` `.groovy` `.gradle`, plus `Jenkinsfile`,
+  `Dockerfile`, `Makefile`) — **comments only**, because a config VALUE is data; and documents
+  (`.md` `.markdown` `.rst` `.txt` `.html` `.htm` `.jinja` `.j2`) — all prose except fenced code
+  blocks. `tools/check.sh` and the `lang` CI job. File NAMES are judged too;
 - **commit messages** — `hooks/commit-msg`, plus a CI step over every commit the PR adds;
 - **PR title and description** — a CI step, so a non-English title blocks the merge;
 - **issues** — `.github/workflows/lang-issue.yml`. GitHub offers no way to gate an issue before it
