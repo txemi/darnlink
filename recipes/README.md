@@ -100,23 +100,23 @@ The gate runs at three layers, each at the scope that fits — **deliberate, not
 [`docs/elevating-your-link-gate.md §7`](../docs/elevating-your-link-gate.md) <!-- uuid: e95eaed1-9866-4c48-a0d7-99a6382f5bf9 -->): staged & fast locally,
 whole-repo where it's the wall.
 
-**1. Config** — `darnlink-gate.json` at the repo root (all keys optional). Replace `<latest-tag>`
-with a real tag from [releases](https://github.com/txemi/darnlink/releases) — a pin, never a branch.
-
-⚠️ **Do not add `//` comments to it.** JSON has none, and a config that does not parse does not fail
-loudly on every surface: the local hooks revert *every* key to its default and go green having
-validated a policy written in no file. (This very document shipped two commented examples for
-exactly one commit. Copied verbatim, they ran an old pinned version with zero excludes, green.)
+**1. Config** — `darnlink-gate.json` at the repo root (all keys optional):
 
 ```json
 {
-  "ref": "git+https://github.com/txemi/darnlink@<latest-tag>",
+  "ref": "git+https://github.com/txemi/darnlink@vX.Y.Z",
   "excludes": ["secrets", "external_repos"],
   "ignore_blocks": ["txmd-autogrid"],
   "mode": "check",
   "scope": "repo"
 }
 ```
+
+⚠️ **`vX.Y.Z` is a placeholder, and it is the one thing here you must not copy verbatim.** Resolve it
+when you paste — `gh release view -R txemi/darnlink --json tagName -q .tagName` — because this is the
+*only* pin: every CI surface derives from it. A concrete tag printed in a document is how the last
+one rotted; it sat at `v0.7.0` through **22** releases, quietly recommending a gate from well over a
+year earlier. The recipe itself says the same thing about its own header, for the same reason.
 
 **Repos with a big `mirrors/` tree** (a faithful local copy of an external system) usually want a
 fourth shape: enforce robustify + the create-readme axis, but skip README-creation *under the mirror*
@@ -125,7 +125,7 @@ the mirror. Two keys make that expressible:
 
 ```json
 {
-  "ref": "git+https://github.com/txemi/darnlink@<latest-tag>",
+  "ref": "git+https://github.com/txemi/darnlink@vX.Y.Z",
   "mode": "check",
   "create_readme": true,
   "create_readme_excludes": ["mirrors"],
@@ -180,43 +180,19 @@ not snippets to assemble (assembling the CI one wrong yields a wall that fails *
 any CI can fetch it **without a token** (no private checkout, no cred):
 
 ```bash
-VER=$(jq -re 'if has("ref") then .ref else error("darnlink-gate.json has no \"ref\"") end | split("@") | last' darnlink-gate.json)
+# Derive the version from the `ref` you already declared — do NOT write a second copy of it here.
+VER=$(python3 -c 'import json;print(json.load(open("darnlink-gate.json"))["ref"].rsplit("@",1)[1])')
 curl -fsSL "https://raw.githubusercontent.com/txemi/darnlink/$VER/recipes/darnlink-gate" -o darnlink-gate
 chmod +x darnlink-gate
 ```
 
-The tag comes from your `darnlink-gate.json`, so the gate is deterministic and there is only ever
-one place to bump. **A moving ref (`main`, or a major alias like `v1`) is not a pin** — both resolve
-and both fetch different code over time. Do not grep the json for a version either: a regex happily
-matches one inside some OTHER key and fetches a real-but-wrong tag with no error at all.
-
-Windows agents fetch `darnlink-gate.ps1` the same
-way. Locally, drop it on your `PATH` (e.g. `~/.local/bin`).
-
-## If your CI reuses its workspace, clean up after every other stage
-
-The gate scans the tree **recursively** from `git rev-parse --show-toplevel`. On hosted runners that
-never matters — the workspace is fresh each run. On a **self-hosted agent it persists between
-builds**, so anything another stage leaves behind (a report directory, a clone of some other repo)
-is inside your tree by the time the gate looks, and the gate fails on files that are not yours.
-
-Two habits fix it, and both belong to the stages that create the mess, not to this one:
-
-- **clone foreign repos OUTSIDE the workspace** — a sibling directory, not a subdirectory;
-- **remove generated directories after archiving them** (in Jenkins, `post { always { … } }`).
-
-⚠️ **Do not reach for `excludes` here** — and note this is the one case where it is wrong, which is
-why the distinction matters:
-
-| What it is | Lives in | Right tool |
-|---|---|---|
-| **Vendored or generated everywhere** — a foreign repo you committed, or a tree every machine regenerates (`.pytest_cache`, `output`) | in git, or in every clone alike | `excludes` ✅ |
-| **CI litter** — what another stage wrote into the workspace this build | nowhere, only on that agent | **clean it up** ❌ not `excludes` |
-
-Excluding litter silences *this* gate and leaves every other tree-scanning check in your pipeline
-broken: you have not removed the foreign files, only stopped one tool from mentioning them. And the
-exclude then sits in the config of every clone, describing a mess that only ever existed on one
-agent.
+**One pin, and it lives in `darnlink-gate.json`.** This block used to hard-code a tag and tell you to
+keep it pinned — and that instruction is what rotted: it sat at `v0.7.0` for **22 releases**, quietly
+telling every new adopter to install a gate far behind the one documented right above it. Nothing
+fails when two copies of a version number drift, so the second copy has to go rather than be kept in
+sync. `-f` so a moved or typo'd version is a 404 instead of a file containing the words
+"404: Not Found". Windows agents fetch `darnlink-gate.ps1` the same way. Locally, drop it on your
+`PATH` (e.g. `~/.local/bin`).
 
 ## Notes
 
