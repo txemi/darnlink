@@ -38,6 +38,7 @@ def _findings_json(
     link_ignored: Optional[List[Path]] = None,
     suppressed: int = 0,
     only: Optional[set] = None,
+    out_of_root: Optional[List[Path]] = None,
 ) -> str:
     return json.dumps(
         {
@@ -49,6 +50,9 @@ def _findings_json(
             # feature 006: opted out as a SOURCE only — still indexed as a target
             "link_ignored_files": [str(p) for p in (link_ignored or [])],
             "invalid_frontmatter_files": [str(p) for p in (invalid or [])],
+            # Not decoration: a gate consumes the JSON, not the human text. Omitting it here
+            # would fix the report only where nobody automated is looking.
+            "out_of_root_links": [str(p) for p in (out_of_root or [])],
             "findings": [{"kind": f.kind.value, "file": str(f.file), "detail": f.detail} for f in findings],
         },
         indent=2,
@@ -66,7 +70,7 @@ def _run_repair(root: Path, write: bool, excludes: set, as_json: bool, block_mar
 
     if as_json:
         print(_findings_json(result.findings, wrote, write, result.ignored, index.invalid,
-                             result.link_ignored, result.suppressed, only))
+                             result.link_ignored, result.suppressed, only, index.out_of_root))
     else:
         print(f"darnlink repair — root: {root}")
         if only is not None:
@@ -83,6 +87,12 @@ def _run_repair(root: Path, write: bool, excludes: set, as_json: bool, block_mar
             print(f"  [link-ignored] {f.file}: {f.detail}")
         for p in index.invalid:
             print(f"  [invalid-frontmatter] {p}: not valid YAML; not indexed (fix the file)")
+        for p in index.out_of_root:
+            # Never silent: this file USED to be indexed (reading a symlink follows it), so its uuid
+            # resolved. Skipping it without a word would turn a working robust link into
+            # `unresolvable` with nothing to point at as the cause.
+            print(f"  [out-of-root-link] {p}: symlink whose target lives outside the scanned root; "
+                  f"not indexed — its uuid will NOT resolve (widen the root, or replace the link with a copy)")
         if only is not None:
             # FR-008: a narrowed run only ever sees the links written INSIDE the scoped files. A moved
             # target's inbound links live in files the caller did not name — a clean result here is
@@ -112,7 +122,7 @@ def _run_robustify(root: Path, write: bool, create_frontmatter: bool, excludes: 
 
     if as_json:
         print(_findings_json(result.findings, wrote, write, result.ignored, result.invalid,
-                             result.link_ignored, result.suppressed, only))
+                             result.link_ignored, result.suppressed, only, result.out_of_root))
     else:
         print(f"darnlink robustify — root: {root}")
         if only is not None:
@@ -124,6 +134,9 @@ def _run_robustify(root: Path, write: bool, create_frontmatter: bool, excludes: 
             print(f"  [create-readme] {f.file}: {f.detail}")
         for f in skipped:
             print(f"  [no-frontmatter] {f.file}: {f.detail} (use --create-frontmatter to allow)")
+        for p_ in result.out_of_root:
+            print(f"  [out-of-root-link] {p_}: symlink whose target lives outside the scanned root; "
+                  f"not indexed — its uuid will NOT resolve (widen the root, or replace the link with a copy)")
         for f in out_of_scope:
             print(f"  [out-of-scope] {f.file}: {f.detail}")
         for f in target_writes:
@@ -219,6 +232,13 @@ def _run_check(root: Path, excludes: set, as_json: bool, block_markers: tuple,
                     "detail": "frontmatter present but not valid YAML; left untouched (fix the file)"}
                    for p in rob_invalid],
             },
+            # Informational, like `dangling`: it does NOT move `exit_code`, and that is deliberate.
+            # The CONSEQUENCE already fails the gate on its own — a robust link to a uuid that
+            # stopped resolving is reported `unresolvable` and exits 2 (measured). What was
+            # missing was the CAUSE: "uuid not found" with no hint that a symlink points out of
+            # the root. A skipped link with no inbound references harms nothing, so failing on it
+            # would break trees that are fine.
+            "out_of_root_links": [str(p) for p in index.out_of_root],
             # Its own axis, never folded into `exit_code` (FR-049): a consumer opts in from its gate.
             "dangling": {
                 "count": len(dangling),
@@ -246,6 +266,10 @@ def _run_check(root: Path, excludes: set, as_json: bool, block_markers: tuple,
               f"-> {'FAIL' if integrity_fail else 'ok'}")
         print(f"  [strict]    to robustify: {len(upgrades)} | invalid frontmatter: {len(rob_invalid)} "
               f"-> {'FAIL' if strict_fail else 'ok'}")
+        for p_ in index.out_of_root:
+            print(f"  [out-of-root-link] {p_}: symlink whose target lives outside the scanned root; "
+                  f"not indexed — a robust link to its uuid will fail as `unresolvable` "
+                  f"(widen the root, or replace the link with a copy)")
         if dangling:
             print(f"  [dangling]  targets that do not exist: {len(dangling)} "
                   f"-> informational (does not affect the exit code)")
@@ -425,7 +449,8 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
         from .frontmatter_edit import read_text_keep_newlines
         seen = 0
         listing = []
-        for f in iter_markdown_files(root, excludes):
+        out_of_root: List[Path] = []
+        for f in iter_markdown_files(root, excludes, out_of_root=out_of_root):
             try:
                 content = read_text_keep_newlines(f)
             except Exception:
@@ -437,17 +462,22 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
         if args.json:
             print(json.dumps({"web_check": True, "online": False, "exit_code": 0,
                               "web_links_seen": seen,
+                              "out_of_root_links": [str(p_) for p_ in out_of_root],
                               "links": [{"file": str(f), "href": h, "anchored": a} for f, h, a in listing]}, indent=2))
         else:
             print(f"darnlink web-check (EXPERIMENTAL, offline) — root: {root}")
             print(f"  web links seen: {seen} (core ignores them; run with --online to fetch & verify/anchor)")
             for f, h, a in listing:
                 print(f"  [{'anchored' if a else 'plain'}] {f}: {h}")
+            for p_ in out_of_root:
+                print(f"  [out-of-root-link] {p_}: symlink whose target lives outside the scanned "
+                      f"root; not indexed -> informational (does not affect the exit code)")
         return 0
 
     token = os.environ.get("GITHUB_TOKEN") or None
+    web_out_of_root: List[Path] = []
     findings, edits = check_web_links_online(root, token, fetcher or default_fetcher, block_markers,
-                                             excludes, owners)
+                                             excludes, owners, out_of_root=web_out_of_root)
     ok = [x for x in findings if x.kind == "web_ok"]
     anchors = [x for x in findings if x.kind == "web_anchor"]
     mismatch = [x for x in findings if x.kind == "web_mismatch"]
@@ -479,11 +509,15 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
             # FR-012 makes omitting the flag observably different from `--own-max 0`; without this key
             # the two payloads were byte-identical, so the machine surface could not tell them apart.
             "own_max": args.own_max,
+            "out_of_root_links": [str(p_) for p_ in web_out_of_root],
             "findings": [{"kind": x.kind, "file": str(x.file), "href": x.href,
                           "detail": x.detail, "anchored_uuid": x.anchored_uuid} for x in findings],
         }, indent=2))
     else:
         print(f"darnlink web-check (EXPERIMENTAL, online) — root: {root}")
+        for p_ in web_out_of_root:
+            print(f"  [out-of-root-link] {p_}: symlink whose target lives outside the scanned "
+                  f"root; not indexed -> informational (does not affect the exit code)")
         # FR-016: both new kinds are counted and listed in the TEXT report too. Printed only when
         # non-zero, so a run without an owner set keeps today's line byte-for-byte (FR-001).
         extra = (f" | own-no-uuid {len(own_no_uuid)} | own-exempt {len(own_exempt)}"

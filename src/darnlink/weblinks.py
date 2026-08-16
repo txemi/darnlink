@@ -383,6 +383,7 @@ def check_web_links_online(
     block_markers: tuple = (),
     excludes: Optional[set] = None,
     owners: frozenset = frozenset(),
+    out_of_root: Optional[List[Path]] = None,
 ) -> Tuple[List[WebFinding], Dict[Path, str]]:
     """Fetch each web link's destination (once, cached per URL) and classify it. Returns the findings
     and the per-file rewritten content for any `web_anchor` (the caller writes it only under --write).
@@ -402,7 +403,9 @@ def check_web_links_online(
     findings: List[WebFinding] = []
     edits: Dict[Path, str] = {}
 
-    for f in iter_markdown_files(root, excludes):
+    # `out_of_root` reaches the report: this axis walks the tree on its own, so not collecting it
+    # here would leave it silent exactly where nobody reads by eye -- the round-2 failure again.
+    for f in iter_markdown_files(root, excludes, out_of_root=out_of_root):
         try:
             content = read_text_keep_newlines(f)
         except Exception:
