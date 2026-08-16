@@ -35,6 +35,16 @@ All notable changes to darnlink are documented here. The format is based on
   so the milliseconds belong to the machine and are not quoted as a property of the change.
 
 ### Added
+- **A plain link written as an absolute filesystem path (`/home/user/x.md`) is now a named finding
+  (`absolute_local_path`), instead of receiving no check at all.** `is_local_relative` excludes
+  anything starting with `/`, so such a link was invisible to every existing axis: not `dangling`
+  (that one shares the exclusion), not `out_of_scope` (that one names a real location outside
+  `--root`; an absolute path names none). Unlike a relative link — which resolves to "this repo" on
+  any clone — an absolute path can only ever resolve on the one machine that wrote it, and silently,
+  since it was never reported either. Same treatment as `dangling` (FR-049): report-only, its own
+  axis in `check --json`, and deliberately absent from the exit code, so no consumer's gate goes red
+  on the day it upgrades.
+
 - **`tests/test_recipe_examples.py` — the examples are code, and nothing had ever run them.** The
   release that added a `ps1-syntax` job on exactly that argument then put non-trivial shell into two
   example files with no gate at all. The tests **extract** the commands from the example files and

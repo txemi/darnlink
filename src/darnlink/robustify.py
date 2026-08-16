@@ -27,7 +27,8 @@ from .frontmatter_index import DEFAULT_EXCLUDES, dir_excluded, iter_markdown_fil
 from .links import (DetachedAnchor, PlainLink, code_spans, emit_robust_link, file_ignores_links,
                     file_is_ignored, find_detached_anchors, find_plain_links, ignored_spans,
                     line_bounds)
-from .paths import DIR_ANCHOR, is_local_relative, names_md, resolve_href, split_fragment
+from .paths import (DIR_ANCHOR, is_absolute_local_path, is_local_relative, names_md, resolve_href,
+                     split_fragment)
 from .report import Finding, Kind
 from .scope import in_scope
 
@@ -102,6 +103,24 @@ def _dangling_target(href: str, linking_file: Path) -> Path | None:
         # Report the DECODED path: it is the one the link denotes, and the one to look for on disk.
         return None if d.exists() else d
     return t
+
+
+def _absolute_local_target(href: str) -> str | None:
+    """The decoded path an href names, when it is an absolute local filesystem path — or None.
+
+    Feature 017: `is_local_relative` excludes this shape (it starts with `/`), so it never reaches
+    `_anchor_target` or `_dangling_target` — an absolute path receives no check of any kind today,
+    silently, even though it can only ever resolve on the one machine that wrote it. Mirrors
+    `_dangling_target`'s FR-047 handling: an encoded href can decode into an absolute path
+    (`%2Fetc%2Fpasswd`) that reads as local-relative while encoded, so both spellings are judged.
+    """
+    path_part, _ = split_fragment(href)
+    if not path_part:
+        return None
+    decoded = unquote(path_part)
+    if is_absolute_local_path(path_part) or is_absolute_local_path(decoded):
+        return decoded
+    return None
 
 
 def _dir_link_missing_readme(href: str, linking_file: Path) -> Path | None:
@@ -389,6 +408,20 @@ def plan_robustify(
                         Kind.DANGLING, f,
                         f"line {lineno}: {link.href}: target does not exist (resolves to {dead})",
                         line=lineno))
+                elif t is None:
+                    # 017: the other `None` a `.md`/directory link this pass could never name —
+                    # `_dangling_target` shares the same `is_local_relative` exclusion, so this href
+                    # is not "not there", it is not a path relative to anything. Distinct from
+                    # OUT_OF_SCOPE (that one names a real root-relative location the scan didn't
+                    # read; this one names none).
+                    abs_path = _absolute_local_target(link.href)
+                    if abs_path is not None:
+                        lineno = original.count("\n", 0, link.start) + 1
+                        result.findings.append(Finding(
+                            Kind.ABSOLUTE_LOCAL_PATH, f,
+                            f"line {lineno}: {link.href}: absolute local path ({abs_path}) — "
+                            "resolves only on the machine that wrote it; never checked or anchorable",
+                            line=lineno))
                 continue  # skip non-md/external and self-links
             tr = t.resolve()
             if tr in ignored_targets or tr in invalid_fm:
