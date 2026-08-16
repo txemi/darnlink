@@ -26,7 +26,7 @@ from .frontmatter_edit import (
 from .frontmatter_index import DEFAULT_EXCLUDES, dir_excluded, iter_markdown_files, read_frontmatter_uuid
 from .links import (DetachedAnchor, PlainLink, code_spans, emit_robust_link, file_ignores_links,
                     file_is_ignored, find_detached_anchors, find_plain_links, ignored_spans,
-                    line_bounds)
+                    line_bounds, pandoc_attrs_at)
 from .paths import (DIR_ANCHOR, is_absolute_local_path, is_local_relative, names_md, resolve_href,
                      split_fragment)
 from .report import Finding, Kind
@@ -500,7 +500,12 @@ def plan_robustify(
 
         edits: List[Tuple[int, int, str]] = []  # (start, end, replacement), disjoint by construction
         for i, (link, u) in enumerate(anchorable):
-            edits.append((link.start, link.end, emit_robust_link(link.text, link.href, u)))
+            # FR-065: a pandoc attribute block immediately after `)` must stay immediately after
+            # `)` -- pandoc detaches it from the link otherwise, silently. The edit's span is
+            # widened to swallow that block so it isn't left behind duplicated, and emit_robust_link
+            # puts it back before the anchor comment rather than after.
+            attrs = pandoc_attrs_at(original, link.end)
+            edits.append((link.start, link.end + len(attrs), emit_robust_link(link.text, link.href, u, attrs)))
             detail = f"{link.href} +uuid {u}"
             stray = absorb.get(i)
             if stray is not None:

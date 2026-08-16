@@ -285,14 +285,17 @@ def test_repair_write_leaves_a_pandoc_attribute_suffix_untouched(tmp_path):
     a splice whose end offset is one character off deletes the `{`, and the block stops being a
     block. The shape where the attributes sit *before* the anchor is the sibling test below; the
     two seeds are different and neither test catches the other's.
+
+    This is the shape darnlink itself wrote BEFORE #65 was fixed (attrs after the anchor — the bug
+    itself), not the shape it writes now. Kept as a repair test on purpose: files anchored by an
+    older darnlink can still be sitting in a repo, and `repair` must not corrupt them just because
+    it no longer produces this shape. `ROBUST_LINK_RE` still matches only the LINK+comment part of
+    this string (its `attrs` group is empty here, since nothing but whitespace follows `)`), so the
+    trailing `{width="1.1in"}` sits entirely outside the match and is never part of what gets spliced.
     """
     from darnlink.frontmatter_index import build_index
     from darnlink.repair import plan_repairs, apply_repairs
 
-    # The anchor goes BEFORE the attribute block, because that is where darnlink's own `--write`
-    # puts it (see #65). Writing it the way a human would — `![](x){.cls} <!-- uuid: … -->` — does
-    # not even match `ROBUST_LINK_RE`, which requires the comment to follow the `)` with only
-    # whitespace between; such a link is plain with a detached anchor, and is not this test's case.
     _w(tmp_path / "new" / "B.md", f"---\nuuid: {EXISTING}\n---\n# B\n")
     _w(tmp_path / "A.md", f'![](old/B.md) <!-- uuid: {EXISTING} -->{{width="1.1in"}}\n')
 
@@ -305,17 +308,22 @@ def test_repair_write_leaves_a_pandoc_attribute_suffix_untouched(tmp_path):
     assert a == f'![](new/B.md) <!-- uuid: {EXISTING} -->{{width="1.1in"}}\n', f"bad rewrite: {a!r}"
 
 
-def test_an_attribute_block_before_the_anchor_is_not_a_robust_link(tmp_path):
-    """The span boundary of `ROBUST_LINK_RE`, pinned where a seed can reach it.
+def test_an_attribute_block_before_the_anchor_IS_a_robust_link(tmp_path):
+    """FR-065: `![](x){.cls} <!-- uuid: … -->` is the CORRECT shape, and `repair` must heal it.
 
-    `![](x){.cls} <!-- uuid: … -->` — attributes between the `)` and the comment — is NOT robust:
-    the grammar allows only whitespace there, so this is a plain link with a detached anchor, and
-    `repair` must leave the file alone. Seeding `\\)(?:\\{[^}]*\\})?` into `ROBUST_LINK_RE` makes it
-    robust, and `repair --write` then rewrites the link and **deletes the block**.
+    Before #65 was fixed, `ROBUST_LINK_RE` required only whitespace between `)` and the comment, so
+    this exact shape was refused robust status — a deliberate restriction, guarding a real bug: an
+    earlier, narrower widening (an `attrs` group added to the regex with nothing carrying it through
+    to the rewrite) made `repair --write` recognise the link and then silently DELETE the block while
+    rewriting the href, because nothing told `emit_robust_link` the block existed.
 
-    The sibling test above cannot catch that seed: its fixture puts the block *after* the comment,
-    where the seeded alternative never matches. Two shapes, two tests — the first version of this
-    pair guarded only the shape the seed does not touch, which is no guard at all.
+    #65's fix widens the SAME regex, but pins `attrs` as its own group and threads it through
+    `RobustLink.attrs` -> `emit_robust_link(..., attrs)` in both write paths (`repair`, `robustify`).
+    So recognising this shape is safe now for a reason the old test could not rely on: the deletion
+    bug is fixed at its actual cause (attrs never carried), not avoided by refusing to look.
+
+    This is exactly the scenario #65 exists for: a moved target, an attrs block that must stay
+    immediately after `)` for pandoc to honour it, and a `repair` that must do both at once.
     """
     from darnlink.frontmatter_index import build_index
     from darnlink.repair import plan_repairs, apply_repairs
@@ -324,39 +332,43 @@ def test_an_attribute_block_before_the_anchor_is_not_a_robust_link(tmp_path):
     original = f'![](old/B.md){{width="1.1in"}} <!-- uuid: {EXISTING} -->\n'
     _w(tmp_path / "A.md", original)
 
-    assert find_robust_links(original) == []
+    links = find_robust_links(original)
+    assert len(links) == 1 and links[0].attrs == '{width="1.1in"}', links
 
     apply_repairs(plan_repairs(tmp_path, build_index(tmp_path)))
 
-    assert (tmp_path / "A.md").read_text() == original
+    a = (tmp_path / "A.md").read_text()
+    assert a == f'![](new/B.md){{width="1.1in"}} <!-- uuid: {EXISTING} -->\n', f"bad rewrite: {a!r}"
 
 
 def test_absorbing_a_stray_anchor_does_not_eat_an_attribute_block(tmp_path):
     """The one place `robustify` DELETES text, guarded where the two features meet.
 
+    `![](B.md){.cls} <!-- uuid: X -->` is itself a robust link since #65 (sibling test above), so it
+    can no longer drive this test: `find_plain_links` now skips PAST the `{.cls}` before checking
+    for a trailing anchor, sees one, and treats the link as already robust — nothing is plain, the
+    absorb path never runs, and the fixture would silently stop testing anything.
+
+    What still reaches the absorb path with an attrs block in front of it is a link whose trailing
+    anchor is detached by something ELSE besides the attrs — prose between the attrs and the comment
+    is enough, since `_TRAILING_UUID_RE` demands the comment immediately (only whitespace) after
+    whatever `_skip_attrs` walked past.
+
     When a link is followed by a stray uuid comment, robustify absorbs it: it removes the stray and
-    re-emits the link anchored. Removing means walking back over the whitespace before the comment
-    — and a boundary that also walks over `}` eats the closing brace of an attribute block, leaving
-    `![](B.md) <!-- uuid: X -->{.cls` : the block silently becomes prose.
-
-    Attribute-block tests exist and detached-anchor tests exist; **no fixture combined them**, so
-    the deletion boundary had no guard at all.
-
-    Asserts the whole line, and the reason is not style. The first version of this test used
-    `"{.cls}" in a` plus an anchor count, and **three** distinct corruptions of this exact splice
-    walked through it: an end offset one too high (eats the final newline — a document character in
-    any line with prose after the anchor), one too low (leaves a literal `>` in the document), and a
-    boundary that does not walk back at all (leaves a trailing space). The sibling repair test was
-    rewritten in the very commit that added this one, for exactly this reason; writing the weak form
-    here reintroduced the defect one test below its own fix.
+    re-emits the link anchored (attrs included, right after `)`, per FR-065). Removing means walking
+    back over the whitespace before the comment — and a boundary that also walks over `}` eats the
+    closing brace of the attribute block, leaving `…{.cls` : the block silently becomes prose. That
+    is the corruption this test exists to catch; asserting the whole line is what catches it (a
+    boundary one character short leaves a trailing space, one character long eats a real character —
+    `"{.cls}" in a` alone would miss both).
     """
     _w(tmp_path / "B.md", f"---\nuuid: {EXISTING}\n---\n# B\n")
-    _w(tmp_path / "A.md", f"![](B.md){{.cls}} <!-- uuid: {EXISTING} -->\n")
+    _w(tmp_path / "A.md", f"![](B.md){{.cls}} **stuff** <!-- uuid: {EXISTING} -->\n")
 
     apply_robustify(plan_robustify(tmp_path))
 
     a = (tmp_path / "A.md").read_text()
-    assert a == f"![](B.md) <!-- uuid: {EXISTING} -->{{.cls}}\n", f"bad rewrite: {a!r}"
+    assert a == f"![](B.md){{.cls}} <!-- uuid: {EXISTING} --> **stuff**\n", f"bad rewrite: {a!r}"
 
 
 def test_absorbing_a_stray_does_not_eat_a_closing_paren_of_prose(tmp_path):
@@ -396,3 +408,44 @@ def test_repair_finds_a_robust_link_whose_destination_has_parens(tmp_path):
 
     a = (tmp_path / "A.md").read_text()
     assert "new/a(b).md" in a, f"repair did not see the parenthesised robust link: {a!r}"
+
+
+def test_65_the_reported_example_anchors_with_attrs_in_place(tmp_path):
+    """The exact reproduction from #65, run through `--write` end to end.
+
+    `![](B.md){width="1.1in" height="2in"}` anchored by `robustify` used to become
+    `![](B.md) <!-- uuid: … -->{width="1.1in" height="2in"}` — the comment landing BETWEEN the link
+    and its attributes, which pandoc requires immediately after `)`. The block still renders (as
+    plain text, ignored), so the corruption is silent: nothing about the finding, the exit code, or
+    a diff review flags it. This is the case that motivated the fix; the other tests in this file
+    guard the mechanism, this one guards the actual bug report.
+    """
+    _w(tmp_path / "B.md", f"---\nuuid: {EXISTING}\n---\n# B\n")
+    _w(tmp_path / "A.md", '![](B.md){width="1.1in" height="2in"}\n')
+
+    apply_robustify(plan_robustify(tmp_path))
+
+    a = (tmp_path / "A.md").read_text()
+    assert a == f'![](B.md){{width="1.1in" height="2in"}} <!-- uuid: {EXISTING} -->\n', f"bad rewrite: {a!r}"
+
+
+def test_65_a_second_pass_over_an_attrs_anchored_link_is_a_no_op(tmp_path):
+    """The regression `_TRAILING_UUID_RE`'s own docstring warned about: seen, not just claimed.
+
+    `find_plain_links` must skip PAST an attrs block before checking for a trailing anchor comment,
+    or a link this same tool just anchored reads as plain again next run and gets a SECOND `<!-- uuid
+    -->` appended — the uuid twice in one file, one copy anchoring nothing, and the tree still
+    reports clean because the link is (trivially) robust either way. Two full passes, not one: a
+    fixture that starts already-anchored would not catch a version of this bug that only manifests
+    on the SECOND write.
+    """
+    _w(tmp_path / "B.md", f"---\nuuid: {EXISTING}\n---\n# B\n")
+    _w(tmp_path / "A.md", '![](B.md){.cls}\n')
+
+    apply_robustify(plan_robustify(tmp_path))
+    once = (tmp_path / "A.md").read_text()
+    apply_robustify(plan_robustify(tmp_path))
+    twice = (tmp_path / "A.md").read_text()
+
+    assert once == twice, f"not idempotent: {once!r} -> {twice!r}"
+    assert twice.count(EXISTING) == 1, f"uuid duplicated: {twice!r}"
