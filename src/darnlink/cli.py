@@ -185,6 +185,12 @@ def _run_check(root: Path, excludes: set, as_json: bool, block_markers: tuple,
     # gate is the caller's policy; the core just names what it sees.
     dangling = [f for f in rob.findings if f.kind is Kind.DANGLING]
 
+    # Absolute-local-path axis (017): plain links written as an absolute filesystem path. Same
+    # treatment as dangling and for the same reason (FR-049) — reported, never folded into `code`,
+    # so no consumer's gate goes red on the day it upgrades. Whether to gate on it is the recipe's
+    # ratchet, once it grows one for this axis; the core just names what it sees.
+    abs_local = [f for f in rob.findings if f.kind is Kind.ABSOLUTE_LOCAL_PATH]
+
     code = 2 if integrity_fail else (3 if strict_fail else 0)
 
     if as_json:
@@ -222,6 +228,13 @@ def _run_check(root: Path, excludes: set, as_json: bool, block_markers: tuple,
                               "line": f.line}
                              for f in dangling],
             },
+            # 017: same shape and same non-gating treatment as `dangling`, above.
+            "absolute_local_path": {
+                "count": len(abs_local),
+                "findings": [{"kind": f.kind.value, "file": str(f.file), "detail": f.detail,
+                              "line": f.line}
+                             for f in abs_local],
+            },
         }, indent=2))
     else:
         outcome = {0: "clean", 2: "integrity failure", 3: "strict failure"}[code]
@@ -236,6 +249,9 @@ def _run_check(root: Path, excludes: set, as_json: bool, block_markers: tuple,
         if dangling:
             print(f"  [dangling]  targets that do not exist: {len(dangling)} "
                   f"-> informational (does not affect the exit code)")
+        if abs_local:
+            print(f"  [absolute-local-path] links written as an absolute filesystem path: "
+                  f"{len(abs_local)} -> informational (does not affect the exit code)")
         for f in repairs + conflicts + unresolved:
             print(f"  [integrity/{f.kind.value}] {f.file}: {f.detail}")
         for p in invalid:

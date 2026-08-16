@@ -64,6 +64,19 @@ def is_local_md(href: str) -> bool:
     return is_local_relative(href) and path_part.lower().endswith(".md")
 
 
+def is_absolute_local_path(href: str) -> bool:
+    """True if href names an absolute filesystem path (`/home/user/x.md`), not a URL.
+
+    `is_local_relative` excludes this shape (it starts with `/`), so it falls out of the scan
+    silently: not dangling-checked (`_dangling_target` shares the same exclusion) and not
+    `out_of_scope` (that axis names a target outside `--root`, which presumes a relative path
+    resolved from the linking file — an absolute path names no root-relative location at all).
+    A protocol-relative URL (`//example.com/x`) is excluded too; it is a scheme, not a path.
+    """
+    path_part, _ = split_fragment(href)
+    return bool(path_part) and path_part.startswith("/") and not path_part.startswith("//")
+
+
 def names_md(href: str) -> bool:
     """True if the href's path part names a `.md` file (by suffix). Used to tell a link that points
     at a file (`foo/README.md`) from one that points at a directory (`foo/`), independent of disk."""
