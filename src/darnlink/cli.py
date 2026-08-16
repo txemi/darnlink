@@ -232,7 +232,7 @@ def _run_check(root: Path, excludes: set, as_json: bool, block_markers: tuple,
                     "detail": "frontmatter present but not valid YAML; left untouched (fix the file)"}
                    for p in rob_invalid],
             },
-            # Informational, like `dangling`: it does NOT move `exit_code`, and eso es deliberado.
+            # Informational, like `dangling`: it does NOT move `exit_code`, and that is deliberate.
             # The CONSEQUENCE already fails the gate on its own — a robust link to a uuid that
             # stopped resolving is reported `unresolvable` and exits 2 (measured). What was
             # missing was the CAUSE: "uuid not found" with no hint that a symlink points out of
@@ -449,7 +449,8 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
         from .frontmatter_edit import read_text_keep_newlines
         seen = 0
         listing = []
-        for f in iter_markdown_files(root, excludes):
+        out_of_root: List[Path] = []
+        for f in iter_markdown_files(root, excludes, out_of_root=out_of_root):
             try:
                 content = read_text_keep_newlines(f)
             except Exception:
@@ -461,17 +462,22 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
         if args.json:
             print(json.dumps({"web_check": True, "online": False, "exit_code": 0,
                               "web_links_seen": seen,
+                              "out_of_root_links": [str(p_) for p_ in out_of_root],
                               "links": [{"file": str(f), "href": h, "anchored": a} for f, h, a in listing]}, indent=2))
         else:
             print(f"darnlink web-check (EXPERIMENTAL, offline) — root: {root}")
             print(f"  web links seen: {seen} (core ignores them; run with --online to fetch & verify/anchor)")
             for f, h, a in listing:
                 print(f"  [{'anchored' if a else 'plain'}] {f}: {h}")
+            for p_ in out_of_root:
+                print(f"  [out-of-root-link] {p_}: symlink whose target lives outside the scanned "
+                      f"root; not indexed -> informational (does not affect the exit code)")
         return 0
 
     token = os.environ.get("GITHUB_TOKEN") or None
+    web_out_of_root: List[Path] = []
     findings, edits = check_web_links_online(root, token, fetcher or default_fetcher, block_markers,
-                                             excludes, owners)
+                                             excludes, owners, out_of_root=web_out_of_root)
     ok = [x for x in findings if x.kind == "web_ok"]
     anchors = [x for x in findings if x.kind == "web_anchor"]
     mismatch = [x for x in findings if x.kind == "web_mismatch"]
@@ -503,11 +509,15 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
             # FR-012 makes omitting the flag observably different from `--own-max 0`; without this key
             # the two payloads were byte-identical, so the machine surface could not tell them apart.
             "own_max": args.own_max,
+            "out_of_root_links": [str(p_) for p_ in web_out_of_root],
             "findings": [{"kind": x.kind, "file": str(x.file), "href": x.href,
                           "detail": x.detail, "anchored_uuid": x.anchored_uuid} for x in findings],
         }, indent=2))
     else:
         print(f"darnlink web-check (EXPERIMENTAL, online) — root: {root}")
+        for p_ in web_out_of_root:
+            print(f"  [out-of-root-link] {p_}: symlink whose target lives outside the scanned "
+                  f"root; not indexed -> informational (does not affect the exit code)")
         # FR-016: both new kinds are counted and listed in the TEXT report too. Printed only when
         # non-zero, so a run without an owner set keeps today's line byte-for-byte (FR-001).
         extra = (f" | own-no-uuid {len(own_no_uuid)} | own-exempt {len(own_exempt)}"

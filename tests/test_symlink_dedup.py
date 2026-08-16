@@ -114,6 +114,8 @@ def test_every_cli_output_path_reports_it_not_just_the_human_one(tmp_path, capsy
     root.mkdir()
     (root / "link.md").symlink_to(outside / "other.md")
 
+    # ENUMERATED, not asserted to be "all": rounds 2 and 3 both failed on claiming completeness
+    # without listing the surfaces. `web-check` is the one that got away twice.
     for argv in (
         [str(root)],
         [str(root), "--json"],
@@ -121,6 +123,8 @@ def test_every_cli_output_path_reports_it_not_just_the_human_one(tmp_path, capsy
         [str(root), "--robustify", "--json"],
         ["check", str(root)],
         ["check", str(root), "--json"],
+        ["web-check", str(root)],
+        ["web-check", str(root), "--json"],
     ):
         main(argv)
         out = capsys.readouterr().out
