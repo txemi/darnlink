@@ -6,7 +6,88 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.23.0] — 2026-08-16
+
+> ### ⚠️ Two things change for a consumer, and neither is a regression
+>
+> **1. The file count can go DOWN, and that is the fix.** A symlink to a `.md` inside the scanned
+> root used to be walked as a second document. Measured on a real repo the day this shipped:
+> **3534 → 3533** files, one symlink that had been indexed twice. Nothing was lost; a duplicate
+> stopped being counted.
+>
+> **2. A new category appears in the output**, text and JSON alike: `[out-of-root-link]` /
+> `out_of_root_links`. It is **informational and does not move the exit code**. Anyone parsing the
+> CLI output line by line should expect it.
+>
+> ### ⚠️ And two entries below were listed under `v0.22.0` but ship HERE
+>
+> The BOM fix (#68) and the balanced-parentheses fix (#71) were merged the same day as the release,
+> **hours after the tag**. `git tag --contains` on both commits returns nothing, so a repo pinned at
+> `v0.22.0` never received them despite the notes promising them. They are moved into this release,
+> which is where they actually ship. Nothing needs to be done beyond moving the pin.
+
 ### Fixed
+- **A symlink is another NAME for a file, not another file** (#85). `iter_markdown_files` yielded
+  every walked path as-is, so a symlink to a `.md` **inside** the scanned root was read as a
+  separate document. Sharing one instruction file across agents — `AGENTS.md`,
+  `.github/copilot-instructions.md` and `CLAUDE.md` pointing at a single source, which is standard
+  practice — therefore made the same `uuid` appear at three paths, and the integrity check failed
+  with *"uuid in multiple files"*. Measured on a real repo on 2026-08-16, where it turned the gate
+  red and **blocked every push** until the links were reverted.
+
+  Files are deduplicated by resolved path now, and the **canonical** path is the one yielded. That
+  second half is not cosmetic: relative links in a body resolve against the directory of the file
+  they were read from, so reporting `.github/copilot-instructions.md` made a body link to
+  `inventory/notes/` look broken and `repair` wanted to rewrite it. Otherwise walk order — which is
+  directory order, so `aaa.md` can precede `zzz.md` — would decide which name wins.
+
+  A symlink pointing **outside** the root is skipped, because the scan is defined by the root it was
+  given. But it is **reported**, not silenced: such a file used to be indexed (reading a symlink
+  follows it transparently), so its `uuid` resolved; skipping it quietly would turn a working robust
+  link into `unresolvable` with nothing naming the cause — the exact failure this project exists to
+  remove. A **broken** symlink is skipped without a word: reporting a dangling target is the dangling
+  axis's job, not the indexer's.
+
+  The report is informational and deliberately does **not** move the exit code: the *consequence*
+  already fails on its own (a robust link to a uuid that stopped resolving is `unresolvable`, exit
+  2). What was missing was the *cause*. A skipped link with no inbound references harms nothing, so
+  failing on it would redden trees that are fine.
+
+- **`--write` no longer deletes a file's UTF-8 BOM** (#68). The read side uses `utf-8-sig`, which
+  consumes the mark so it cannot sit before the `---`; writing the resulting string back as plain
+  utf-8 removed it from the file, on **all five write paths**, including `web-check --online --write` — a call site in another module that none of the original fixtures reached. This module's contract is byte
+  preservation — it keeps CRLF meticulously — so dropping the BOM contradicted it.
+
+  Worth recording *why it survived*: the CI Windows matrix exists for *"Windows-authored files
+  (BOM, CRLF, path separators)"* and could not see this, because every BOM fixture put the mark on
+  a file that gets **read**, never on one that gets **rewritten**. Coverage on the wrong side of an
+  operation still reads as coverage.
+
+- **Balanced parentheses in a link destination are no longer truncated** (#71). CommonMark allows
+  them; `[^)]+` stopped at the first, so `[r](Log%20Analysis%20(February).docx)` was cut short and
+  reported dead while the file was on disk. The report **concealed the cut** — its own
+  `(resolves to …)` wrapper supplied the missing parenthesis, so the truncated path read as
+  complete, and a reader who checked found the file present and concluded the *gate* was broken.
+
+  Measured across the fleet, adjudicated against the reference CommonMark implementation: of 413
+  hrefs containing a `(`, **266** are the real case (balanced, spaces already `%20`-encoded), 141
+  carry raw spaces and are **not links at all** in CommonMark, 6 are unbalanced. Gate-scope
+  differential: **1867 → 1862** dangling — five false reds removed, **zero findings gained**.
+
+  ⚠️ **Two guards, both of which exist because the first version of this fix produced a false
+  green.** The destination class is `[^()\s]`, not `[^()]`: a destination outside `<…>` cannot
+  contain whitespace, and without that exclusion an *unmatched* `(` let the pattern run past the
+  link's own `)` — across lines — absorbing a following healthy link, which then ceased to exist
+  for the tool. And the pattern ends in `|[^)]+`, so a link nested past the bound degrades to the
+  old truncating behaviour rather than ceasing to match. Both restore *visible and wrong* rather
+  than *silent*.
+
+  ⚠️ **Bounded at two levels of nesting**, which is 0 times exceeded in the fleet; arbitrary depth
+  needs the scanner tracked in #74. And the swallow class is **narrowed, not closed**: a
+  backslash-escaped `\(` or an angle-bracket destination still hands the pattern an unmatched
+  opener. That cannot turn the gate green — the merged destination never resolves — but it collapses
+  N findings into 1 with a mangled name. 0 instances in the fleet.
+
 - **The shipped CI examples carried their own copy of the pin, and both had rotted.** Measured
   against the tags on the day this changed: the GitHub Actions example was pinned at `v0.20.4` with
   **3** releases published since, the Jenkins one at `v0.7.0` with **23** — and `v0.7.0` is 23 days
@@ -57,6 +138,25 @@ All notable changes to darnlink are documented here. The format is based on
   exemption marker, and the traps that only show up when measured — including that **the pin and the
   keys must move in the same commit**, because an older CLI turns the whole axis into a green no-op,
   and that a **bare URL is invisible to the web axis** (only Markdown-syntax links are seen).
+
+- **`AGENTS.md` and `.github/copilot-instructions.md`, as symlinks to `CLAUDE.md`** (#84). Copilot
+  and anything following the `AGENTS.md` convention now read the same conventions as Claude, with no
+  copy that can drift. Git stores symlinks natively (mode `120000`), so they travel on clone. This
+  is the layout that exposed the indexing bug fixed above — adopting it here is what found it.
+
+### Changed
+- **`darnlang` pinned `v0.4.0` → `v0.9.1`** (#78, #80, #81, #82), which widens what the language
+  gate judges in *this* repo's CI. It does not change darnlink's behaviour for a consumer; it is
+  recorded because the pin moves and the baseline was reseeded. Three things worth carrying:
+  - `v0.9.0` adds `.yml .yaml .toml .cfg .ini .sh .bash .groovy .gradle` plus the extensionless CI
+    files by name (`Jenkinsfile`, `Dockerfile`, …). Being code, only their **comments** are judged: a
+    YAML *value* is data, and firing on data is how a gate gets switched off.
+  - `v0.9.1` adds `scanned_names` to the baseline. Until then the record held extensions only, so
+    the extensionless files had no representation at all — if that branch of the scan ever narrowed,
+    the count would **fall** and the ratchet would congratulate the repo for losing coverage.
+  - The first reseed attempt ran against a **stale `darnlang` on `PATH`** and silently recorded ten
+    extensions instead of nineteen. Caught by reading the baseline back, which is why the number is
+    stated rather than trusted.
 
 ## [0.22.0] — 2026-08-13
 
@@ -124,39 +224,13 @@ All notable changes to darnlink are documented here. The format is based on
     destination with no uuid — turns into **0** under the default, with the suite green.
 
 ### Fixed
-- **`--write` no longer deletes a file's UTF-8 BOM** (#68). The read side uses `utf-8-sig`, which
-  consumes the mark so it cannot sit before the `---`; writing the resulting string back as plain
-  utf-8 removed it from the file, on **all five write paths**, including `web-check --online --write` — a call site in another module that none of the original fixtures reached. This module's contract is byte
-  preservation — it keeps CRLF meticulously — so dropping the BOM contradicted it.
+> ⚠️ **Two entries that used to live here ship in [0.23.0], not in this tag.** The BOM fix (#68) and
+> the balanced-parentheses fix (#71) were merged hours *after* `v0.22.0` was cut —
+> `git tag --contains` on either commit returns nothing. They were listed here by mistake, so a repo
+> pinned at `v0.22.0` believed it had two fixes it did not have. Moved to the release that actually
+> carries them; recorded rather than silently deleted, because anyone who read these notes acted on
+> them.
 
-  Worth recording *why it survived*: the CI Windows matrix exists for *"Windows-authored files
-  (BOM, CRLF, path separators)"* and could not see this, because every BOM fixture put the mark on
-  a file that gets **read**, never on one that gets **rewritten**. Coverage on the wrong side of an
-  operation still reads as coverage.
-- **Balanced parentheses in a link destination are no longer truncated** (#71). CommonMark allows
-  them; `[^)]+` stopped at the first, so `[r](Log%20Analysis%20(February).docx)` was cut short and
-  reported dead while the file was on disk. The report **concealed the cut** — its own
-  `(resolves to …)` wrapper supplied the missing parenthesis, so the truncated path read as
-  complete, and a reader who checked found the file present and concluded the *gate* was broken.
-
-  Measured across the fleet, adjudicated against the reference CommonMark implementation: of 413
-  hrefs containing a `(`, **266** are the real case (balanced, spaces already `%20`-encoded), 141
-  carry raw spaces and are **not links at all** in CommonMark, 6 are unbalanced. Gate-scope
-  differential: **1867 → 1862** dangling — five false reds removed, **zero findings gained**.
-
-  ⚠️ **Two guards, both of which exist because the first version of this fix produced a false
-  green.** The destination class is `[^()\s]`, not `[^()]`: a destination outside `<…>` cannot
-  contain whitespace, and without that exclusion an *unmatched* `(` let the pattern run past the
-  link's own `)` — across lines — absorbing a following healthy link, which then ceased to exist
-  for the tool. And the pattern ends in `|[^)]+`, so a link nested past the bound degrades to the
-  old truncating behaviour rather than ceasing to match. Both restore *visible and wrong* rather
-  than *silent*.
-
-  ⚠️ **Bounded at two levels of nesting**, which is 0 times exceeded in the fleet; arbitrary depth
-  needs the scanner tracked in #74. And the swallow class is **narrowed, not closed**: a
-  backslash-escaped `\(` or an angle-bracket destination still hands the pattern an unmatched
-  opener. That cannot turn the gate green — the merged destination never resolves — but it collapses
-  N findings into 1 with a mangled name. 0 instances in the fleet.
 - **Nothing had ever parsed `recipes/darnlink-gate.ps1`.** The recipe tests skip on Windows and no CI
   job ran `pwsh`, so a syntax error in the shipped PowerShell recipe would have reached consumers as
   a script that does not start. CI now parses it. Parsing is not testing — it never runs the gate —
@@ -883,7 +957,8 @@ First public release.
 - Ships a [pre-commit](https://pre-commit.com/) hook (`darnlink`, `darnlink-repair`).
 - Format specification: [FORMAT.md](FORMAT.md) <!-- uuid: 9052d864-2a45-4ed4-8725-d8a394e7a7ef -->.
 
-[Unreleased]: https://github.com/txemi/darnlink/compare/v0.22.0...HEAD
+[Unreleased]: https://github.com/txemi/darnlink/compare/v0.23.0...HEAD
+[0.23.0]: https://github.com/txemi/darnlink/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/txemi/darnlink/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/txemi/darnlink/compare/v0.20.5...v0.21.0
 [0.20.5]: https://github.com/txemi/darnlink/compare/v0.20.4...v0.20.5
