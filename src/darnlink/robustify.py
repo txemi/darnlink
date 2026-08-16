@@ -40,6 +40,7 @@ class RobustifyResult:
     ignored: List[Path] = field(default_factory=list)  # files skipped via the ignore-file marker
     link_ignored: List[Path] = field(default_factory=list)  # sources via the ignore-links marker (006)
     invalid: List[Path] = field(default_factory=list)  # files with non-YAML frontmatter (reported)
+    out_of_root: List[Path] = field(default_factory=list)  # symlinks skipped: their target is outside the scanned root
     suppressed: int = 0  # anchorable links in files outside the write scope (010): counted, never hidden
 
 
@@ -231,7 +232,7 @@ def plan_robustify(
     contents: Dict[Path, str] = {}
     spans: Dict[Path, list] = {}
     files: List[Path] = []
-    for f in iter_markdown_files(root, excludes):
+    for f in iter_markdown_files(root, excludes, out_of_root=result.out_of_root):
         try:
             c = read_text_keep_newlines(f)
         except Exception:

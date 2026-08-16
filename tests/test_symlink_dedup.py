@@ -95,3 +95,33 @@ def test_a_link_in_a_subdir_does_not_shift_how_body_links_resolve(tmp_path: Path
     (tmp_path / ".github" / "copilot-instructions.md").symlink_to(Path("..") / "CLAUDE.md")
 
     assert _paths(tmp_path) == {"CLAUDE.md"}
+
+
+def test_every_cli_output_path_reports_it_not_just_the_human_one(tmp_path, capsys) -> None:
+    """Round 2 of the review caught the first fix covering 1 of 6 output paths.
+
+    `build_index` knowing about it internally is not the same as the user being told, and the path
+    that matters most is the one nobody reads by eye: a gate consumes `--json`, and `check` is the
+    subcommand documented for CI. Fixing only the human text would have moved the silence to where
+    it does the most damage.
+    """
+    from darnlink.cli import main
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "other.md").write_text(DOC, encoding="utf-8")
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "link.md").symlink_to(outside / "other.md")
+
+    for argv in (
+        [str(root)],
+        [str(root), "--json"],
+        [str(root), "--robustify"],
+        [str(root), "--robustify", "--json"],
+        ["check", str(root)],
+        ["check", str(root), "--json"],
+    ):
+        main(argv)
+        out = capsys.readouterr().out
+        assert "out_of_root" in out or "out-of-root" in out, f"silent path: darnlink {' '.join(argv)}"

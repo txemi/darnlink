@@ -38,6 +38,7 @@ def _findings_json(
     link_ignored: Optional[List[Path]] = None,
     suppressed: int = 0,
     only: Optional[set] = None,
+    out_of_root: Optional[List[Path]] = None,
 ) -> str:
     return json.dumps(
         {
@@ -49,6 +50,9 @@ def _findings_json(
             # feature 006: opted out as a SOURCE only — still indexed as a target
             "link_ignored_files": [str(p) for p in (link_ignored or [])],
             "invalid_frontmatter_files": [str(p) for p in (invalid or [])],
+            # Not decoration: a gate consumes the JSON, not the human text. Omitting it here
+            # would fix the report only where nobody automated is looking.
+            "out_of_root_links": [str(p) for p in (out_of_root or [])],
             "findings": [{"kind": f.kind.value, "file": str(f.file), "detail": f.detail} for f in findings],
         },
         indent=2,
@@ -66,7 +70,7 @@ def _run_repair(root: Path, write: bool, excludes: set, as_json: bool, block_mar
 
     if as_json:
         print(_findings_json(result.findings, wrote, write, result.ignored, index.invalid,
-                             result.link_ignored, result.suppressed, only))
+                             result.link_ignored, result.suppressed, only, index.out_of_root))
     else:
         print(f"darnlink repair — root: {root}")
         if only is not None:
@@ -118,7 +122,7 @@ def _run_robustify(root: Path, write: bool, create_frontmatter: bool, excludes: 
 
     if as_json:
         print(_findings_json(result.findings, wrote, write, result.ignored, result.invalid,
-                             result.link_ignored, result.suppressed, only))
+                             result.link_ignored, result.suppressed, only, result.out_of_root))
     else:
         print(f"darnlink robustify — root: {root}")
         if only is not None:
@@ -130,6 +134,9 @@ def _run_robustify(root: Path, write: bool, create_frontmatter: bool, excludes: 
             print(f"  [create-readme] {f.file}: {f.detail}")
         for f in skipped:
             print(f"  [no-frontmatter] {f.file}: {f.detail} (use --create-frontmatter to allow)")
+        for p_ in result.out_of_root:
+            print(f"  [out-of-root-link] {p_}: symlink whose target lives outside the scanned root; "
+                  f"not indexed — its uuid will NOT resolve (widen the root, or replace the link with a copy)")
         for f in out_of_scope:
             print(f"  [out-of-scope] {f.file}: {f.detail}")
         for f in target_writes:
@@ -225,6 +232,13 @@ def _run_check(root: Path, excludes: set, as_json: bool, block_markers: tuple,
                     "detail": "frontmatter present but not valid YAML; left untouched (fix the file)"}
                    for p in rob_invalid],
             },
+            # Informational, like `dangling`: it does NOT move `exit_code`, and eso es deliberado.
+            # The CONSEQUENCE already fails the gate on its own — a robust link to a uuid that
+            # stopped resolving is reported `unresolvable` and exits 2 (measured). What was
+            # missing was the CAUSE: "uuid not found" with no hint that a symlink points out of
+            # the root. A skipped link with no inbound references harms nothing, so failing on it
+            # would break trees that are fine.
+            "out_of_root_links": [str(p) for p in index.out_of_root],
             # Its own axis, never folded into `exit_code` (FR-049): a consumer opts in from its gate.
             "dangling": {
                 "count": len(dangling),
@@ -252,6 +266,10 @@ def _run_check(root: Path, excludes: set, as_json: bool, block_markers: tuple,
               f"-> {'FAIL' if integrity_fail else 'ok'}")
         print(f"  [strict]    to robustify: {len(upgrades)} | invalid frontmatter: {len(rob_invalid)} "
               f"-> {'FAIL' if strict_fail else 'ok'}")
+        for p_ in index.out_of_root:
+            print(f"  [out-of-root-link] {p_}: symlink whose target lives outside the scanned root; "
+                  f"not indexed — a robust link to its uuid will fail as `unresolvable` "
+                  f"(widen the root, or replace the link with a copy)")
         if dangling:
             print(f"  [dangling]  targets that do not exist: {len(dangling)} "
                   f"-> informational (does not affect the exit code)")
