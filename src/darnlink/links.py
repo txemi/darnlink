@@ -10,6 +10,20 @@ import re
 from dataclasses import dataclass
 from typing import List, Sequence, Tuple
 
+# The BODY of a pandoc attribute block, between its own `{` and `}` — one definition, shared by
+# ROBUST_LINK_RE's `attrs` group below and by `_PANDOC_ATTR_RE` further down. `[^{}\n]*` alone (the
+# first version of this pattern) treats a `}` inside a quoted attribute value as the block's own
+# closing brace and cuts the match short there — not a miss, a WRONG match, and a corrupting one
+# once something is spliced at the point it stopped. `"[^"\n]*"` makes a quoted run atomic, so `{`
+# and `}` inside a quote no longer terminate the block early; an unterminated quote still fails the
+# whole match, same as an unbalanced `{` always did. Kept as ONE definition on purpose — two
+# independent copies of "what an attrs block looks like" is exactly the shape that drifted before
+# (`is_local_relative`'s four call sites, FR-052), and it already drifted once here: an earlier
+# revision of this fix updated only `_PANDOC_ATTR_RE` and left this literal on the old, corrupting
+# pattern, so `repair` silently stopped recognising (and therefore stopped fixing) an already-correct
+# robust link whose attrs held a quoted `}` — no finding, no write, the stale path just stayed stale.
+_PANDOC_ATTR_BODY = r'(?:[^{}"\n]|"[^"\n]*")*'
+
 # A robust link: a Markdown link immediately followed (any whitespace) by a uuid HTML comment.
 # The optional `attrs` group is a pandoc attribute block (`{.cls}`, `{width="1in"}`, …): pandoc
 # requires it immediately after the link's `)`, with no whitespace, so it must be matched BEFORE
@@ -17,7 +31,7 @@ from typing import List, Sequence, Tuple
 # right up to `{`, misparsing `[x](y){.cls}` as `[x](y)` followed by unrelated `{.cls}` text.
 ROBUST_LINK_RE = re.compile(
     r"\[(?P<text>[^\]]*)\]\((?P<href>(?:[^()\s]|\((?:[^()\s]|\([^()\s]*\))*\))+|[^)]+)\)"
-    r"(?P<attrs>\{[^{}\n]*\})?\s*<!--\s*uuid:\s*(?P<uuid>[0-9a-fA-F-]{36})\s*-->"
+    r"(?P<attrs>\{" + _PANDOC_ATTR_BODY + r"\})?\s*<!--\s*uuid:\s*(?P<uuid>[0-9a-fA-F-]{36})\s*-->"
 )
 # Any inline Markdown link. `text` is `*`, not `+`: `[](dest)` is a link with empty text, and the
 # empty alt of `![](dest)` is what pandoc emits for every image in a converted .docx/.odt. Requiring
@@ -81,7 +95,9 @@ _TRAILING_UUID_RE = re.compile(r"\s*<!--\s*uuid:\s*[0-9a-fA-F-]{36}\s*-->")
 # rule -- a block after a space is not attached to anything and pandoc ignores it). Matched with
 # .match(content, pos) the same way as _TRAILING_UUID_RE, so callers can skip past it before
 # checking for the anchor comment -- see `_skip_attrs` below for why that skip has to exist at all.
-_PANDOC_ATTR_RE = re.compile(r"\{[^{}\n]*\}")
+# Shares `_PANDOC_ATTR_BODY` with `ROBUST_LINK_RE`'s own `attrs` group (see that constant's comment
+# for why one definition, not two, matters here specifically).
+_PANDOC_ATTR_RE = re.compile(r"\{" + _PANDOC_ATTR_BODY + r"\}")
 
 
 def pandoc_attrs_at(content: str, pos: int) -> str:

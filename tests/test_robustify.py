@@ -429,6 +429,53 @@ def test_65_the_reported_example_anchors_with_attrs_in_place(tmp_path):
     assert a == f'![](B.md){{width="1.1in" height="2in"}} <!-- uuid: {EXISTING} -->\n', f"bad rewrite: {a!r}"
 
 
+def test_65_a_quoted_attr_value_containing_a_brace_is_not_split(tmp_path):
+    """Adversarial follow-up to #65: `_PANDOC_ATTR_RE`'s naive `[^{}\\n]*` body cuts the match short
+    at the FIRST `}`, even one that sits inside a quoted attribute value -- and a short match is not
+    just a miss, it is a WRONG one: `pandoc_attrs_at` returns `{data-x="a}` as if it were the whole,
+    well-formed block, and `--write` splices the anchor comment into the middle of the attribute's
+    own text. That is worse than #65 itself, which only misplaces an intact block; this corrupts it.
+
+    Reproduced directly against `plan_robustify`/`apply_robustify` before the fix:
+    `![](B.md){data-x="a}b"}` became `![](B.md){data-x="a} <!-- uuid: … -->b"}` -- the quoted value
+    split around the comment, `b"}` orphaned as trailing prose. The regex now treats a `"..."` run as
+    atomic so `{`/`}` inside it cannot terminate the block early.
+    """
+    _w(tmp_path / "B.md", f"---\nuuid: {EXISTING}\n---\n# B\n")
+    _w(tmp_path / "A.md", '![](B.md){data-x="a}b"}\n')
+
+    apply_robustify(plan_robustify(tmp_path))
+
+    a = (tmp_path / "A.md").read_text()
+    assert a == f'![](B.md){{data-x="a}}b"}} <!-- uuid: {EXISTING} -->\n', f"bad rewrite: {a!r}"
+
+
+def test_65_repair_finds_a_stale_link_whose_attrs_hold_a_quoted_brace(tmp_path):
+    """Sibling of the write-side test above, on the READ side: `ROBUST_LINK_RE`'s own `attrs`
+    group used to be a SECOND, independent copy of the same pattern text as `_PANDOC_ATTR_RE` --
+    and it drifted the moment only one of the two was hardened for a quoted `}`. With the drift,
+    `find_robust_links` (which `repair` is built on) fails to match this well-formed, already
+    -correctly-anchored link AT ALL: not a wrong parse, no parse. `plan_repairs` then reports
+    ZERO findings for a link whose target has genuinely moved -- the stale path survives, and the
+    gate reads the tree as clean. Both regexes must share one definition of "attrs block" (the
+    codebase's own stated reason `pandoc_attrs_at` exists), or this class of bug reappears every
+    time only one of the two literals gets fixed.
+    """
+    from darnlink.frontmatter_index import build_index
+    from darnlink.repair import plan_repairs, apply_repairs
+
+    _w(tmp_path / "new" / "B.md", f"---\nuuid: {EXISTING}\n---\n# B\n")
+    _w(tmp_path / "A.md", f'![](old/B.md){{data-x="a}}b"}} <!-- uuid: {EXISTING} -->\n')
+
+    result = plan_repairs(tmp_path, build_index(tmp_path))
+    assert any(f.kind is Kind.REPAIR for f in result.findings), \
+        f"repair did not even SEE the stale link: {result.findings!r}"
+    apply_repairs(result)
+
+    a = (tmp_path / "A.md").read_text()
+    assert a == f'![](new/B.md){{data-x="a}}b"}} <!-- uuid: {EXISTING} -->\n', f"bad rewrite: {a!r}"
+
+
 def test_65_a_second_pass_over_an_attrs_anchored_link_is_a_no_op(tmp_path):
     """The regression `_TRAILING_UUID_RE`'s own docstring warned about: seen, not just claimed.
 
