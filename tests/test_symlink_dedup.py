@@ -48,6 +48,26 @@ def test_symlink_pointing_outside_the_root_is_skipped(tmp_path: Path) -> None:
     assert _paths(root) == set()
 
 
+def test_a_skipped_out_of_root_symlink_is_REPORTED_not_silenced(tmp_path: Path) -> None:
+    """The regression an adversarial review caught in this very change.
+
+    Such a file used to be indexed (reading a symlink follows it), so its uuid resolved. Skipping
+    it silently turns a working robust link into `unresolvable` with nothing naming the cause —
+    the exact class of failure this project exists to remove.
+    """
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "other.md").write_text(DOC, encoding="utf-8")
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "link.md").symlink_to(outside / "other.md")
+
+    index = build_index(root)
+
+    assert index.get("11111111-2222-3333-4444-555555555555") is None, "not indexed, as designed"
+    assert [p.name for p in index.out_of_root] == ["link.md"], "and the caller is told about it"
+
+
 def test_broken_symlink_is_skipped_and_does_not_raise(tmp_path: Path) -> None:
     (tmp_path / "real.md").write_text(DOC, encoding="utf-8")
     (tmp_path / "dangling.md").symlink_to("nope.md")

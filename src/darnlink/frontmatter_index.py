@@ -28,6 +28,7 @@ class FrontmatterIndex:
     by_uuid: Dict[str, Path] = field(default_factory=dict)
     duplicates: Dict[str, List[Path]] = field(default_factory=dict)
     invalid: List[Path] = field(default_factory=list)  # files whose frontmatter is not valid YAML
+    out_of_root: List[Path] = field(default_factory=list)  # symlinks skipped because their target lives outside the scanned root
 
     def get(self, uuid: str) -> Path | None:
         return self.by_uuid.get(uuid.lower())
@@ -36,7 +37,11 @@ class FrontmatterIndex:
         return uuid.lower() in self.duplicates
 
 
-def iter_markdown_files(root: Path, excludes: set[str] = DEFAULT_EXCLUDES) -> Iterator[Path]:
+def iter_markdown_files(
+    root: Path,
+    excludes: set[str] = DEFAULT_EXCLUDES,
+    out_of_root: List[Path] | None = None,
+) -> Iterator[Path]:
     """Yield all `.md` files under `root`, skipping excluded directory names.
 
     Each underlying file is yielded ONCE, under its canonical path. A symlink whose target is
@@ -54,9 +59,16 @@ def iter_markdown_files(root: Path, excludes: set[str] = DEFAULT_EXCLUDES) -> It
     `.github/` looked broken and repair wanted to rewrite it), and a write operation on the link
     would have gone THROUGH it into the shared source.
 
-    A symlink pointing OUTSIDE `root` is skipped too, and deliberately: the scan is defined by the
-    root it was given, and following a link out of it would index files the caller never asked
-    for — the same reasoning behind reporting out-of-root link targets instead of chasing them.
+    A symlink pointing OUTSIDE `root` is skipped: the scan is defined by the root it was given, and
+    following a link out of it would index files the caller never asked for.
+
+    ⚠️ Skipping it is NOT free, and the caller must be told. Before this change such a file WAS
+    indexed (reading a symlink follows it transparently), so its uuid resolved; after it, a robust
+    link pointing at that uuid silently degrades to `unresolvable`. Silence is the failure mode this
+    project exists to remove, so the skipped paths are collected in `out_of_root` and surfaced by
+    the caller — the same treatment `invalid` frontmatter gets. Caught by an adversarial review of
+    the very PR that introduced this: the first version claimed it "mirrors how out-of-root targets
+    are reported" and did not report anything at all.
     """
     root = root.resolve()
     seen: set[Path] = set()
@@ -76,6 +88,8 @@ def iter_markdown_files(root: Path, excludes: set[str] = DEFAULT_EXCLUDES) -> It
             if real in seen:
                 continue
             if not real.is_relative_to(root):
+                if out_of_root is not None:
+                    out_of_root.append(path)
                 continue
             seen.add(real)
             # The CANONICAL path is yielded, never the link's own path, and the difference is not
@@ -122,7 +136,7 @@ def build_index(root: Path, excludes: set[str] = DEFAULT_EXCLUDES) -> Frontmatte
     from .links import file_is_ignored  # local import: links has no package deps, but keep it lazy
 
     index = FrontmatterIndex()
-    for path in iter_markdown_files(root, excludes):
+    for path in iter_markdown_files(root, excludes, out_of_root=index.out_of_root):
         try:
             # utf-8-sig strips a leading UTF-8 BOM (common on Windows-authored files) so it doesn't
             # sit before the `---` and hide the frontmatter from the index. Same as the write path.

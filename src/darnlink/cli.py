@@ -83,6 +83,12 @@ def _run_repair(root: Path, write: bool, excludes: set, as_json: bool, block_mar
             print(f"  [link-ignored] {f.file}: {f.detail}")
         for p in index.invalid:
             print(f"  [invalid-frontmatter] {p}: not valid YAML; not indexed (fix the file)")
+        for p in index.out_of_root:
+            # Never silent: this file USED to be indexed (reading a symlink follows it), so its uuid
+            # resolved. Skipping it without a word would turn a working robust link into
+            # `unresolvable` with nothing to point at as the cause.
+            print(f"  [out-of-root-link] {p}: symlink whose target lives outside the scanned root; "
+                  f"not indexed — its uuid will NOT resolve (widen the root, or replace the link with a copy)")
         if only is not None:
             # FR-008: a narrowed run only ever sees the links written INSIDE the scoped files. A moved
             # target's inbound links live in files the caller did not name — a clean result here is
