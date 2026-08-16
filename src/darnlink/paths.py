@@ -79,6 +79,17 @@ def is_absolute_local_path(href: str) -> bool:
 
 def names_md(href: str) -> bool:
     """True if the href's path part names a `.md` file (by suffix). Used to tell a link that points
-    at a file (`foo/README.md`) from one that points at a directory (`foo/`), independent of disk."""
+    at a file (`foo/README.md`) from one that points at a directory (`foo/`), independent of disk.
+
+    Strips surrounding whitespace before checking the suffix (FR-066). A trailing space is never
+    part of what a link destination *means* -- CommonMark does not count it as content -- but before
+    this it made `"old/B.md ".endswith(".md")` false, so `repair` misread a plain file link as a
+    *directory* link. The uuid it carries then lives in a non-README file, which reads as "path and
+    uuid disagree" and is reported as an unhealable CONFLICT -- a false, permanent diagnosis of a
+    link that was actually fine. This is the ONLY strip in the resolution path: `resolve_href` still
+    uses the href verbatim, so a link whose destination genuinely differs only by that space still
+    fails to resolve to the real file and gets corrected by the normal repair-a-stale-link path, not
+    silently treated as already-correct.
+    """
     path_part, _ = split_fragment(href)
-    return path_part.lower().endswith(".md")
+    return path_part.strip().lower().endswith(".md")
