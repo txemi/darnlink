@@ -498,6 +498,17 @@ def plan_robustify(
                     why.append("it sits before the link, where the grammar could never have put it")
                 leftover[i] = (remaining, " / ".join(why))
 
+        # FR-041: a uuid this run MINTS (target had no frontmatter uuid yet) is a draft -- new_uuid()
+        # is called again on the next run and gives a DIFFERENT value, discarded unless --write also
+        # runs. Printing it looked identical to printing a REUSED existing uuid (stable across runs),
+        # and the shape `+uuid <value>` reads as an instruction to copy. A hand-copied draft becomes
+        # an orphan anchor: a link claiming a uuid no file declares, which does not self-heal (the
+        # whole point of a robust link) and does not get flagged either, because the gate cannot
+        # tell a good anchor from this one at a glance. Reused uuids are unaffected: `target_uuid[t]`
+        # for a target NOT in `needs_uuid_write` is the value read from that file's OWN frontmatter,
+        # true on every run and safe to show and copy.
+        created_uuids = {target_uuid[t] for t in needs_uuid_write}
+
         edits: List[Tuple[int, int, str]] = []  # (start, end, replacement), disjoint by construction
         for i, (link, u) in enumerate(anchorable):
             # FR-065: a pandoc attribute block immediately after `)` must stay immediately after
@@ -506,7 +517,8 @@ def plan_robustify(
             # puts it back before the anchor comment rather than after.
             attrs = pandoc_attrs_at(original, link.end)
             edits.append((link.start, link.end + len(attrs), emit_robust_link(link.text, link.href, u, attrs)))
-            detail = f"{link.href} +uuid {u}"
+            shown_uuid = "<will be generated on write>" if u in created_uuids else u
+            detail = f"{link.href} +uuid {shown_uuid}"
             stray = absorb.get(i)
             if stray is not None:
                 edits.append((_hspace_start(original, stray.start), stray.end, ""))
