@@ -146,7 +146,7 @@ def plan_repairs(
             local.append(Finding(Kind.REPAIR, f, f"{link.href} -> {new_href}"))
             # splice the rewritten robust link in place of the old span
             pieces.append(content[cursor:link.start])
-            pieces.append(emit_robust_link(link.text, new_href, link.uuid))
+            pieces.append(emit_robust_link(link.text, new_href, link.uuid, link.attrs))
             cursor = link.end
             changed = True
         if not scoped:

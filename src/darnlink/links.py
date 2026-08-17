@@ -10,9 +10,28 @@ import re
 from dataclasses import dataclass
 from typing import List, Sequence, Tuple
 
+# The BODY of a pandoc attribute block, between its own `{` and `}` — one definition, shared by
+# ROBUST_LINK_RE's `attrs` group below and by `_PANDOC_ATTR_RE` further down. `[^{}\n]*` alone (the
+# first version of this pattern) treats a `}` inside a quoted attribute value as the block's own
+# closing brace and cuts the match short there — not a miss, a WRONG match, and a corrupting one
+# once something is spliced at the point it stopped. `"[^"\n]*"` makes a quoted run atomic, so `{`
+# and `}` inside a quote no longer terminate the block early; an unterminated quote still fails the
+# whole match, same as an unbalanced `{` always did. Kept as ONE definition on purpose — two
+# independent copies of "what an attrs block looks like" is exactly the shape that drifted before
+# (`is_local_relative`'s four call sites, FR-052), and it already drifted once here: an earlier
+# revision of this fix updated only `_PANDOC_ATTR_RE` and left this literal on the old, corrupting
+# pattern, so `repair` silently stopped recognising (and therefore stopped fixing) an already-correct
+# robust link whose attrs held a quoted `}` — no finding, no write, the stale path just stayed stale.
+_PANDOC_ATTR_BODY = r'(?:[^{}"\n]|"[^"\n]*")*'
+
 # A robust link: a Markdown link immediately followed (any whitespace) by a uuid HTML comment.
+# The optional `attrs` group is a pandoc attribute block (`{.cls}`, `{width="1in"}`, …): pandoc
+# requires it immediately after the link's `)`, with no whitespace, so it must be matched BEFORE
+# the anchor comment's leading `\s*` — reversing the order would let the whitespace class absorb
+# right up to `{`, misparsing `[x](y){.cls}` as `[x](y)` followed by unrelated `{.cls}` text.
 ROBUST_LINK_RE = re.compile(
-    r"\[(?P<text>[^\]]*)\]\((?P<href>(?:[^()\s]|\((?:[^()\s]|\([^()\s]*\))*\))+|[^)]+)\)\s*<!--\s*uuid:\s*(?P<uuid>[0-9a-fA-F-]{36})\s*-->"
+    r"\[(?P<text>[^\]]*)\]\((?P<href>(?:[^()\s]|\((?:[^()\s]|\([^()\s]*\))*\))+|[^)]+)\)"
+    r"(?P<attrs>\{" + _PANDOC_ATTR_BODY + r"\})?\s*<!--\s*uuid:\s*(?P<uuid>[0-9a-fA-F-]{36})\s*-->"
 )
 # Any inline Markdown link. `text` is `*`, not `+`: `[](dest)` is a link with empty text, and the
 # empty alt of `![](dest)` is what pandoc emits for every image in a converted .docx/.odt. Requiring
@@ -72,6 +91,37 @@ MD_LINK_RE = re.compile(r"\[(?P<text>[^\]]*)\]\((?P<href>(?:[^()\s]|\((?:[^()\s]
 # A uuid comment that immediately follows a link (used to tell plain from robust).
 # No `^`: it is applied with .match(content, pos), which already anchors at pos.
 _TRAILING_UUID_RE = re.compile(r"\s*<!--\s*uuid:\s*[0-9a-fA-F-]{36}\s*-->")
+# A pandoc attribute block immediately following a link's `)`, no whitespace allowed (pandoc's own
+# rule -- a block after a space is not attached to anything and pandoc ignores it). Matched with
+# .match(content, pos) the same way as _TRAILING_UUID_RE, so callers can skip past it before
+# checking for the anchor comment -- see `_skip_attrs` below for why that skip has to exist at all.
+# Shares `_PANDOC_ATTR_BODY` with `ROBUST_LINK_RE`'s own `attrs` group (see that constant's comment
+# for why one definition, not two, matters here specifically).
+_PANDOC_ATTR_RE = re.compile(r"\{" + _PANDOC_ATTR_BODY + r"\}")
+
+
+def pandoc_attrs_at(content: str, pos: int) -> str:
+    """The pandoc attribute block immediately at `pos`, verbatim, or `""` if there is none.
+
+    Used both to WRITE (place the block before the anchor) and to DETECT (skip past it before
+    checking for a trailing anchor comment) -- one definition of "attrs block" for both directions,
+    so they cannot drift apart the way `is_local_relative`'s four call sites once did (FR-052).
+    """
+    m = _PANDOC_ATTR_RE.match(content, pos)
+    return m.group(0) if m else ""
+
+
+def _skip_attrs(content: str, pos: int) -> int:
+    """`pos`, advanced past an immediately-following pandoc attribute block if there is one.
+
+    Every site that decides "is a link already robust?" by looking right after its `)` has to use
+    this, not `pos` itself -- once `--write` places attrs before the anchor (FR-065), a link that
+    HAS an attrs block reads `[x](y){.cls} <!-- uuid: … -->`, and checking for the anchor at `pos`
+    (right after the `)`, before `{.cls}`) would find `{` instead and call the link still plain.
+    Robustify would then append a SECOND anchor: the uuid ends up in the file twice, one copy
+    anchoring nothing, invisible to every later run because the link now reads as robust either way.
+    """
+    return pos + len(pandoc_attrs_at(content, pos))
 # Any uuid comment, wherever it sits. Used to find the ones attached to nothing.
 UUID_COMMENT_RE = re.compile(r"<!--\s*uuid:\s*(?P<uuid>[0-9a-fA-F-]{36})\s*-->")
 
@@ -222,8 +272,9 @@ class RobustLink:
     text: str
     href: str
     uuid: str
-    start: int  # span of the whole robust link (link + comment) in the source
+    start: int  # span of the whole robust link (link + attrs + comment) in the source
     end: int
+    attrs: str = ""  # a pandoc attribute block (`{.cls}`), verbatim, or "" if there is none
 
 
 @dataclass(frozen=True)
@@ -237,7 +288,8 @@ class PlainLink:
 def find_robust_links(content: str, ignore: Sequence[Span] = ()) -> List[RobustLink]:
     """All robust links in the content, in document order, skipping any inside `ignore` spans."""
     return [
-        RobustLink(m.group("text"), m.group("href"), m.group("uuid").lower(), m.start(), m.end())
+        RobustLink(m.group("text"), m.group("href"), m.group("uuid").lower(), m.start(), m.end(),
+                   m.group("attrs") or "")
         for m in ROBUST_LINK_RE.finditer(content)
         if not _in_spans(m.start(), ignore)
     ]
@@ -247,8 +299,8 @@ def find_plain_links(content: str, ignore: Sequence[Span] = ()) -> List[PlainLin
     """All Markdown links that are NOT already robust, skipping any inside `ignore` spans."""
     out: List[PlainLink] = []
     for m in MD_LINK_RE.finditer(content):
-        if _TRAILING_UUID_RE.match(content, m.end()):
-            continue  # this link is part of a robust link; skip
+        if _TRAILING_UUID_RE.match(content, _skip_attrs(content, m.end())):
+            continue  # this link (with or without a pandoc attrs block) is already robust; skip
         if _in_spans(m.start(), ignore):
             continue  # inside a generated block (e.g. autogrid); leave it alone
         out.append(PlainLink(m.group("text"), m.group("href"), m.start(), m.end()))
@@ -278,10 +330,11 @@ def find_detached_anchors(content: str, ignore: Sequence[Span] = ()) -> List[Det
     """
     attached: set[int] = set()
     for m in MD_LINK_RE.finditer(content):
-        t = _TRAILING_UUID_RE.match(content, m.end())
+        after_attrs = _skip_attrs(content, m.end())
+        t = _TRAILING_UUID_RE.match(content, after_attrs)
         if t is None:
             continue
-        c = UUID_COMMENT_RE.search(content, m.end(), t.end())
+        c = UUID_COMMENT_RE.search(content, after_attrs, t.end())
         if c is not None:
             attached.add(c.start())
     return [
@@ -298,6 +351,12 @@ def line_bounds(content: str, pos: int) -> Span:
     return (start, len(content) if end == -1 else end)
 
 
-def emit_robust_link(text: str, href: str, uuid: str) -> str:
-    """Canonical robust-link rendering: a single space before the comment."""
-    return f"[{text}]({href}) <!-- uuid: {uuid} -->"
+def emit_robust_link(text: str, href: str, uuid: str, attrs: str = "") -> str:
+    """Canonical robust-link rendering: a single space before the comment.
+
+    `attrs` (a pandoc attribute block, `{.cls}`) goes immediately after `)`, with NO space -- pandoc
+    only recognises the block there (FR-065). Putting the anchor comment first, as earlier versions
+    did unconditionally, detaches `{.cls}` from the link it belongs to: pandoc then ignores it
+    silently, and the document still renders, just without the class/width/height it was given.
+    """
+    return f"[{text}]({href}){attrs} <!-- uuid: {uuid} -->"
