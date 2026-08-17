@@ -496,3 +496,63 @@ def test_65_a_second_pass_over_an_attrs_anchored_link_is_a_no_op(tmp_path):
 
     assert once == twice, f"not idempotent: {once!r} -> {twice!r}"
     assert twice.count(EXISTING) == 1, f"uuid duplicated: {twice!r}"
+
+
+def test_41_a_freshly_minted_uuid_is_not_printed_as_if_final(tmp_path):
+    """#41: a dry-run's `+uuid X` for a target with NO existing uuid mints a fresh one on every
+    single call to `plan_robustify` — never written unless `apply_robustify` follows. Printing the
+    concrete value read as an instruction to copy, and copying it by hand creates an ORPHAN anchor:
+    a link claiming a uuid no file declares. It does not self-heal (the whole point of a robust
+    link) and the gate cannot tell it apart from a good anchor, so nothing ever flags it.
+
+    Three full plan passes, none applied: the printed text must be identical and non-numeric-looking
+    every time, not merely "different each time" (a test that only checked for CHANGE across passes
+    would not catch a version of this bug that mints once and then caches, which is still wrong for
+    the same reason -- the value shown is not what ends up on disk until --write actually runs).
+    """
+    _w(tmp_path / "B.md", "# B (no frontmatter)\n")
+    _w(tmp_path / "A.md", "[B](B.md)\n")
+
+    details = []
+    for _ in range(3):
+        result = plan_robustify(tmp_path, create_frontmatter=True)
+        upgrades = [f for f in result.findings if f.kind is Kind.ROBUSTIFY]
+        assert len(upgrades) == 1, upgrades
+        details.append(upgrades[0].detail)
+
+    assert len(set(details)) == 1, f"not stable across dry-run passes: {details!r}"
+    assert "+uuid <will be generated on write>" in details[0], details[0]
+    # Nothing on disk was touched by any of the three passes above.
+    assert (tmp_path / "B.md").read_text() == "# B (no frontmatter)\n"
+
+
+def test_41_a_reused_existing_uuid_is_still_printed_for_real(tmp_path):
+    """The other half of #41's fix: a target that ALREADY has a uuid is not affected. That value is
+    read from the target's own frontmatter, identical on every run whether or not `--write` follows
+    — showing it is accurate, not a promise the tool cannot keep, and hiding it would be a needless
+    regression for anyone reading the dry-run report to confirm which uuid a link will get.
+    """
+    _w(tmp_path / "B.md", f"---\nuuid: {EXISTING}\n---\n# B\n")
+    _w(tmp_path / "A.md", "[B](B.md)\n")
+
+    result = plan_robustify(tmp_path)
+    upgrades = [f for f in result.findings if f.kind is Kind.ROBUSTIFY]
+    assert len(upgrades) == 1
+    assert f"+uuid {EXISTING}" in upgrades[0].detail, upgrades[0].detail
+
+
+def test_41_write_still_anchors_with_the_real_minted_uuid(tmp_path):
+    """The placeholder is a REPORTING change only -- `--write` must still mint and persist a real
+    uuid, and the file and the link that anchors it must agree on which one.
+    """
+    from darnlink.frontmatter_edit import read_uuid_from_content
+
+    _w(tmp_path / "B.md", "# B (no frontmatter)\n")
+    _w(tmp_path / "A.md", "[B](B.md)\n")
+
+    apply_robustify(plan_robustify(tmp_path, create_frontmatter=True))
+
+    written = read_uuid_from_content((tmp_path / "B.md").read_text())
+    assert written is not None
+    a_link = find_robust_links((tmp_path / "A.md").read_text())[0]
+    assert a_link.uuid == written
