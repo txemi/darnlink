@@ -42,6 +42,39 @@ def test_create_readme_anchors_a_folder_without_one(tmp_path):
     assert any(f.kind is Kind.CREATE_README for f in result.findings)
 
 
+def test_41_create_readme_uuid_is_not_printed_as_if_final_either(tmp_path):
+    """#41's fix (robustify.py) guards `needs_uuid_write`, populated only inside `decide()`. A
+    README this run is about to CREATE (feature 012) mints its uuid in a separate pre-pass (before
+    `decide()` runs at all) and was never added to that set -- so both findings that mention it, the
+    ROBUSTIFY finding for the link and the CREATE_README finding for the README itself, kept
+    printing the raw, freshly-minted (and therefore unstable-across-dry-run-passes) uuid exactly
+    like the original #41 bug, just reached through a second code path instead of `decide()`.
+
+    Three dry-run passes, none applied: both finding texts must be identical and carry the
+    placeholder every time, not merely "different each time".
+    """
+    (tmp_path / "hub").mkdir()
+    _w(tmp_path / "A.md", "[hub](hub/)\n")
+
+    robustify_details = []
+    create_readme_details = []
+    for _ in range(3):
+        result = plan_robustify(tmp_path, create_readme=True)
+        upgrades = [f for f in result.findings if f.kind is Kind.ROBUSTIFY]
+        creates = [f for f in result.findings if f.kind is Kind.CREATE_README]
+        assert len(upgrades) == 1, upgrades
+        assert len(creates) == 1, creates
+        robustify_details.append(upgrades[0].detail)
+        create_readme_details.append(creates[0].detail)
+
+    assert len(set(robustify_details)) == 1, f"not stable across dry-run passes: {robustify_details!r}"
+    assert len(set(create_readme_details)) == 1, f"not stable across dry-run passes: {create_readme_details!r}"
+    assert "+uuid <will be generated on write>" in robustify_details[0], robustify_details[0]
+    assert "<will be generated on write>" in create_readme_details[0], create_readme_details[0]
+    # Nothing on disk was touched by any of the three passes above.
+    assert not (tmp_path / "hub" / "README.md").exists()
+
+
 def test_create_readme_is_dry_run_by_default(tmp_path):
     (tmp_path / "hub").mkdir()
     _w(tmp_path / "A.md", "[hub](hub/)\n")

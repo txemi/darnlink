@@ -32,6 +32,10 @@ from .paths import (DIR_ANCHOR, is_absolute_local_path, is_local_relative, names
 from .report import Finding, Kind
 from .scope import in_scope
 
+# FR-041: shown instead of a uuid this run only MINTED (never written unless --write follows), so a
+# reader of the dry-run report never mistakes a draft for a stable value worth copying by hand.
+_DRAFT_UUID_PLACEHOLDER = "<will be generated on write>"
+
 
 @dataclass
 class RobustifyResult:
@@ -507,7 +511,14 @@ def plan_robustify(
         # tell a good anchor from this one at a glance. Reused uuids are unaffected: `target_uuid[t]`
         # for a target NOT in `needs_uuid_write` is the value read from that file's OWN frontmatter,
         # true on every run and safe to show and copy.
-        created_uuids = {target_uuid[t] for t in needs_uuid_write}
+        #
+        # `planned_readmes` (feature 012, --create-readme) is a SECOND source of freshly-minted
+        # uuids, minted above at the "plan a README.md" step and never added to `needs_uuid_write`
+        # (that set is populated only inside `decide()`, which a not-yet-created README never goes
+        # through). Without it here, a link anchored to a README this same run is about to create
+        # would print that draft uuid as if final -- the exact #41 bug, just reached by a second
+        # path instead of `decide()`.
+        created_uuids = {target_uuid[t] for t in needs_uuid_write} | {target_uuid[t] for t in planned_readmes}
 
         edits: List[Tuple[int, int, str]] = []  # (start, end, replacement), disjoint by construction
         for i, (link, u) in enumerate(anchorable):
@@ -517,7 +528,7 @@ def plan_robustify(
             # puts it back before the anchor comment rather than after.
             attrs = pandoc_attrs_at(original, link.end)
             edits.append((link.start, link.end + len(attrs), emit_robust_link(link.text, link.href, u, attrs)))
-            shown_uuid = "<will be generated on write>" if u in created_uuids else u
+            shown_uuid = _DRAFT_UUID_PLACEHOLDER if u in created_uuids else u
             detail = f"{link.href} +uuid {shown_uuid}"
             stray = absorb.get(i)
             if stray is not None:
@@ -549,11 +560,18 @@ def plan_robustify(
 
     # Feature 012: schedule the created READMEs and name each one (in the dry-run report too, so the
     # caller sees the file that will be born before --write does it).
+    #
+    # FR-041: every entry here is, by construction, a uuid `new_uuid()` just minted above (a README
+    # this run is *proposing* to create has no prior frontmatter to reuse a uuid from) -- so it is
+    # exactly the same kind of draft the ROBUSTIFY placeholder above exists to protect: unwritten
+    # until --write runs, and a different value on the next dry-run pass. No `created_uuids`
+    # membership check is needed here (unlike the ROBUSTIFY finding, which mixes reused and
+    # freshly-minted targets): everything in `created_readmes` is freshly minted, always.
     for readme in sorted(created_readmes):
         result.new_content[readme] = created_readmes[readme]
         result.findings.append(Finding(
             Kind.CREATE_README, readme,
-            f"created {DIR_ANCHOR} with uuid {target_uuid[readme]} to anchor a directory link"))
+            f"will create {DIR_ANCHOR} with uuid {_DRAFT_UUID_PLACEHOLDER} to anchor a directory link"))
 
     # FR-006: name every uuid write that lands OUTSIDE the write scope — in the dry-run report too,
     # so the caller sees it before it happens and can refuse it with --no-target-writes.
