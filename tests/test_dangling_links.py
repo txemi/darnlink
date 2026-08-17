@@ -7,6 +7,7 @@ two apart. This feature names the second case.
 
 Report-only: nothing is ever written in response to a `dangling` finding (FR-042).
 """
+import sys
 from pathlib import Path
 
 from darnlink.report import Kind
@@ -316,6 +317,43 @@ def test_whitespace_around_a_destination_is_NOT_stripped_here(tmp_path):
     found = _dangling(plan_robustify(tmp_path))
     assert len(found) == 1, "the whitespace rule (#74) appears to have been re-landed silently"
     assert " B.md " in found[0].detail
+
+
+def test_a_plain_link_with_only_a_trailing_space_is_also_NOT_anchored_here(tmp_path):
+    """Sibling of the test above, pinned separately because it is the exact shape #67 shipped a fix
+    for on the OTHER axis, and #67's own body names `_anchor_target` as a site that shares the bug
+    but is explicitly deferred to #74 (re-scoped 2026-08-13: "read #74 for the stripping rule
+    itself"). `repair` now handles `old/B.md ` correctly (an already-anchored link with this shape is
+    repaired, not misdiagnosed as an unhealable CONFLICT) — but a PLAIN link with the same trailing
+    space, going through `_anchor_target` first, still cannot be told apart from a genuinely dangling
+    one: `names_md("old/B.md ")` is true (stripped), yet `_anchor_target` resolves existence against
+    the UNSTRIPPED href, finds nothing, and returns None just like it always has. This is deliberate,
+    not an oversight — see the `names_md` docstring in `paths.py` — and this test is what makes that
+    deliberateness checkable rather than merely asserted in prose.
+
+    ⚠️ **On Windows this link IS anchored, for a reason that has nothing to do with #74.** Unlike its
+    sibling above (`" B.md "`, leading AND trailing), this shape has ONLY a trailing space. Win32's
+    `GetFullPathNameW` strips a TRAILING space from a path component but — measured here, not assumed
+    — does not touch a LEADING one. So `resolve_href("old/B.md ", …)` already lands on the real file
+    on Windows, `_anchor_target` returns it (not None), and the link is robustified normally: there is
+    no bug to defer to #74 on this platform, because Win32 already normalized the space away before
+    darnlink's own (deliberately unstripped) resolution ever ran. The sibling test keeps the LEADING
+    space specifically so it is NOT absorbed this way and still proves the point on every OS.
+
+    ⚠️ When #74 lands, the non-Windows branch below must invert too (assert the link IS anchored),
+    for the same reason its sibling above must.
+    """
+    _w(tmp_path / "old" / "B.md", f"---\nuuid: {U_A}\n---\n# B\n")
+    _w(tmp_path / "A.md", "[x](old/B.md )\n")  # trailing space only, no uuid comment yet: plain
+
+    result = plan_robustify(tmp_path)
+    found = _dangling(result)
+    if sys.platform.startswith("win"):
+        assert found == [], found  # Win32 already dropped the trailing space; nothing dangling here
+        assert any(f.kind is Kind.ROBUSTIFY for f in result.findings), result.findings
+    else:
+        assert len(found) == 1, "a plain link's trailing-space destination now resolves — check #74"
+        assert "old/B.md " in found[0].detail
 
 
 def test_balanced_parentheses_in_a_destination_are_not_truncated(tmp_path):
