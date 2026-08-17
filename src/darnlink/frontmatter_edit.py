@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 import uuid as _uuid
+from pathlib import Path
 from typing import Optional, Tuple
 
 # A leading YAML frontmatter block: ---\n <body> \n---\n <rest>
@@ -51,6 +52,23 @@ def write_text_keep_newlines(path, content: str) -> None:
     paths at once. The CI matrix exists for *"Windows-authored files (BOM, CRLF, path separators)"*
     and could not see it: its BOM fixtures only ever covered files that are **read**. #68.
     """
+    # #65/#85's invariant, checked here rather than assumed: every caller reaches this function with
+    # a path that came from `iter_markdown_files` (directly, or via `resolve_href`/`_anchor_target`
+    # resolving an href against a file that did) -- and `iter_markdown_files` yields
+    # `Path.resolve(strict=True)`, which dereferences every symlink component. Verified empirically
+    # (not just read): writing through a symlinked AGENTS.md -> CLAUDE.md pair, this function is only
+    # ever called with the CANONICAL path, never the alias -- `path.is_symlink()` is unreachably
+    # False today. Kept as a live assertion rather than silently trusted, because the failure mode if
+    # a FUTURE caller ever bypasses that resolution is not a crash but a silent write through an
+    # alias into a file darnlink was never told about -- exactly the class of bug #65/#85 exist to
+    # remove, just one layer deeper. Fail loud, here, once, rather than corrupt quietly wherever the
+    # unresolved path happened to point.
+    assert not Path(path).is_symlink(), (
+        f"refusing to write through a symlink: {path} -- resolve the path before calling "
+        "write_text_keep_newlines (see iter_markdown_files, which every existing caller goes "
+        "through); writing through an unresolved alias could silently touch a file this run "
+        "never scanned or reported on"
+    )
     with open(path, "w", encoding=_encoding_preserving_bom(path), newline="") as f:
         f.write(content)
 
