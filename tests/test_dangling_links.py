@@ -7,6 +7,7 @@ two apart. This feature names the second case.
 
 Report-only: nothing is ever written in response to a `dangling` finding (FR-042).
 """
+import sys
 from pathlib import Path
 
 from darnlink.report import Kind
@@ -330,15 +331,29 @@ def test_a_plain_link_with_only_a_trailing_space_is_also_NOT_anchored_here(tmp_p
     not an oversight — see the `names_md` docstring in `paths.py` — and this test is what makes that
     deliberateness checkable rather than merely asserted in prose.
 
-    ⚠️ When #74 lands, this test must invert too (assert the link IS anchored), for the same reason
-    its sibling above must.
+    ⚠️ **On Windows this link IS anchored, for a reason that has nothing to do with #74.** Unlike its
+    sibling above (`" B.md "`, leading AND trailing), this shape has ONLY a trailing space. Win32's
+    `GetFullPathNameW` strips a TRAILING space from a path component but — measured here, not assumed
+    — does not touch a LEADING one. So `resolve_href("old/B.md ", …)` already lands on the real file
+    on Windows, `_anchor_target` returns it (not None), and the link is robustified normally: there is
+    no bug to defer to #74 on this platform, because Win32 already normalized the space away before
+    darnlink's own (deliberately unstripped) resolution ever ran. The sibling test keeps the LEADING
+    space specifically so it is NOT absorbed this way and still proves the point on every OS.
+
+    ⚠️ When #74 lands, the non-Windows branch below must invert too (assert the link IS anchored),
+    for the same reason its sibling above must.
     """
     _w(tmp_path / "old" / "B.md", f"---\nuuid: {U_A}\n---\n# B\n")
     _w(tmp_path / "A.md", "[x](old/B.md )\n")  # trailing space only, no uuid comment yet: plain
 
-    found = _dangling(plan_robustify(tmp_path))
-    assert len(found) == 1, "a plain link's trailing-space destination now resolves — check #74"
-    assert "old/B.md " in found[0].detail
+    result = plan_robustify(tmp_path)
+    found = _dangling(result)
+    if sys.platform.startswith("win"):
+        assert found == [], found  # Win32 already dropped the trailing space; nothing dangling here
+        assert any(f.kind is Kind.ROBUSTIFY for f in result.findings), result.findings
+    else:
+        assert len(found) == 1, "a plain link's trailing-space destination now resolves — check #74"
+        assert "old/B.md " in found[0].detail
 
 
 def test_balanced_parentheses_in_a_destination_are_not_truncated(tmp_path):
