@@ -6,6 +6,85 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.24.0] — 2026-08-17
+
+> ### ⚠️ Two consumer-visible changes; both informational, neither moves the exit code
+>
+> **1. A dry-run's `+uuid X` no longer shows a value you can copy.** For a target that had no
+> `uuid` yet, the value `plan_robustify` used to print was a fresh, random draft — different on
+> every run, discarded unless `--write` actually followed. It now reads
+> `+uuid <will be generated on write>` for a freshly-minted uuid; a **reused** uuid (already in the
+> target's frontmatter) is unaffected, shown as before. `--write` itself is untouched — the file and
+> the link still get the real, correct, matching uuid.
+>
+> **2. `check --json`'s output is now produced from a single tree read, not two.** The verdict is
+> **byte-for-byte identical** to `v0.23.0` — verified, not assumed, on a real ~3500-file tree — only
+> faster (measured **~2.1×** on that tree). Nothing to change in a consumer unless it depended on
+> wall-clock timing.
+
+## Fixed
+
+- **An anchor comment no longer separates a link from its pandoc attribute block** (#65).
+  `![](B.md){width="1.1in"}`, anchored by `--write`, used to become
+  `![](B.md) <!-- uuid: … -->{width="1.1in"}` — the comment landing between the link and the block
+  pandoc requires immediately after `)`. The block still rendered, just silently ignored: the
+  document didn't fail to build, it rendered wrong, and nothing in the finding or the exit code said
+  so. Fixed at every site that reads or writes the link grammar (detection, both write paths), so an
+  already-anchored link with attrs is round-tripped correctly by `repair` too, not just newly
+  anchored by `robustify`.
+
+  A follow-up hardening, found by adversarial review rather than filed separately: a `}` inside a
+  **quoted** attribute value (`{data-x="a}b"}`) was treated as the block's own closing brace and cut
+  the match short — on `--write` that spliced the anchor comment into the middle of the attribute
+  text itself, corrupting content #65's own fix never touched. Fixed alongside a second, independent
+  copy of the same pattern that had drifted unhardened, which was silently making `repair` report
+  **zero findings** for an already-anchored link whose target had genuinely moved.
+
+- **A trailing space in a link's destination no longer turns a file link into an unhealable
+  CONFLICT** (#67). `names_md("old/B.md ")` returned `False` — the space defeated `.endswith(".md")`
+  — so `repair` misclassified an ordinary file link as a *directory* link, whose uuid then "lives in
+  a non-README file": a false diagnosis, reported as `CONFLICT`. Unlike a real conflict, `--write`
+  could never heal it either — permanently red over a link that was never actually broken. Fixed at
+  the one shared primitive all three affected call sites go through; `resolve_href` stays untouched
+  on purpose (the general whitespace-stripping question is `#74`'s, not this one's), so the fix's
+  side effect is that the stray space gets cleaned up as part of the ordinary repair-a-stale-link
+  path, not just stop being misdiagnosed.
+
+- **A freshly-minted dry-run uuid is no longer printed as if it were final** (#41). See the note
+  above. Also covers the `--create-readme` path, which mints its own uuid through a separate
+  pre-pass and printed the same kind of throwaway value for both the directory link's finding and
+  the `CREATE_README` finding itself — found by adversarial review as a second path to the same
+  symptom.
+
+- **`check` runs both its axes (integrity + strict) off ONE tree read instead of two** (#87).
+  `build_index` and `plan_robustify` each used to walk and read every `.md` file independently, back
+  to back, for the same invocation. `plan_repairs`/`plan_robustify` gain an **optional** `prescanned`
+  parameter (`None` by default — every other caller, and every external consumer, sees zero change);
+  `check` is the only caller that shares one scan between both. Measured on a large repo in the
+  fleet: **29.4s → 13.8s** (this repository's own CI, on a smaller/differently-cached tree, measured
+  **24.8s → 19.8s** in the adversarial review round — the mechanism is the same, the magnitude is
+  machine-dependent). `--json` output verified byte-for-byte identical before and after, on the same
+  tree, both times.
+
+## Security / hardening
+
+- **`write_text_keep_newlines` now refuses a symlink path, as a live assertion.** Verified first,
+  not assumed: every path reaching this function already comes from `iter_markdown_files` (directly,
+  or via an href resolved against a file that did), which yields `Path.resolve(strict=True)` —
+  dereferencing every symlink component — so `path.is_symlink()` is unreachably `False` today,
+  proven by driving the real `AGENTS.md → CLAUDE.md` layout end to end with a spy on the write call.
+  A literal check-and-branch would have been dead code; the assertion gives the same protection for
+  a **future** caller that bypasses that resolution, converting "silently writes through an alias"
+  into "crashes immediately, at the one choke point every write goes through."
+
+## Known issues (filed, not fixed here)
+
+- **A hardlink to an indexed `.md` is indexed twice** — same symptom as `#85` (`uuid` reported in
+  multiple files), different mechanism: `Path.resolve()` dereferences symlinks but does not collapse
+  hardlinks (two directory entries, same inode). Verified live with `os.link()`, not speculative.
+  Fixing it needs an inode-based identity check (`st_dev`/`st_ino` on POSIX), which is why it's its
+  own issue rather than riding along on `#85`'s or this release's fixes. **#91**.
+
 ## [0.23.0] — 2026-08-16
 
 > ### ⚠️ Two things change for a consumer, and neither is a regression
@@ -957,7 +1036,8 @@ First public release.
 - Ships a [pre-commit](https://pre-commit.com/) hook (`darnlink`, `darnlink-repair`).
 - Format specification: [FORMAT.md](FORMAT.md) <!-- uuid: 9052d864-2a45-4ed4-8725-d8a394e7a7ef -->.
 
-[Unreleased]: https://github.com/txemi/darnlink/compare/v0.23.0...HEAD
+[Unreleased]: https://github.com/txemi/darnlink/compare/v0.24.0...HEAD
+[0.24.0]: https://github.com/txemi/darnlink/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/txemi/darnlink/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/txemi/darnlink/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/txemi/darnlink/compare/v0.20.5...v0.21.0
