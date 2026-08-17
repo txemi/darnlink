@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from .frontmatter_index import DEFAULT_EXCLUDES, FrontmatterIndex, iter_markdown_files
 from .links import (code_spans, emit_robust_link, file_ignores_links, file_is_ignored,
@@ -45,6 +45,7 @@ def plan_repairs(
     excludes: set = DEFAULT_EXCLUDES,
     block_markers: tuple = (),
     only: Optional[Set[Path]] = None,
+    prescanned: Optional[Tuple[List[Path], Dict[Path, str]]] = None,
 ) -> RepairResult:
     """Compute repairs for every robust link under `root` (no writes).
 
@@ -53,11 +54,22 @@ def plan_repairs(
     rewritten nor reported as actionable; they are counted in `suppressed`. A narrowed run therefore
     sees only **outbound** links of the scoped files: a moved target's *inbound* links live in files
     the caller did not name, and still need a full-tree run.
+
+    `prescanned` (#87): `(files, contents)` from a `scan_tree` the CALLER already ran — `check`
+    builds `index` from one and passes it here too, so this function's own walk-and-read of the
+    same tree is skipped. Every other caller leaves it `None` and gets the exact behaviour this
+    function always had: its own scan, from `iter_markdown_files` + `read_text_keep_newlines`.
     """
     result = RepairResult()
-    for f in iter_markdown_files(root, excludes):
+    if prescanned is not None:
+        files, contents = prescanned
+        file_iter: Iterable[Path] = files
+    else:
+        contents = None
+        file_iter = iter_markdown_files(root, excludes)
+    for f in file_iter:
         try:
-            content = read_text_keep_newlines(f)
+            content = contents[f] if contents is not None else read_text_keep_newlines(f)
         except Exception:
             continue
         if file_is_ignored(content):

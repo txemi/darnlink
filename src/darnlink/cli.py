@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from .frontmatter_index import DEFAULT_EXCLUDES, build_index
+from .frontmatter_index import DEFAULT_EXCLUDES, build_index, index_from_contents, scan_tree
 from .repair import apply_repairs, plan_repairs
 from .report import Finding, Kind
 from .robustify import apply_robustify, plan_robustify
@@ -173,11 +173,17 @@ def _run_check(root: Path, excludes: set, as_json: bool, block_markers: tuple,
     3 strict-only failure (anchorable plain links un-anchored). Integrity takes precedence over
     strict when both fail (a broken link is more urgent than an un-anchored one).
     """
+    # #87: ONE walk of the tree feeds both axes below, instead of each doing its own (measured on
+    # a large repo in the fleet: ~25-30s per pass, so `check` used to pay for two full tree reads
+    # back to back).
+    files, contents, out_of_root = scan_tree(root, excludes)
+    prescanned = (files, contents, out_of_root)
+
     # Integrity axis (repair, dry-run): robust links whose path is stale/unresolvable, plus invalid YAML.
     # FR-010: `--only` restricts FINDINGS to links whose source file is in the set (check writes
     # nothing, so there is no write scope — just a report filter). The index is still whole.
-    index = build_index(root, excludes)
-    rep = plan_repairs(root, index, excludes, block_markers, only=only)
+    index = index_from_contents(files, contents, out_of_root)
+    rep = plan_repairs(root, index, excludes, block_markers, only=only, prescanned=(files, contents))
     repairs = [f for f in rep.findings if f.kind is Kind.REPAIR]
     conflicts = [f for f in rep.findings if f.kind is Kind.CONFLICT]
     unresolved = [f for f in rep.findings if f.kind in (Kind.UNRESOLVABLE, Kind.AMBIGUOUS)]
@@ -187,7 +193,7 @@ def _run_check(root: Path, excludes: set, as_json: bool, block_markers: tuple,
     integrity_fail = bool(repairs or conflicts or unresolved or invalid)
 
     # Strict axis (robustify, dry-run): plain links to an anchorable target left un-anchored.
-    rob = plan_robustify(root, create_frontmatter=False, excludes=excludes, block_markers=block_markers, only=only)
+    rob = plan_robustify(root, create_frontmatter=False, excludes=excludes, block_markers=block_markers, only=only, prescanned=prescanned)
     upgrades = [f for f in rob.findings if f.kind is Kind.ROBUSTIFY]
     rob_invalid = [p for p in rob.invalid if only is None or p.resolve() in only]
     strict_fail = bool(upgrades or rob_invalid)

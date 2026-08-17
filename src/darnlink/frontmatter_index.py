@@ -9,7 +9,7 @@ import fnmatch
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterator, List
+from typing import Dict, Iterator, List, Tuple
 
 import frontmatter
 
@@ -128,21 +128,54 @@ def read_frontmatter_uuid(content: str) -> tuple[str, str | None]:
     return ("valid", u.strip().lower() or None)
 
 
-def build_index(root: Path, excludes: set[str] = DEFAULT_EXCLUDES) -> FrontmatterIndex:
-    """Scan `root` and map each frontmatter `uuid` to its file. Records duplicates separately.
+def scan_tree(
+    root: Path, excludes: set[str] = DEFAULT_EXCLUDES
+) -> Tuple[List[Path], Dict[Path, str], List[Path]]:
+    """ONE walk of `root`, reading every `.md` file exactly once: `(files, contents, out_of_root)`.
 
-    Files carrying the `<!-- darnlink-ignore-file -->` marker are skipped: an opted-out file is not
-    a resolvable target, so a robust link pointing at its uuid is reported unresolvable (FR-019)."""
+    #87: `build_index` and `plan_repairs`/`plan_robustify` each used to call `iter_markdown_files`
+    and re-read every file independently — the SAME ~3.500 files, from disk, twice per `check`
+    invocation (`check` runs the integrity axis via an index, then the strict axis via robustify).
+    Measured on a large repo in the fleet: ~25-30s per pass, so a plain `check` paid for two full
+    tree reads to produce two verdicts neither of which alone needed the other's walk to also happen.
+
+    This is the ONE walk both axes now share. `read_text_keep_newlines` (byte-preserving: CRLF and
+    a leading BOM survive verbatim) is used rather than `read_text()`'s universal-newline read that
+    `build_index` used before this — parsing YAML frontmatter for a `uuid` does not care about the
+    line-ending style, so this is a safe unification, not a behaviour change for the index; it is
+    the mode the WRITE-side callers (repair, robustify) always needed, so unifying on it (rather
+    than on the other reader) is what makes sharing one read serve both.
+    """
+    files: List[Path] = []
+    contents: Dict[Path, str] = {}
+    out_of_root: List[Path] = []
+    for path in iter_markdown_files(root, excludes, out_of_root=out_of_root):
+        try:
+            from .frontmatter_edit import read_text_keep_newlines  # local: avoid a module cycle
+            content = read_text_keep_newlines(path)
+        except Exception:
+            continue
+        files.append(path)
+        contents[path] = content
+    return files, contents, out_of_root
+
+
+def index_from_contents(
+    files: List[Path], contents: Dict[Path, str], out_of_root: List[Path]
+) -> FrontmatterIndex:
+    """Build a `FrontmatterIndex` from an already-read scan (see `scan_tree`) — no disk I/O.
+
+    Split from `build_index` so a caller that already scanned the tree for another reason (`check`,
+    which also needs `plan_repairs`/`plan_robustify`'s view of the same files) can reuse that scan
+    instead of triggering a second one. `build_index` itself is unchanged for every other caller —
+    it still does its own scan and calls straight through to this.
+    """
     from .links import file_is_ignored  # local import: links has no package deps, but keep it lazy
 
     index = FrontmatterIndex()
-    for path in iter_markdown_files(root, excludes, out_of_root=index.out_of_root):
-        try:
-            # utf-8-sig strips a leading UTF-8 BOM (common on Windows-authored files) so it doesn't
-            # sit before the `---` and hide the frontmatter from the index. Same as the write path.
-            content = path.read_text(encoding="utf-8-sig")  # read once: marker + uuid both come from it
-        except Exception:
-            continue
+    index.out_of_root.extend(out_of_root)
+    for path in files:
+        content = contents[path]
         if file_is_ignored(content):
             continue
         status, u = read_frontmatter_uuid(content)
@@ -160,3 +193,18 @@ def build_index(root: Path, excludes: set[str] = DEFAULT_EXCLUDES) -> Frontmatte
         else:
             index.by_uuid[u] = path
     return index
+
+
+def build_index(root: Path, excludes: set[str] = DEFAULT_EXCLUDES) -> FrontmatterIndex:
+    """Scan `root` and map each frontmatter `uuid` to its file. Records duplicates separately.
+
+    Files carrying the `<!-- darnlink-ignore-file -->` marker are skipped: an opted-out file is not
+    a resolvable target, so a robust link pointing at its uuid is reported unresolvable (FR-019).
+
+    Does its OWN scan — this is the entry point for every caller that only needs the index (`repair`
+    CLI's target resolution, tests, external consumers). A caller that ALSO needs `plan_repairs`
+    and/or `plan_robustify` on the SAME tree should call `scan_tree` once and pass the result to all
+    three, via `index_from_contents` for this half — see `_run_check` in `cli.py`.
+    """
+    files, contents, out_of_root = scan_tree(root, excludes)
+    return index_from_contents(files, contents, out_of_root)
