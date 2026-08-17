@@ -129,3 +129,66 @@ def test_every_cli_output_path_reports_it_not_just_the_human_one(tmp_path, capsy
         main(argv)
         out = capsys.readouterr().out
         assert "out_of_root" in out or "out-of-root" in out, f"silent path: darnlink {' '.join(argv)}"
+
+
+def test_write_never_touches_a_symlink_path_in_real_use(tmp_path):
+    """D2: the invariant that makes writing through a symlink safe, PROVEN by driving the actual
+    real-world layout end to end (AGENTS.md -> CLAUDE.md), not just read off the code.
+
+    Every path that reaches `write_text_keep_newlines` comes from `iter_markdown_files`, directly
+    or via an href resolved against a file that did -- and that function yields
+    `Path.resolve(strict=True)`, which dereferences every symlink. So a write driven through the
+    symlink NAME still lands on the canonical file, and never on the link itself.
+    """
+    import darnlink.robustify as rb  # the name as bound in THIS module -- patching
+    from darnlink.frontmatter_edit import write_text_keep_newlines as orig
+    from darnlink.robustify import apply_robustify, plan_robustify
+
+    # `darnlink.frontmatter_edit.write_text_keep_newlines` here would not work: `robustify.py`
+    # imported the function by name at module load, so it holds its own reference.
+
+    seen: list[tuple[str, bool]] = []
+
+    def spy(path, content):
+        seen.append((str(path), Path(path).is_symlink()))
+        return orig(path, content)
+
+    rb.write_text_keep_newlines = spy
+    try:
+        (tmp_path / "CLAUDE.md").write_text("# Instrucciones\n", encoding="utf-8")
+        (tmp_path / "AGENTS.md").symlink_to("CLAUDE.md")
+        (tmp_path / "A.md").write_text("[ver](AGENTS.md)\n", encoding="utf-8")
+
+        apply_robustify(plan_robustify(tmp_path, create_frontmatter=True))
+    finally:
+        rb.write_text_keep_newlines = orig
+
+    assert seen, "the spy never fired -- the fixture stopped exercising a write at all"
+    assert not any(is_link for _, is_link in seen), f"a symlink path reached the write site: {seen!r}"
+    # And the write really did go through: CLAUDE.md (the canonical file) carries the new uuid,
+    # readable through either name since they are the same inode.
+    assert "uuid:" in (tmp_path / "CLAUDE.md").read_text()
+    assert (tmp_path / "CLAUDE.md").read_text() == (tmp_path / "AGENTS.md").read_text()
+
+
+def test_write_text_keep_newlines_refuses_a_symlink_path_directly(tmp_path):
+    """The other half: prove the assertion actually FIRES, not just that real use never trips it.
+
+    No caller in this codebase can reach `write_text_keep_newlines` with a symlink path today (the
+    test above proves that for the one real layout this project cares about) -- so the only way to
+    exercise the guard itself is to call the function directly with one, bypassing
+    `iter_markdown_files` on purpose. That is exactly the scenario the guard exists for: some FUTURE
+    caller that bypasses the resolution `iter_markdown_files` normally guarantees.
+    """
+    import pytest
+
+    from darnlink.frontmatter_edit import write_text_keep_newlines
+
+    (tmp_path / "CLAUDE.md").write_text("# Instrucciones\n", encoding="utf-8")
+    (tmp_path / "AGENTS.md").symlink_to("CLAUDE.md")
+
+    with pytest.raises(AssertionError, match="refusing to write through a symlink"):
+        write_text_keep_newlines(tmp_path / "AGENTS.md", "new content\n")
+
+    # And the guard did its job: nothing was touched through either name.
+    assert (tmp_path / "CLAUDE.md").read_text() == "# Instrucciones\n"
