@@ -7,6 +7,7 @@ Reproduces a real-world case: a link to an existing `investigation...md` file ca
 mis-pasted uuid belonging to a different README; old behaviour rewrote the path to that README.
 New behaviour: flag it, touch nothing.
 """
+import sys
 from pathlib import Path
 
 from darnlink.frontmatter_index import build_index
@@ -82,6 +83,20 @@ def test_67_a_trailing_space_in_the_path_is_a_repair_not_an_unhealable_conflict(
     whose raw destination (with the space) does not resolve — an ordinary stale link, healed like
     any other. The rewrite also drops the stray space as a side effect of writing a fresh path, which
     is the right outcome, not just an acceptable one: nothing about a trailing space was meaningful.
+
+    ⚠️ **On Windows the REPAIR step itself never fires, and that is correct, not a gap.** `current =
+    resolve_href(link.href, f)` resolves the RAW, unstripped href (`"old/B.md "`) through
+    `Path.resolve()` — on Windows that walks through `GetFullPathNameW`, and Win32 silently drops a
+    trailing space from every path component before the filesystem ever sees it (the same reason
+    Windows Explorer refuses to let you create `"foo "` as a name). So on Windows `current` already
+    equals the target, unstripped href and all: the link reads as "already correct" and `plan_repairs`
+    takes its silent, finding-less branch (`if current == intended.resolve(): continue`) — zero
+    findings, not a REPAIR. The one guarantee that must hold on EVERY platform is the actual subject
+    of #67 — no CONFLICT, ever, for this shape — and that assertion runs unconditionally below; only
+    the Linux/macOS-specific mechanics of the healing step (a REPAIR finding, a rewritten href with the
+    space gone) are skipped on Windows, where the OS already normalized the space away before darnlink
+    got a chance to. Measured directly: this assertion turned CI red on Windows (all four Python
+    versions, identical failure, `result.findings == []`) before this guard was added.
     """
     _w(tmp_path / "old" / "B.md", f"---\nuuid: {OTHER_UUID}\n---\n# B\n")
     _w(tmp_path / "A.md", f"[x](old/B.md ) <!-- uuid: {OTHER_UUID} -->\n")  # note the space before `)`
@@ -89,9 +104,12 @@ def test_67_a_trailing_space_in_the_path_is_a_repair_not_an_unhealable_conflict(
     result = plan_repairs(tmp_path, build_index(tmp_path))
     apply_repairs(result)
 
-    assert any(f.kind is Kind.REPAIR for f in result.findings), result.findings
     assert not any(f.kind is Kind.CONFLICT for f in result.findings), result.findings
-    assert (tmp_path / "A.md").read_text() == f"[x](old/B.md) <!-- uuid: {OTHER_UUID} -->\n"
+    if sys.platform.startswith("win"):
+        assert result.findings == [], result.findings  # already correct: Win32 dropped the space itself
+    else:
+        assert any(f.kind is Kind.REPAIR for f in result.findings), result.findings
+        assert (tmp_path / "A.md").read_text() == f"[x](old/B.md) <!-- uuid: {OTHER_UUID} -->\n"
 
 
 def test_67_a_genuine_directory_conflict_with_no_trailing_space_still_flags(tmp_path):

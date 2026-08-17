@@ -90,6 +90,16 @@ def names_md(href: str) -> bool:
     uses the href verbatim, so a link whose destination genuinely differs only by that space still
     fails to resolve to the real file and gets corrected by the normal repair-a-stale-link path, not
     silently treated as already-correct.
+
+    ⚠️ `robustify._anchor_target` and `_dir_link_missing_readme` have the SAME "type says file/dir,
+    raw resolution finds nothing" combination for a plain (not-yet-anchored) link -- confirmed by
+    reproduction, not fixed here. #67's own body names both sites explicitly and defers them to #74,
+    which is still open: a prior attempt at exactly this kind of edge-strip (nine review rounds, #62)
+    shipped a "121/121 vs cmark" formulation that still regressed two real files in the fleet, because
+    it reasoned about the destination's *edges* and never measured its *interior* against a real
+    corpus. `tests/test_dangling_links.py::test_whitespace_around_a_destination_is_NOT_stripped_here`
+    pins the current (unstripped) behaviour on the sibling `dangling` axis for exactly this reason --
+    do not widen the strip here to those two call sites without going through #74.
     """
     path_part, _ = split_fragment(href)
     return path_part.strip().lower().endswith(".md")

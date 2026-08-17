@@ -318,6 +318,29 @@ def test_whitespace_around_a_destination_is_NOT_stripped_here(tmp_path):
     assert " B.md " in found[0].detail
 
 
+def test_a_plain_link_with_only_a_trailing_space_is_also_NOT_anchored_here(tmp_path):
+    """Sibling of the test above, pinned separately because it is the exact shape #67 shipped a fix
+    for on the OTHER axis, and #67's own body names `_anchor_target` as a site that shares the bug
+    but is explicitly deferred to #74 (re-scoped 2026-08-13: "read #74 for the stripping rule
+    itself"). `repair` now handles `old/B.md ` correctly (an already-anchored link with this shape is
+    repaired, not misdiagnosed as an unhealable CONFLICT) — but a PLAIN link with the same trailing
+    space, going through `_anchor_target` first, still cannot be told apart from a genuinely dangling
+    one: `names_md("old/B.md ")` is true (stripped), yet `_anchor_target` resolves existence against
+    the UNSTRIPPED href, finds nothing, and returns None just like it always has. This is deliberate,
+    not an oversight — see the `names_md` docstring in `paths.py` — and this test is what makes that
+    deliberateness checkable rather than merely asserted in prose.
+
+    ⚠️ When #74 lands, this test must invert too (assert the link IS anchored), for the same reason
+    its sibling above must.
+    """
+    _w(tmp_path / "old" / "B.md", f"---\nuuid: {U_A}\n---\n# B\n")
+    _w(tmp_path / "A.md", "[x](old/B.md )\n")  # trailing space only, no uuid comment yet: plain
+
+    found = _dangling(plan_robustify(tmp_path))
+    assert len(found) == 1, "a plain link's trailing-space destination now resolves — check #74"
+    assert "old/B.md " in found[0].detail
+
+
 def test_balanced_parentheses_in_a_destination_are_not_truncated(tmp_path):
     """#71: CommonMark allows balanced parentheses in a destination; `[^)]+` stopped at the first.
 
