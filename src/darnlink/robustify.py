@@ -209,6 +209,7 @@ def plan_robustify(
     only: Optional[Set[Path]] = None,
     allow_target_writes: bool = True,
     create_readme: bool = False,
+    prescanned: Optional[Tuple[List[Path], Dict[Path, str], List[Path]]] = None,
 ) -> RobustifyResult:
     """Plan the robustify pass over `root` (no writes).
 
@@ -220,6 +221,15 @@ def plan_robustify(
     `allow_target_writes=False` refuses the one write that legitimately lands outside `only`: adding
     a `uuid` to a *target* so the link can be anchored at all (FR-006). Such links stay plain and are
     reported.
+
+    `prescanned` (#87): `(files, contents, out_of_root)` from a `scan_tree` the CALLER already ran —
+    `check` builds its integrity-axis `index` from one and passes it here too, so this function's own
+    walk-and-read of the same tree is skipped. Every other caller leaves it `None` and gets the exact
+    behaviour this function always had: its own scan.
+
+    ⚠️ `contents` is COPIED, never mutated in place: `--create-readme` (below) adds planned READMEs
+    to its own local dict, and the caller's dict — potentially shared with `plan_repairs` in the same
+    `check` invocation — must not see writes that never happened on ITS run.
     """
     # Feature 012: --create-readme implies --create-frontmatter, and the implication lives HERE (not
     # only in the CLI) so it holds for every caller — a run willing to create a whole README is willing
@@ -232,9 +242,17 @@ def plan_robustify(
     contents: Dict[Path, str] = {}
     spans: Dict[Path, list] = {}
     files: List[Path] = []
-    for f in iter_markdown_files(root, excludes, out_of_root=result.out_of_root):
+    if prescanned is not None:
+        pre_files, pre_contents, pre_out_of_root = prescanned
+        result.out_of_root.extend(pre_out_of_root)
+        file_source: List[Path] = pre_files
+        content_lookup: Optional[Dict[Path, str]] = pre_contents
+    else:
+        file_source = list(iter_markdown_files(root, excludes, out_of_root=result.out_of_root))
+        content_lookup = None
+    for f in file_source:
         try:
-            c = read_text_keep_newlines(f)
+            c = content_lookup[f] if content_lookup is not None else read_text_keep_newlines(f)
         except Exception:
             continue
         if file_is_ignored(c):
@@ -244,7 +262,7 @@ def plan_robustify(
         # be able to RECEIVE its own uuid as a target (FR-035), and that write lives in the Phase B
         # loop. Only the link-rewriting halves (Phase A's decide, Phase B's annotate) skip it.
         files.append(f)
-        contents[f] = c
+        contents[f] = c  # this run's OWN copy — see the docstring note on --create-readme below
         if file_ignores_links(c):
             link_ignored.add(f.resolve())
             continue  # no spans: nothing reads them for this file, and computing them re-parses it
