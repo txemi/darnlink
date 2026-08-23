@@ -203,6 +203,10 @@ case "${WEB,,}" in ""|0|false|no|off) WEB="" ;; *) WEB=1 ;; esac
 mapfile -t OWN_WEB < <(read_cfg own_web "")
 OWN_WEB_N="$(read_cfg_len own_web)"; [[ "$OWN_WEB_N" =~ ^[0-9]+$ ]] || OWN_WEB_N=0
 OWN_WEB_FROM_ORIGIN="${DARNLINK_GATE_OWN_WEB_FROM_ORIGIN:-$(read_cfg own_web_from_origin "")}"
+# Feature 017 (opt-in, needs `web`): also watch the destinations a mermaid diagram carries in
+# its `click` directives. ABSENT MEANS OFF, per repository: a fleet of fail-closed gates has to
+# be able to switch this on one repo at a time. These links are report-only and never anchored.
+INCLUDE_MERMAID="${DARNLINK_GATE_INCLUDE_MERMAID:-$(read_cfg include_mermaid "")}"
 case "${OWN_WEB_FROM_ORIGIN,,}" in ""|0|false|no|off) OWN_WEB_FROM_ORIGIN="" ;; *) OWN_WEB_FROM_ORIGIN=1 ;; esac
 # A budget, so the rung is adoptable before a repo reaches zero. Non-numeric counts as ABSENT, never as
 # infinite: silently WIDENING an allowance is the one direction a config typo must not be able to go —
@@ -457,6 +461,7 @@ if [ "$SCOPE" != "staged" ]; then
       for o in "${OWN_WEB[@]}"; do
         [ -n "$o" ] && { WEB_ARGS+=(--own "$o"); OWN_PASSED=1; OWN_WEB_USED=$((OWN_WEB_USED + 1)); }
       done
+      [ -n "$INCLUDE_MERMAID" ] && WEB_ARGS+=(--include-mermaid)
       [ -n "$OWN_WEB_FROM_ORIGIN" ] && { WEB_ARGS+=(--own-from-origin); OWN_PASSED=1; }
       [ -n "$OWN_WEB_MAX" ]         && { WEB_ARGS+=(--own-max "$OWN_WEB_MAX"); OWN_PASSED=1; }
       # An owner entry that is present but empty is a typo, and a silent one: the axis would run with

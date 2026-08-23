@@ -6,6 +6,24 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Feature 017 — the read axis can see a diagram's `click` destinations** (`--include-mermaid`,
+  recipe key `include_mermaid`). **Off by default, per repository.** A `mermaid` diagram carries
+  its links in `click` directives, which live inside a fenced block: feature 002 hides them from
+  every axis, including the read-only ones, so they die silently when a file moves and no gate ever
+  notices. Measured on a real tree, one folder reorganisation killed 14 of a diagram's destinations
+  at once while everything stayed green.
+
+  - **The write operations are unchanged.** FR-015 is not amended: repair and robustify still
+    ignore every link inside every fence. This is the read axis only.
+  - **These links are never anchored** — they are report-only. The anchor is a trailing HTML
+    comment, and a diagram treats that as a node rather than a comment, so writing one would
+    corrupt the drawing. A diagram destination that stays plain forever is a normal state.
+  - **No new dependency.** The destination grammar was measured over 2,165 real directives and
+    reduces to three single-line shapes, so it is recognised by a pure textual function; the
+    fenced-region computation is reused rather than reimplemented.
+
 ## [0.24.0] — 2026-08-17
 
 > ### ⚠️ Two consumer-visible changes; both informational, neither moves the exit code
