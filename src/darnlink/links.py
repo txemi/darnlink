@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import List, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 # The BODY of a pandoc attribute block, between its own `{` and `}` — one definition, shared by
 # ROBUST_LINK_RE's `attrs` group below and by `_PANDOC_ATTR_RE` further down. `[^{}\n]*` alone (the
@@ -233,23 +233,62 @@ def code_spans(content: str) -> List[Span]:
 #: line with the destination double-quoted. That is a REGULAR language: no nesting, no recursion,
 #: which is why a grammar engine was evaluated and rejected (research R1). A directive that binds a
 #: callback (`call cb()` / `callback`) carries no destination and simply does not match (FR-057).
-# `(?:^|;)` and not `^` alone: a diagram may chain statements on one physical line with `;`, and
-# anchoring only to the line start silently misses every directive but the first -- a false negative
-# in a feature whose whole purpose is that destinations stop dying unnoticed. It also makes the
-# comment guard below LOAD-BEARING: with `^` alone a `%%` line could never match, so the guard was
-# unreachable and its test passed for an unrelated reason.
-_MERMAID_CLICK_RE = re.compile(
-    r'(?:^|;)[ \t]*(?P<kw>click)[ \t]+\S+[ \t]+(?:href[ \t]+)?"(?P<dest>[^"\n]+)"',
-    re.M,
-)
+# --- Recognising a `click` directive: a LINE READER, deliberately not a regular expression ------
+#
+# The first implementation used one, and two of the three defects review found in this feature came
+# from regex semantics rather than from the language being hard: an `^` anchor that made a guard
+# unreachable, and that same `^` compiled without MULTILINE while used through `.match(pos)`, which
+# only ever matches at index 0. Neither mistake is possible below, because none of those concepts
+# exist here. The language is line-oriented and tiny; reading it as lines is both simpler and the
+# "traditional, auditable algorithm a human can verify" the constitution asks for (Principle IV).
 
-#: A diagram comments with `%%`, not with `<!-- -->`. A comment line must never yield a destination
-#: even when it quotes a whole directive (FR-056) -- and that case is real, not hypothetical.
-# No `^`: this is used as `.match(body, line_start)`, which already anchors AT that position,
-# and `^` without re.M only ever matches at index 0 of the string. With it, the guard was
-# unreachable except for a comment on the very first line of a region -- which is why its
-# test passed while testing nothing.
-_MERMAID_COMMENT_RE = re.compile(r"[ \t]*%%")
+
+def _split_statements(line: str) -> List[Tuple[int, str]]:
+    """`(offset within the line, text)` for each `;`-separated statement.
+
+    Quote-aware on purpose: a destination may legitimately contain `;`
+    (`click A "http://x/y;z"`), and a naive split would cut it in half and then discard it for
+    having an unterminated quote -- turning a working link into a silently unwatched one."""
+    out: List[Tuple[int, str]] = []
+    start = 0
+    in_quotes = False
+    for i, ch in enumerate(line):
+        if ch == '"':
+            in_quotes = not in_quotes
+        elif ch == ";" and not in_quotes:
+            out.append((start, line[start:i]))
+            start = i + 1
+    out.append((start, line[start:]))
+    return out
+
+
+def _click_destination(statement: str) -> Optional[str]:
+    """The quoted destination of one `click` statement, or None if it does not carry one.
+
+    Accepts `click <id> "<dest>" ...` and `click <id> href "<dest>" ...`; a trailing target or
+    tooltip is irrelevant. Returns None for a directive that binds a callback (`call cb()`,
+    `callback`), which carries no destination at all (FR-057)."""
+    rest = statement.lstrip(" \t")
+    if not rest.startswith("click"):
+        return None
+    rest = rest[len("click"):]
+    if rest[:1] not in (" ", "\t"):
+        return None  # `clickable`, `clicked`, ... are not the directive
+    rest = rest.lstrip(" \t")
+    node_end = 0
+    while node_end < len(rest) and rest[node_end] not in " \t":
+        node_end += 1
+    if node_end == 0:
+        return None  # no node id
+    rest = rest[node_end:].lstrip(" \t")
+    if rest.startswith("href") and rest[4:5] in (" ", "\t"):
+        rest = rest[4:].lstrip(" \t")
+    if not rest.startswith('"'):
+        return None  # a callback binding, or anything else that is not a quoted destination
+    close = rest.find('"', 1)
+    if close == -1:
+        return None  # an unterminated quote is not a destination
+    return rest[1:close] or None
 
 
 def mermaid_region_bodies(content: str) -> List[Span]:
@@ -281,11 +320,19 @@ def mermaid_click_destinations(content: str) -> List[Tuple[int, str]]:
     out: List[Tuple[int, str]] = []
     for body_start, body_end in mermaid_region_bodies(content):
         body = content[body_start:body_end]
-        for m in _MERMAID_CLICK_RE.finditer(body):
-            line_start = body.rfind("\n", 0, m.start()) + 1
-            if _MERMAID_COMMENT_RE.match(body, line_start):
+        line_start = 0
+        for line in body.splitlines(keepends=True):
+            # A diagram comments with `%%`. Checked once per LINE, before anything is parsed, so a
+            # comment cannot contribute a destination however it is written (FR-056).
+            if line.lstrip(" \t").startswith("%%"):
+                line_start += len(line)
                 continue
-            out.append((body_start + m.start("kw"), m["dest"]))
+            for offset, statement in _split_statements(line):
+                dest = _click_destination(statement)
+                if dest is not None:
+                    lead = len(statement) - len(statement.lstrip(" \t"))
+                    out.append((body_start + line_start + offset + lead, dest))
+            line_start += len(line)
     return out
 
 

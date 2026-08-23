@@ -195,7 +195,7 @@ def test_report_only_survives_the_union():
     """The union is where a property is most easily dropped: two lists merged, one of them losing
     what made it special."""
     content = DIAGRAM + f"\nAnd a prose link: [alive]({LIVE})\n"
-    links = find_web_links(content, code_spans(content), include_mermaid=True)
+    links = find_web_links(content, code_spans(content), include_mermaid=True, block_spans=())
     by_flag = {}
     for link in links:
         by_flag.setdefault(link.report_only, []).append(link)
@@ -417,3 +417,38 @@ def test_a_relative_destination_inside_a_diagram_is_not_reported():
     filter broke no test."""
     content = '```mermaid\nflowchart TD\n  click A href "../src/report.py" _blank\n```\n'
     assert find_mermaid_web_links(content) == []
+
+
+# --------------------------------------------------------------------------------------------
+# Round 2 of review, and the rewrite that followed it
+# --------------------------------------------------------------------------------------------
+
+def test_a_semicolon_inside_the_destination_does_not_split_it():
+    """Statement splitting is quote-aware. A naive split would cut this destination in half and then
+    drop it for having an unterminated quote -- a working link turned silently unwatched, which is
+    the exact harm this feature exists to prevent."""
+    content = '```mermaid\nflowchart TD\n  click A "http://x/y;z" _blank\n```\n'
+    assert [d for _, d in mermaid_click_destinations(content)] == ["http://x/y;z"]
+
+
+def test_a_word_beginning_with_click_is_not_the_directive():
+    content = '```mermaid\nflowchart TD\n  clickable A "http://x/y" _blank\n```\n'
+    assert mermaid_click_destinations(content) == []
+
+
+def test_an_unterminated_quote_yields_nothing():
+    content = '```mermaid\nflowchart TD\n  click A "http://x/y _blank\n```\n'
+    assert mermaid_click_destinations(content) == []
+
+
+def test_forgetting_the_ignore_block_regions_is_an_error_not_a_silent_pass():
+    """The default is deliberately absent rather than permissive. A third call-site that forgot this
+    would reintroduce the exact defect review caught -- silently. Now it cannot."""
+    with pytest.raises(ValueError, match="block_spans"):
+        find_web_links(DIAGRAM, code_spans(DIAGRAM), include_mermaid=True)
+
+
+def test_stating_there_are_no_ignore_blocks_is_allowed():
+    """`()` is a statement, not an omission: the caller says it has none, and gets the links."""
+    got = find_web_links(DIAGRAM, code_spans(DIAGRAM), include_mermaid=True, block_spans=())
+    assert sorted(w.href for w in got) == sorted([LIVE, DEAD])

@@ -157,7 +157,7 @@ def find_mermaid_web_links(content: str, ignore: Sequence[Span] = ()) -> List[We
 
 def find_web_links(content: str, ignore: Sequence[Span] = (),
                    include_mermaid: bool = False,
-                   block_spans: Sequence[Span] = ()) -> List[WebLink]:
+                   block_spans: Optional[Sequence[Span]] = None) -> List[WebLink]:
     """All Markdown links whose href is an http(s) URL, in document order, skipping `ignore` spans.
     A trailing `<!-- web-uuid: owner/repo#X -->` marks the link as already anchored (its uuid is captured)."""
     out: List[WebLink] = []
@@ -175,6 +175,19 @@ def find_web_links(content: str, ignore: Sequence[Span] = (),
         exempt = _TRAILING_OWN_EXEMPT_RE.match(content, end) is not None
         out.append(WebLink(m["text"], href, uuid, m.start(), end, exempt))
     if include_mermaid:
+        if block_spans is None:
+            # NOT a default of `()`. A permissive default is how the original defect got in: the
+            # mermaid path silently skipped `--ignore-block` and nothing complained. A caller that
+            # has no ignore-blocks says so by passing `()`; one that forgot gets this, loudly,
+            # instead of a quiet regression that only shows up as a user's ignored diagram being
+            # reported anyway. Same reasoning as FR-060 making `report_only` a property of the item
+            # rather than something a caller must remember.
+            raise ValueError(
+                "find_web_links(include_mermaid=True) needs block_spans: pass the --ignore-block "
+                "regions (ignored_spans(content, markers)), or () to state there are none. Do NOT "
+                "pass the merged `ignore` list -- mermaid destinations live inside code spans by "
+                "construction, so it would discard every one of them."
+            )
         # Lifting the fence exclusion alone would find NOTHING: this scan looks for Markdown link
         # syntax, and a `click` directive is not that. The item has to be produced (research R3).
         #
