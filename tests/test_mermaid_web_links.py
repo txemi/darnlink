@@ -520,3 +520,14 @@ def test_href_must_be_a_word_of_its_own():
     silently accept a shape mermaid does not define."""
     content = '```mermaid\nflowchart TD\n  click A href"http://x.example"\n```\n'
     assert mermaid_click_destinations(content) == []
+
+
+def test_the_phantom_is_blocked_even_when_it_is_not_the_first_directive_on_the_line():
+    """Round 5 found the round-4 test was pinned at offset 0, where the consumed span happens to
+    equal its own end -- so an off-by-origin in that arithmetic was indistinguishable. Putting a
+    healthy directive first makes the two forms diverge, and the phantom reappears if it is wrong."""
+    content = ('```mermaid\nflowchart TD\n'
+               '  click Z "http://z.example" _blank; '
+               'click A "http://ok.example; click B "http://evil.example""\n```\n')
+    assert [d for _, d in mermaid_click_destinations(content)] == \
+        ["http://z.example", "http://ok.example; click B "]
