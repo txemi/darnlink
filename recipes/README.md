@@ -68,6 +68,24 @@ is that orchestration in one place; a consumer carries only a tiny config + a 3-
   | `own_web_from_origin` | bool | also count this repo's `origin` owner. A **separate key, not a sentinel** in the list, so an owner literally called `origin` stays expressible |
   | `own_web_max` | int | a budget, so the rung is adoptable before the repo reaches zero. **Non-numeric counts as ABSENT, never as infinite** — widening an allowance is the one direction a config typo must not be able to go |
 
+- `include_mermaid` (opt-in, **needs `web`**) → feature 017. A `mermaid` diagram carries its
+  destinations in `click` directives, which sit inside a fenced block and are therefore invisible to
+  every axis. With this key the **read** axis sees them; the write operations still never look
+  inside a fence.
+
+  | key | Value | Meaning |
+  |---|---|---|
+  | `include_mermaid` | bool | watch the destinations a diagram's `click` directives carry |
+
+  **Absent means off, per repository** — on purpose. Measured across a fleet, switching this on
+  exposed 33 own-repository destinations in one repo (all valid, so it goes green on day one) and
+  over two thousand third-party ones in others, which cannot be fixed from where they are reported.
+  A fail-closed gate that switches itself on everywhere is how every push breaks at once.
+
+  ⚠️ These links are **report-only and never anchored**, so a diagram destination that stays plain
+  forever is a normal state, not a defect: the anchor is an HTML comment and a diagram renders it as
+  a node rather than treating it as a comment.
+
   A misconfiguration (a budget with no owners, an empty owner name, `own_web_from_origin` in a tree
   with no GitHub `origin`) exits `1`, and the recipe reports it as **likely-config** rather than as a
   verdict about the repository — but **only when this run actually passed an `own_*` flag**, because

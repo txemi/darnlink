@@ -74,6 +74,12 @@ $ownWeb = @(if ($cfg -and $cfg.PSObject.Properties.Name -contains 'own_web') { $
 $rawOWFO = if ($null -ne $env:DARNLINK_GATE_OWN_WEB_FROM_ORIGIN) { $env:DARNLINK_GATE_OWN_WEB_FROM_ORIGIN } else { CfgOr 'own_web_from_origin' '' }
 $ownWebFromOrigin = -not ([string]::IsNullOrWhiteSpace([string]$rawOWFO) -or
                           ([string]$rawOWFO).Trim().ToLower() -in @('0','false','no','off'))
+
+# Feature 017 (opt-in, needs `web`): also watch the destinations a mermaid diagram carries in its
+# `click` directives. ABSENT MEANS OFF, per repository. Report-only: never anchored.
+$rawIM = if ($null -ne $env:DARNLINK_GATE_INCLUDE_MERMAID) { $env:DARNLINK_GATE_INCLUDE_MERMAID } else { CfgOr 'include_mermaid' '' }
+$includeMermaid = -not ([string]::IsNullOrWhiteSpace([string]$rawIM) -or
+                        ([string]$rawIM).Trim().ToLower() -in @('0','false','no','off'))
 # A budget, so the rung is adoptable before a repo reaches zero. Non-numeric counts as ABSENT, never as
 # infinite: silently WIDENING an allowance is the one direction a config typo must not be able to go.
 # NOT CfgOr here: it tests truthiness, and PowerShell reads the JSON `0` as [int]0, which is $false —
@@ -178,6 +184,7 @@ if ($scope -ne 'staged') {
       $ownPassed = $false
       $ownWebUsed = 0
       foreach ($o in $ownWeb) { if ($o) { $webArgs += @('--own', $o); $ownPassed = $true; $ownWebUsed++ } }
+      if ($includeMermaid)                 { $webArgs += '--include-mermaid' }
       if ($ownWebFromOrigin)               { $webArgs += '--own-from-origin'; $ownPassed = $true }
       if (-not [string]::IsNullOrEmpty($ownWebMax)) { $webArgs += @('--own-max', $ownWebMax); $ownPassed = $true }
       # Same two warnings as the bash recipe, same wording: an owner entry that is present but empty

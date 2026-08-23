@@ -31,7 +31,8 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from .frontmatter_index import read_frontmatter_uuid
-from .links import MD_LINK_RE, Span, _in_spans, code_spans, ignored_spans
+from .links import (MD_LINK_RE, Span, _in_spans, code_spans, ignored_spans,
+                    mermaid_click_destinations)
 
 # A web anchor is DELIBERATELY marked `web-uuid` (not the core's `uuid`): the destination uuid lives
 # in ANOTHER repo, so the core's intra-repo repair/robustify — which keys on `<!-- uuid: X -->` — must
@@ -131,9 +132,32 @@ class WebLink:
     start: int
     end: int
     exempt: bool = False  # FR-011: carries <!-- darnlink-own-exempt -->
+    #: FR-060 -- recognised inside a diagram, where the anchor comment would be a NODE, not a
+    #: comment. A property of the item and not an argument of the caller: a rule the call site
+    #: must remember is a rule that disappears the day someone adds a second call site.
+    report_only: bool = False
 
 
-def find_web_links(content: str, ignore: Sequence[Span] = ()) -> List[WebLink]:
+def find_mermaid_web_links(content: str, ignore: Sequence[Span] = ()) -> List[WebLink]:
+    """Destinations carried by a diagram's `click` directives, in the shape the axis already
+    consumes (research R3), so classification, exit codes and feature 016's own-repo rule apply
+    with no special case downstream.
+
+    `text` is empty and `end == start`: a directive has no link text and nothing may ever be
+    written over it. Every item is `report_only` (FR-060)."""
+    out: List[WebLink] = []
+    for offset, dest in mermaid_click_destinations(content):
+        if not dest.strip().lower().startswith(("http://", "https://")):
+            continue  # relative destinations inside a diagram: measured zero, out of scope
+        if _in_spans(offset, ignore):
+            continue  # FR-058: composes with --ignore-block, like every other link
+        out.append(WebLink("", dest, None, offset, offset, False, report_only=True))
+    return out
+
+
+def find_web_links(content: str, ignore: Sequence[Span] = (),
+                   include_mermaid: bool = False,
+                   block_spans: Optional[Sequence[Span]] = None) -> List[WebLink]:
     """All Markdown links whose href is an http(s) URL, in document order, skipping `ignore` spans.
     A trailing `<!-- web-uuid: owner/repo#X -->` marks the link as already anchored (its uuid is captured)."""
     out: List[WebLink] = []
@@ -150,6 +174,30 @@ def find_web_links(content: str, ignore: Sequence[Span] = ()) -> List[WebLink]:
         # deliberately does NOT cover it, so an exempt link that is ever rewritten keeps its marker.
         exempt = _TRAILING_OWN_EXEMPT_RE.match(content, end) is not None
         out.append(WebLink(m["text"], href, uuid, m.start(), end, exempt))
+    if include_mermaid:
+        if block_spans is None:
+            # NOT a default of `()`. A permissive default is how the original defect got in: the
+            # mermaid path silently skipped `--ignore-block` and nothing complained. A caller that
+            # has no ignore-blocks says so by passing `()`; one that forgot gets this, loudly,
+            # instead of a quiet regression that only shows up as a user's ignored diagram being
+            # reported anyway. Same reasoning as FR-060 making `report_only` a property of the item
+            # rather than something a caller must remember.
+            raise ValueError(
+                "find_web_links(include_mermaid=True) needs block_spans: pass the --ignore-block "
+                "regions (ignored_spans(content, markers)), or () to state there are none. Do NOT "
+                "pass the merged `ignore` list -- mermaid destinations live inside code spans by "
+                "construction, so it would discard every one of them."
+            )
+        # Lifting the fence exclusion alone would find NOTHING: this scan looks for Markdown link
+        # syntax, and a `click` directive is not that. The item has to be produced (research R3).
+        #
+        # ⚠️ `block_spans`, NOT `ignore`, and the distinction is load-bearing rather than fussy:
+        # `ignore` is `--ignore-block` regions PLUS code regions, and a mermaid destination lives
+        # inside a code region BY CONSTRUCTION -- filtering by the merged list would discard every
+        # one of them. `block_spans` carries only what the user asked to ignore, which is what
+        # FR-058 says this must compose with.
+        out.extend(find_mermaid_web_links(content, block_spans))
+        out.sort(key=lambda w: w.start)
     return out
 
 
@@ -344,6 +392,16 @@ def _classify(link: WebLink, gu: Optional[GithubUrl], status: int, dest_uuid: Op
         # `--own` would let `--write` rewrite the very files it was placed to protect.
         return WebFinding("web_own_exempt", f, link.href,
                           "carries <!-- darnlink-own-exempt -->; never anchored, never called stale")
+    if link.report_only:
+        # FR-060. The guard lives HERE, where the condition for writing is decided, and not in the
+        # loop that happens to call this today: `web_anchor` is the only kind that produces an edit,
+        # so never assigning it makes a corrupted diagram unreachable from ANY caller, present or
+        # future. The destination is still watched -- 404 and mismatch were decided above, and a dead
+        # link inside a drawing is exactly what this feature exists to surface.
+        return WebFinding("web_ok", f, link.href,
+                          "destination reachable; inside a diagram, so never anchored — a diagram "
+                          "comments with %% and the anchor is an HTML comment, which would render "
+                          "as a node")
     if link.uuid is None:
         # plain web link -> anchor it if the destination has a uuid
         if dest_uuid:
@@ -384,6 +442,7 @@ def check_web_links_online(
     excludes: Optional[set] = None,
     owners: frozenset = frozenset(),
     out_of_root: Optional[List[Path]] = None,
+    include_mermaid: bool = False,
 ) -> Tuple[List[WebFinding], Dict[Path, str]]:
     """Fetch each web link's destination (once, cached per URL) and classify it. Returns the findings
     and the per-file rewritten content for any `web_anchor` (the caller writes it only under --write).
@@ -414,8 +473,9 @@ def check_web_links_online(
         # semantics than the core's "removed from the graph entirely", declared rather than left to the
         # reader. `--ignore-block` is out of this and unchanged (FR-015).
         filtered = file_is_ignored(content) or file_ignores_links(content)
-        ignore = ignored_spans(content, block_markers) + code_spans(content)
-        links = find_web_links(content, ignore)
+        blocks = ignored_spans(content, block_markers)
+        ignore = blocks + code_spans(content)
+        links = find_web_links(content, ignore, include_mermaid=include_mermaid, block_spans=blocks)
         if not links:
             continue
         pieces: List[str] = []

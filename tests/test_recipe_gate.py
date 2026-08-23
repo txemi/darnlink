@@ -44,6 +44,7 @@ _LEAKY_ENV = (
     "DARNLINK_GATE_WEB", "DARNLINK_GATE_CREATE_README", "DARNLINK_GATE_TOKEN_FILE",
     "DARNLINK_GATE_DANGLING", "DARNLINK_GATE_DANGLING_MAX",
     "DARNLINK_GATE_OWN_WEB_FROM_ORIGIN", "DARNLINK_GATE_OWN_WEB_MAX",
+    "DARNLINK_GATE_INCLUDE_MERMAID",
     # ⚠️ And git's own. `git` exports these to every hook it runs, so when this suite is executed
     # FROM the repo's pre-commit hook (`tools/check.sh`), an un-scrubbed `git` in a test inherits
     # GIT_DIR from the outer repo while using the sandbox as its work tree. That combination is not

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import List, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 # The BODY of a pandoc attribute block, between its own `{` and `}` — one definition, shared by
 # ROBUST_LINK_RE's `attrs` group below and by `_PANDOC_ATTR_RE` further down. `[^{}\n]*` alone (the
@@ -220,6 +220,134 @@ def code_spans(content: str) -> List[Span]:
     are examples, not navigational links, and must never be rewritten (FR-015). Pure & deterministic."""
     fenced = _fenced_code_spans(content)
     return fenced + _inline_code_spans(content, fenced)
+
+
+# --- Feature 017: destinations carried by a diagram's `click` directives ---------------------
+#
+# These live next to the region computation they depend on, and DELIBERATELY know nothing about
+# web links: they yield `(offset, destination)`, so `links.py` never has to import `weblinks.py`
+# and there is no second notion of what a fenced block is (FR-054).
+
+#: `click <id> ["href"] "<dest>" [target|"tooltip"]` -- the only forms that carry a destination.
+#: Measured over 2165 real directives, three shapes account for every one of them, each on a single
+#: line with the destination double-quoted. That is a REGULAR language: no nesting, no recursion,
+#: which is why a grammar engine was evaluated and rejected (research R1). A directive that binds a
+#: callback (`call cb()` / `callback`) carries no destination and simply does not match (FR-057).
+# --- Recognising a `click` directive: a LINE READER, deliberately not a regular expression ------
+#
+# The first implementation used one, and two of the three defects review found in this feature came
+# from regex semantics rather than from the language being hard: an `^` anchor that made a guard
+# unreachable, and that same `^` compiled without MULTILINE while used through `.match(pos)`, which
+# only ever matches at index 0. Neither mistake is possible below, because none of those concepts
+# exist here. The language is line-oriented and tiny; reading it as lines is both simpler and the
+# "traditional, auditable algorithm a human can verify" the constitution asks for (Principle IV).
+
+
+def _statement_starts(line: str) -> List[int]:
+    """Offsets within the line where a statement may begin: the start, and after each `;`.
+
+    ⚠️ NO quote tracking, and that is the fix for a regression this file already had. Carrying a
+    running "am I inside quotes" flag across a whole physical line means one stray or unpaired quote
+    -- a typo in a node label, a half-pasted destination -- silently swallows every statement after
+    it, including well-formed `click` directives. A destination dying unnoticed because of an
+    unrelated typo earlier on the line is precisely the harm this feature exists to prevent.
+
+    Nothing is lost by dropping it: a destination containing `;` still survives, because the
+    destination is delimited by its own quotes in `_click_destination`, which searches forward for
+    the closing one and does not care about separators. An offset that is not the start of a
+    directive simply fails to parse and is discarded."""
+    out = [0]
+    out.extend(i + 1 for i, ch in enumerate(line) if ch == ";")
+    return out
+
+
+def _click_destination(statement: str) -> Optional[Tuple[str, int]]:
+    """`(destination, offset just past its closing quote)` for one `click` statement, or None.
+
+    The second element is what lets the caller know how much of the line this directive CONSUMED,
+    so a `;` living inside the destination cannot be mistaken for the start of another statement.
+
+    Accepts `click <id> "<dest>" ...` and `click <id> href "<dest>" ...`; a trailing target or
+    tooltip is irrelevant. Returns None for a directive that binds a callback (`call cb()`,
+    `callback`), which carries no destination at all (FR-057)."""
+    rest = statement.lstrip(" \t")
+    if not rest.startswith("click"):
+        return None
+    rest = rest[len("click"):]
+    if rest[:1] not in (" ", "\t"):
+        return None  # `clickable`, `clicked`, ... are not the directive
+    rest = rest.lstrip(" \t")
+    node_end = 0
+    while node_end < len(rest) and rest[node_end] not in " \t":
+        node_end += 1
+    if node_end == 0:
+        return None  # no node id
+    rest = rest[node_end:].lstrip(" \t")
+    if rest.startswith("href") and rest[4:5] in (" ", "\t"):
+        rest = rest[4:].lstrip(" \t")
+    if not rest.startswith('"'):
+        return None  # a callback binding, or anything else that is not a quoted destination
+    close = rest.find('"', 1)
+    if close == -1:
+        return None  # an unterminated quote is not a destination
+    dest = rest[1:close]
+    if not dest:
+        return None
+    return dest, len(statement) - len(rest) + close + 1
+
+
+def mermaid_region_bodies(content: str) -> List[Span]:
+    """Spans of the BODY of each fenced block whose info string names `mermaid` (FR-054).
+
+    Derived from `_fenced_code_spans()`, never computed independently: everything hard about the
+    boundary -- unclosed fence to EOF, closing fence of equal-or-greater length, tildes vs
+    backticks, an example fence nested in a longer one -- is inherited for free, and a second
+    computation could drift from the one the write axis obeys.
+
+    The body starts after the opening fence's line, so the info string itself is never scanned.
+    Pure & deterministic."""
+    out: List[Span] = []
+    for start, end in _fenced_code_spans(content):
+        nl = content.find("\n", start)
+        if nl == -1 or nl >= end:
+            continue  # a fence with no body (or an opener at EOF) carries nothing
+        info = content[start:nl].lstrip(" ").lstrip("`~").strip().lower()
+        if info.startswith("mermaid"):
+            out.append((nl + 1, end))
+    return out
+
+
+def mermaid_click_destinations(content: str) -> List[Tuple[int, str]]:
+    """`(absolute offset of the directive, destination)` for every `click` inside a mermaid region.
+
+    The offset is into the FILE, not into the region body: a report has to point at a place a human
+    can find. Pure & deterministic -- no network, no heuristics (FR-058)."""
+    out: List[Tuple[int, str]] = []
+    for body_start, body_end in mermaid_region_bodies(content):
+        body = content[body_start:body_end]
+        line_start = 0
+        for line in body.splitlines(keepends=True):
+            # A diagram comments with `%%`. Checked once per LINE, before anything is parsed, so a
+            # comment cannot contribute a destination however it is written (FR-056).
+            if line.lstrip(" \t").startswith("%%"):
+                line_start += len(line)
+                continue
+            # A `;` that lives INSIDE a destination is not the start of anything. Skipping the
+            # span a directive already consumed is what stops a quote embedded after such a `;`
+            # from fabricating a second, phantom destination out of text that was never a link.
+            consumed_until = 0
+            for offset in _statement_starts(line):
+                if offset < consumed_until:
+                    continue
+                statement = line[offset:]
+                found = _click_destination(statement)
+                if found is not None:
+                    dest, end = found
+                    lead = len(statement) - len(statement.lstrip(" \t"))
+                    out.append((body_start + line_start + offset + lead, dest))
+                    consumed_until = offset + end
+            line_start += len(line)
+    return out
 
 
 def _carries_marker(content: str, keyword: str, marker_re: "re.Pattern[str]") -> bool:

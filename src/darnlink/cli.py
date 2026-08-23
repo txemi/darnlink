@@ -395,6 +395,12 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
                         help="also treat the owner of this repo's `origin` remote as yours. A separate "
                              "flag rather than a magic --own value, so an owner literally called "
                              "'auto' stays expressible.")
+    parser.add_argument("--include-mermaid", action="store_true",
+                        help="(feature 017) also see web links carried by a mermaid diagram's `click` "
+                             "directives, which are otherwise invisible because they sit inside a "
+                             "fenced block. OFF BY DEFAULT: a fleet of fail-closed gates must opt in "
+                             "one repository at a time. These links are report-only — they are never "
+                             "anchored, because a diagram would render the anchor comment as a node")
     parser.add_argument("--own-max", type=int, default=None, metavar="N",
                         help="budget: while there are N or fewer owned-without-uuid findings they are "
                              "reported but do not fail the exit. Lets the axis be adopted before a "
@@ -461,20 +467,25 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
                 content = read_text_keep_newlines(f)
             except Exception:
                 continue
-            ignore = ignored_spans(content, block_markers) + code_spans(content)
-            for link in find_web_links(content, ignore):
+            blocks = ignored_spans(content, block_markers)
+            ignore = blocks + code_spans(content)
+            for link in find_web_links(content, ignore, include_mermaid=args.include_mermaid,
+                                       block_spans=blocks):
                 seen += 1
-                listing.append((f, link.href, link.uuid is not None))
+                listing.append((f, link.href, link.uuid is not None, link.report_only))
         if args.json:
             print(json.dumps({"web_check": True, "online": False, "exit_code": 0,
                               "web_links_seen": seen,
                               "out_of_root_links": [str(p_) for p_ in out_of_root],
-                              "links": [{"file": str(f), "href": h, "anchored": a} for f, h, a in listing]}, indent=2))
+                              "links": [{"file": str(f), "href": h, "anchored": a,
+                                         "report_only": r}
+                                        for f, h, a, r in listing]}, indent=2))
         else:
             print(f"darnlink web-check (EXPERIMENTAL, offline) — root: {root}")
             print(f"  web links seen: {seen} (core ignores them; run with --online to fetch & verify/anchor)")
-            for f, h, a in listing:
-                print(f"  [{'anchored' if a else 'plain'}] {f}: {h}")
+            for f, h, a, r in listing:
+                kind = "in-diagram" if r else ("anchored" if a else "plain")
+                print(f"  [{kind}] {f}: {h}")
             for p_ in out_of_root:
                 print(f"  [out-of-root-link] {p_}: symlink whose target lives outside the scanned "
                       f"root; not indexed -> informational (does not affect the exit code)")
@@ -483,7 +494,8 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
     token = os.environ.get("GITHUB_TOKEN") or None
     web_out_of_root: List[Path] = []
     findings, edits = check_web_links_online(root, token, fetcher or default_fetcher, block_markers,
-                                             excludes, owners, out_of_root=web_out_of_root)
+                                             excludes, owners, out_of_root=web_out_of_root,
+                                             include_mermaid=args.include_mermaid)
     ok = [x for x in findings if x.kind == "web_ok"]
     anchors = [x for x in findings if x.kind == "web_anchor"]
     mismatch = [x for x in findings if x.kind == "web_mismatch"]
