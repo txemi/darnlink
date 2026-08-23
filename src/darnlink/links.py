@@ -261,8 +261,11 @@ def _statement_starts(line: str) -> List[int]:
     return out
 
 
-def _click_destination(statement: str) -> Optional[str]:
-    """The quoted destination of one `click` statement, or None if it does not carry one.
+def _click_destination(statement: str) -> Optional[Tuple[str, int]]:
+    """`(destination, offset just past its closing quote)` for one `click` statement, or None.
+
+    The second element is what lets the caller know how much of the line this directive CONSUMED,
+    so a `;` living inside the destination cannot be mistaken for the start of another statement.
 
     Accepts `click <id> "<dest>" ...` and `click <id> href "<dest>" ...`; a trailing target or
     tooltip is irrelevant. Returns None for a directive that binds a callback (`call cb()`,
@@ -287,7 +290,10 @@ def _click_destination(statement: str) -> Optional[str]:
     close = rest.find('"', 1)
     if close == -1:
         return None  # an unterminated quote is not a destination
-    return rest[1:close] or None
+    dest = rest[1:close]
+    if not dest:
+        return None
+    return dest, len(statement) - len(rest) + close + 1
 
 
 def mermaid_region_bodies(content: str) -> List[Span]:
@@ -326,12 +332,20 @@ def mermaid_click_destinations(content: str) -> List[Tuple[int, str]]:
             if line.lstrip(" \t").startswith("%%"):
                 line_start += len(line)
                 continue
+            # A `;` that lives INSIDE a destination is not the start of anything. Skipping the
+            # span a directive already consumed is what stops a quote embedded after such a `;`
+            # from fabricating a second, phantom destination out of text that was never a link.
+            consumed_until = 0
             for offset in _statement_starts(line):
+                if offset < consumed_until:
+                    continue
                 statement = line[offset:]
-                dest = _click_destination(statement)
-                if dest is not None:
+                found = _click_destination(statement)
+                if found is not None:
+                    dest, end = found
                     lead = len(statement) - len(statement.lstrip(" \t"))
                     out.append((body_start + line_start + offset + lead, dest))
+                    consumed_until = offset + end
             line_start += len(line)
     return out
 

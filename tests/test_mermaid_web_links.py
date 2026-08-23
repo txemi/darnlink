@@ -424,9 +424,10 @@ def test_a_relative_destination_inside_a_diagram_is_not_reported():
 # --------------------------------------------------------------------------------------------
 
 def test_a_semicolon_inside_the_destination_does_not_split_it():
-    """Statement splitting is quote-aware. A naive split would cut this destination in half and then
-    drop it for having an unterminated quote -- a working link turned silently unwatched, which is
-    the exact harm this feature exists to prevent."""
+    """A destination is delimited by its own quotes, so a `;` inside it is just a character. Nothing
+    tracks quotes across statements -- an earlier attempt did, and that is what silently swallowed
+    later directives. The protection here is that a directive's consumed span is skipped, not that
+    the splitter understands quoting."""
     content = '```mermaid\nflowchart TD\n  click A "http://x/y;z" _blank\n```\n'
     assert [d for _, d in mermaid_click_destinations(content)] == ["http://x/y;z"]
 
@@ -481,4 +482,41 @@ def test_a_word_merely_starting_with_the_directive_is_not_the_directive(word):
     no test, because the one negative case that existed failed downstream for an unrelated reason.
     A guard nothing tests is a guard that comes back the day someone edits around it."""
     content = f'```mermaid\nflowchart TD\n  {word} "http://evil.example"\n```\n'
+    assert mermaid_click_destinations(content) == []
+
+
+# --------------------------------------------------------------------------------------------
+# Round 4 of review: a phantom destination, and three guards that no mutation could kill
+# --------------------------------------------------------------------------------------------
+
+def test_a_quote_embedded_after_a_semicolon_does_not_fabricate_a_second_destination():
+    """A `;` inside a destination is not the start of anything. Before the consumed span was
+    skipped, ONE directive produced TWO destinations and the second was invented out of text that
+    lived inside the first one's quotes -- this feature fabricating a link, which is the mirror of
+    the harm it exists to prevent."""
+    content = ('```mermaid\nflowchart TD\n'
+               '  click A "http://ok.example; click B "http://evil.example""\n```\n')
+    assert [d for _, d in mermaid_click_destinations(content)] == \
+        ["http://ok.example; click B "]
+
+
+def test_a_callback_with_a_string_argument_is_not_a_destination():
+    """`click A call myFunc("hello")` is ordinary mermaid. The guard that requires a quote right
+    where a destination would start is what rejects it -- and nothing exercised that guard, so
+    removing it fabricated the destination `all myFunc(`."""
+    content = '```mermaid\nflowchart TD\n  click A call myFunc("hello")\n```\n'
+    assert mermaid_click_destinations(content) == []
+
+
+def test_a_statement_that_is_not_the_directive_at_all_yields_nothing():
+    """Protects the outermost guard: without it, any statement with a quoted argument would be read
+    as a directive."""
+    content = '```mermaid\nflowchart TD\n  xxxxx href "http://evil.example"\n```\n'
+    assert mermaid_click_destinations(content) == []
+
+
+def test_href_must_be_a_word_of_its_own():
+    """`href` glued to the quote is not the keyword; without the whitespace check the parser would
+    silently accept a shape mermaid does not define."""
+    content = '```mermaid\nflowchart TD\n  click A href"http://x.example"\n```\n'
     assert mermaid_click_destinations(content) == []
