@@ -266,6 +266,22 @@ def test_unavailable_create_readme_axis_does_not_mask_a_failing_core(tmp_path):
         if p is None:
             pytest.skip(f"need {t} for this test")
         needed[t] = p
+    # `realpath`/`dirname` are needed by neither the recipe nor this test: they are needed by the
+    # `darnlink` binary the test injects. Built by `uv run`, that binary is a Python-shebang script
+    # and needs neither; built by `uvx`, it is a /bin/sh wrapper whose first lines call both. Omit
+    # them and the wrapper dies with 127, the recipe takes its designed "can't run darnlink -> SKIP"
+    # path, and this test fails claiming the GATE returned 0 when the FIXTURE never ran it. That
+    # matters more here than it would elsewhere: `uvx` is how the tool is actually consumed, so a
+    # fixture that only works under `uv run` is blind in the mode that ships.
+    #
+    # BEST-EFFORT ON PURPOSE, unlike the six above: a host missing them can still run this test
+    # whenever its injected binary does not need them, so requiring them would trade a real failure
+    # for a silent skip -- and losing coverage quietly is the failure mode this whole file exists to
+    # prevent. If they are missing AND the binary needs them, the probe below says so out loud.
+    for t in ("realpath", "dirname"):
+        p = shutil.which(t)
+        if p is not None:
+            needed[t] = p
     dbin = _darnlink_bin()
 
     repo = tmp_path / "repo"
@@ -301,6 +317,16 @@ def test_unavailable_create_readme_axis_does_not_mask_a_failing_core(tmp_path):
     # sanity: python3 really is unreachable through this PATH
     assert subprocess.run([needed["bash"], "-c", "command -v python3"], env=env,
                           capture_output=True).returncode != 0
+    # sanity, the other half: the injected binary must still RUN through this PATH. The premise
+    # above was asserted from the start and this one was not, which is why an environment shift
+    # surfaced as "the gate returned 0" -- a claim about the product -- instead of "my fixture is
+    # broken". A test may narrow the world it runs in; it must not lie about which half gave way.
+    # `--help` and not `--version`: darnlink has no `--version`, and a probe that fails for its
+    # OWN reason would be the very confusion this assert exists to remove.
+    probe = subprocess.run([dbin, "--help"], env=env, capture_output=True, text=True)
+    assert probe.returncode == 0, (
+        f"the injected darnlink cannot run under this minimal PATH, so the gate below would be "
+        f"skipped rather than exercised:\n{probe.stderr}")
 
     r = subprocess.run([needed["bash"], str(RECIPE)], cwd=repo, env=env, capture_output=True, text=True)
     assert r.returncode == 3, (
