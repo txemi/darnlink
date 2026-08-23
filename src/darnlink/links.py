@@ -243,22 +243,21 @@ def code_spans(content: str) -> List[Span]:
 # "traditional, auditable algorithm a human can verify" the constitution asks for (Principle IV).
 
 
-def _split_statements(line: str) -> List[Tuple[int, str]]:
-    """`(offset within the line, text)` for each `;`-separated statement.
+def _statement_starts(line: str) -> List[int]:
+    """Offsets within the line where a statement may begin: the start, and after each `;`.
 
-    Quote-aware on purpose: a destination may legitimately contain `;`
-    (`click A "http://x/y;z"`), and a naive split would cut it in half and then discard it for
-    having an unterminated quote -- turning a working link into a silently unwatched one."""
-    out: List[Tuple[int, str]] = []
-    start = 0
-    in_quotes = False
-    for i, ch in enumerate(line):
-        if ch == '"':
-            in_quotes = not in_quotes
-        elif ch == ";" and not in_quotes:
-            out.append((start, line[start:i]))
-            start = i + 1
-    out.append((start, line[start:]))
+    ⚠️ NO quote tracking, and that is the fix for a regression this file already had. Carrying a
+    running "am I inside quotes" flag across a whole physical line means one stray or unpaired quote
+    -- a typo in a node label, a half-pasted destination -- silently swallows every statement after
+    it, including well-formed `click` directives. A destination dying unnoticed because of an
+    unrelated typo earlier on the line is precisely the harm this feature exists to prevent.
+
+    Nothing is lost by dropping it: a destination containing `;` still survives, because the
+    destination is delimited by its own quotes in `_click_destination`, which searches forward for
+    the closing one and does not care about separators. An offset that is not the start of a
+    directive simply fails to parse and is discarded."""
+    out = [0]
+    out.extend(i + 1 for i, ch in enumerate(line) if ch == ";")
     return out
 
 
@@ -327,7 +326,8 @@ def mermaid_click_destinations(content: str) -> List[Tuple[int, str]]:
             if line.lstrip(" \t").startswith("%%"):
                 line_start += len(line)
                 continue
-            for offset, statement in _split_statements(line):
+            for offset in _statement_starts(line):
+                statement = line[offset:]
                 dest = _click_destination(statement)
                 if dest is not None:
                     lead = len(statement) - len(statement.lstrip(" \t"))

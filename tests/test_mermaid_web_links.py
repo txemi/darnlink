@@ -452,3 +452,33 @@ def test_stating_there_are_no_ignore_blocks_is_allowed():
     """`()` is a statement, not an omission: the caller says it has none, and gets the links."""
     got = find_web_links(DIAGRAM, code_spans(DIAGRAM), include_mermaid=True, block_spans=())
     assert sorted(w.href for w in got) == sorted([LIVE, DEAD])
+
+
+# --------------------------------------------------------------------------------------------
+# Round 3 of review: a regression the rewrite introduced, and a guard nothing exercised
+# --------------------------------------------------------------------------------------------
+
+def test_a_stray_quote_earlier_on_the_line_does_not_swallow_a_later_directive():
+    """The rewrite carried a running 'inside quotes' flag across the whole physical line, so one
+    unpaired quote -- a typo in a label, a half-pasted destination -- silently discarded every
+    statement after it. A destination dying unnoticed because of an unrelated typo is the exact
+    harm this feature exists to prevent, and the previous implementation did not have it."""
+    content = ('```mermaid\nflowchart TD\n'
+               '  x "unterminated; click A "http://ok.example"\n```\n')
+    assert [d for _, d in mermaid_click_destinations(content)] == ["http://ok.example"]
+
+
+def test_a_malformed_middle_statement_does_not_hide_the_ones_after_it():
+    content = ('```mermaid\nflowchart TD\n'
+               '  click A "http://one.example"; broken "unterm; click B "http://two.example"\n```\n')
+    assert [d for _, d in mermaid_click_destinations(content)] == \
+        ["http://one.example", "http://two.example"]
+
+
+@pytest.mark.parametrize("word", ["clickX", "clickedBy", "clickable"])
+def test_a_word_merely_starting_with_the_directive_is_not_the_directive(word):
+    """The guard that requires whitespace after `click` was never exercised: mutating it away broke
+    no test, because the one negative case that existed failed downstream for an unrelated reason.
+    A guard nothing tests is a guard that comes back the day someone edits around it."""
+    content = f'```mermaid\nflowchart TD\n  {word} "http://evil.example"\n```\n'
+    assert mermaid_click_destinations(content) == []
