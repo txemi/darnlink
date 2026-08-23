@@ -155,6 +155,11 @@ reported.
   existing ignore mechanisms, exactly as FR-018 requires of region detection.
 - **FR-059**: Enabling the feature MUST NOT change the exit code or output of any repository that
   contains no mermaid regions.
+- **FR-060**: A destination recognised inside a mermaid region is **report-only** and MUST NEVER be
+  rewritten or anchored, even when the read axis is invoked in its writing mode. The web axis
+  anchors a link by appending an HTML comment after it; inside a diagram that comment is **not** a
+  comment — diagrams use their own comment syntax — so writing one would corrupt the diagram. This
+  is the same protection FR-015 gives the write operations, stated for the axis that can write.
 
 ### Key Entities
 
@@ -181,6 +186,9 @@ reported.
 - **SC-021**: Comments and callback bindings inside a diagram produce **zero** findings.
 - **SC-022**: A repository that does not opt in shows no change in behaviour, exit code, or
   network traffic.
+- **SC-023**: Running the read axis in its writing mode, with the feature enabled, over a tree
+  whose only findable destinations live inside diagrams, writes **nothing** — byte-identical tree
+  before and after.
 
 ---
 
