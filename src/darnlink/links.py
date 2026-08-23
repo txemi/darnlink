@@ -222,6 +222,64 @@ def code_spans(content: str) -> List[Span]:
     return fenced + _inline_code_spans(content, fenced)
 
 
+# --- Feature 017: destinations carried by a diagram's `click` directives ---------------------
+#
+# These live next to the region computation they depend on, and DELIBERATELY know nothing about
+# web links: they yield `(offset, destination)`, so `links.py` never has to import `weblinks.py`
+# and there is no second notion of what a fenced block is (FR-054).
+
+#: `click <id> ["href"] "<dest>" [target|"tooltip"]` -- the only forms that carry a destination.
+#: Measured over 2165 real directives, three shapes account for every one of them, each on a single
+#: line with the destination double-quoted. That is a REGULAR language: no nesting, no recursion,
+#: which is why a grammar engine was evaluated and rejected (research R1). A directive that binds a
+#: callback (`call cb()` / `callback`) carries no destination and simply does not match (FR-057).
+_MERMAID_CLICK_RE = re.compile(
+    r'^[ \t]*(?P<kw>click)[ \t]+\S+[ \t]+(?:href[ \t]+)?"(?P<dest>[^"\n]+)"',
+    re.M,
+)
+
+#: A diagram comments with `%%`, not with `<!-- -->`. A comment line must never yield a destination
+#: even when it quotes a whole directive (FR-056) -- and that case is real, not hypothetical.
+_MERMAID_COMMENT_RE = re.compile(r"^[ \t]*%%")
+
+
+def mermaid_region_bodies(content: str) -> List[Span]:
+    """Spans of the BODY of each fenced block whose info string names `mermaid` (FR-054).
+
+    Derived from `_fenced_code_spans()`, never computed independently: everything hard about the
+    boundary -- unclosed fence to EOF, closing fence of equal-or-greater length, tildes vs
+    backticks, an example fence nested in a longer one -- is inherited for free, and a second
+    computation could drift from the one the write axis obeys.
+
+    The body starts after the opening fence's line, so the info string itself is never scanned.
+    Pure & deterministic."""
+    out: List[Span] = []
+    for start, end in _fenced_code_spans(content):
+        nl = content.find("\n", start)
+        if nl == -1 or nl >= end:
+            continue  # a fence with no body (or an opener at EOF) carries nothing
+        info = content[start:nl].lstrip(" ").lstrip("`~").strip().lower()
+        if info.startswith("mermaid"):
+            out.append((nl + 1, end))
+    return out
+
+
+def mermaid_click_destinations(content: str) -> List[Tuple[int, str]]:
+    """`(absolute offset of the directive, destination)` for every `click` inside a mermaid region.
+
+    The offset is into the FILE, not into the region body: a report has to point at a place a human
+    can find. Pure & deterministic -- no network, no heuristics (FR-058)."""
+    out: List[Tuple[int, str]] = []
+    for body_start, body_end in mermaid_region_bodies(content):
+        body = content[body_start:body_end]
+        for m in _MERMAID_CLICK_RE.finditer(body):
+            line_start = body.rfind("\n", 0, m.start()) + 1
+            if _MERMAID_COMMENT_RE.match(body, line_start):
+                continue
+            out.append((body_start + m.start("kw"), m["dest"]))
+    return out
+
+
 def _carries_marker(content: str, keyword: str, marker_re: "re.Pattern[str]") -> bool:
     """True if `marker_re` matches outside a code span (so a file documenting the marker as an
     example does not opt itself out). Pure & deterministic.
