@@ -138,7 +138,7 @@ class WebLink:
     report_only: bool = False
 
 
-def find_mermaid_web_links(content: str) -> List[WebLink]:
+def find_mermaid_web_links(content: str, ignore: Sequence[Span] = ()) -> List[WebLink]:
     """Destinations carried by a diagram's `click` directives, in the shape the axis already
     consumes (research R3), so classification, exit codes and feature 016's own-repo rule apply
     with no special case downstream.
@@ -149,12 +149,15 @@ def find_mermaid_web_links(content: str) -> List[WebLink]:
     for offset, dest in mermaid_click_destinations(content):
         if not dest.strip().lower().startswith(("http://", "https://")):
             continue  # relative destinations inside a diagram: measured zero, out of scope
+        if _in_spans(offset, ignore):
+            continue  # FR-058: composes with --ignore-block, like every other link
         out.append(WebLink("", dest, None, offset, offset, False, report_only=True))
     return out
 
 
 def find_web_links(content: str, ignore: Sequence[Span] = (),
-                   include_mermaid: bool = False) -> List[WebLink]:
+                   include_mermaid: bool = False,
+                   block_spans: Sequence[Span] = ()) -> List[WebLink]:
     """All Markdown links whose href is an http(s) URL, in document order, skipping `ignore` spans.
     A trailing `<!-- web-uuid: owner/repo#X -->` marks the link as already anchored (its uuid is captured)."""
     out: List[WebLink] = []
@@ -174,7 +177,13 @@ def find_web_links(content: str, ignore: Sequence[Span] = (),
     if include_mermaid:
         # Lifting the fence exclusion alone would find NOTHING: this scan looks for Markdown link
         # syntax, and a `click` directive is not that. The item has to be produced (research R3).
-        out.extend(find_mermaid_web_links(content))
+        #
+        # ⚠️ `block_spans`, NOT `ignore`, and the distinction is load-bearing rather than fussy:
+        # `ignore` is `--ignore-block` regions PLUS code regions, and a mermaid destination lives
+        # inside a code region BY CONSTRUCTION -- filtering by the merged list would discard every
+        # one of them. `block_spans` carries only what the user asked to ignore, which is what
+        # FR-058 says this must compose with.
+        out.extend(find_mermaid_web_links(content, block_spans))
         out.sort(key=lambda w: w.start)
     return out
 
@@ -451,8 +460,9 @@ def check_web_links_online(
         # semantics than the core's "removed from the graph entirely", declared rather than left to the
         # reader. `--ignore-block` is out of this and unchanged (FR-015).
         filtered = file_is_ignored(content) or file_ignores_links(content)
-        ignore = ignored_spans(content, block_markers) + code_spans(content)
-        links = find_web_links(content, ignore, include_mermaid=include_mermaid)
+        blocks = ignored_spans(content, block_markers)
+        ignore = blocks + code_spans(content)
+        links = find_web_links(content, ignore, include_mermaid=include_mermaid, block_spans=blocks)
         if not links:
             continue
         pieces: List[str] = []

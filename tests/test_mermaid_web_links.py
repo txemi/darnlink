@@ -22,7 +22,8 @@ from pathlib import Path
 import pytest
 
 from darnlink.cli import main
-from darnlink.links import code_spans, mermaid_click_destinations, mermaid_region_bodies
+from darnlink.links import (code_spans, ignored_spans, mermaid_click_destinations,
+                            mermaid_region_bodies)
 from darnlink.weblinks import (GithubUrl, WebLink, _classify, check_web_links_online,
                                find_mermaid_web_links, find_web_links)
 
@@ -347,3 +348,72 @@ def test_repair_and_robustify_never_touch_a_diagram(tmp_path, robustify):
     argv = [str(root), "--write"] + (["--robustify"] if robustify else [])
     main(argv)
     assert _checksums(root) == before
+
+
+# --------------------------------------------------------------------------------------------
+# Found by review, not by me: the four gaps below had no test at all. Three of them would have
+# shipped green.
+# --------------------------------------------------------------------------------------------
+
+IGNORED = f"""# doc
+
+<!-- legacy-start -->
+```mermaid
+flowchart TD
+  click A href "{DEAD}" _blank
+```
+<!-- legacy-end -->
+"""
+
+
+def test_a_diagram_inside_an_ignore_block_is_not_reported():
+    """FR-058 -- composes with `--ignore-block`, like every other link.
+
+    This is the one the review caught, and it was a real spec violation: the recogniser was handed
+    the raw file and never consulted the ignore spans at all. A user who wrapped a diagram in an
+    ignore-block and asked for it to be ignored got it reported anyway."""
+    blocks = ignored_spans(IGNORED, ("legacy",))
+    ignore = blocks + code_spans(IGNORED)
+    assert find_web_links(IGNORED, ignore, include_mermaid=True, block_spans=blocks) == []
+
+
+def test_the_same_diagram_IS_reported_without_the_marker():
+    """The other half: without `--ignore-block legacy` the destination must still be seen. A filter
+    that hides everything would pass the test above and be useless."""
+    ignore = ignored_spans(IGNORED, ()) + code_spans(IGNORED)
+    got = find_web_links(IGNORED, ignore, include_mermaid=True, block_spans=ignored_spans(IGNORED, ()))
+    assert [w.href for w in got] == [DEAD]
+
+
+def test_ignore_block_is_honoured_by_the_offline_entry_point_too(tmp_path, capsys):
+    """Both entry points build their ignore spans separately, so both could drift separately."""
+    root = tmp_path / "repo"
+    _w(root / "d.md", IGNORED)
+    main(["web-check", str(root), "--json", "--include-mermaid", "--ignore-block", "legacy"])
+    import json as _json
+    assert _json.loads(capsys.readouterr().out)["links"] == []
+
+
+def test_directives_chained_with_a_semicolon_are_all_found():
+    """A diagram may put several statements on one physical line. Anchoring only to the line start
+    found the first and silently dropped the rest -- a false negative in a feature whose entire
+    purpose is that destinations stop dying unnoticed."""
+    content = ('```mermaid\nflowchart TD\n'
+               '  click A "http://a.example" _blank; click B "http://b.example" _blank\n```\n')
+    assert [d for _, d in mermaid_click_destinations(content)] == \
+        ["http://a.example", "http://b.example"]
+
+
+def test_a_comment_line_with_a_chained_directive_still_yields_nothing():
+    """The comment guard is only reachable NOW: while the pattern anchored to the line start, a
+    `%%` line could never match it, so the guard was dead code and its test passed for an unrelated
+    reason. This is the case that actually exercises it (FR-056)."""
+    content = f'```mermaid\nflowchart TD\n  %% note; click Z href "{DEAD}" _blank\n```\n'
+    assert mermaid_click_destinations(content) == []
+
+
+def test_a_relative_destination_inside_a_diagram_is_not_reported():
+    """Out of scope by measurement (zero occurrences), and until now nothing pinned it: removing the
+    filter broke no test."""
+    content = '```mermaid\nflowchart TD\n  click A href "../src/report.py" _blank\n```\n'
+    assert find_mermaid_web_links(content) == []

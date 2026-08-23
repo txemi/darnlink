@@ -467,8 +467,10 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
                 content = read_text_keep_newlines(f)
             except Exception:
                 continue
-            ignore = ignored_spans(content, block_markers) + code_spans(content)
-            for link in find_web_links(content, ignore, include_mermaid=args.include_mermaid):
+            blocks = ignored_spans(content, block_markers)
+            ignore = blocks + code_spans(content)
+            for link in find_web_links(content, ignore, include_mermaid=args.include_mermaid,
+                                       block_spans=blocks):
                 seen += 1
                 listing.append((f, link.href, link.uuid is not None, link.report_only))
         if args.json:

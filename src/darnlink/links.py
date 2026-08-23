@@ -233,14 +233,23 @@ def code_spans(content: str) -> List[Span]:
 #: line with the destination double-quoted. That is a REGULAR language: no nesting, no recursion,
 #: which is why a grammar engine was evaluated and rejected (research R1). A directive that binds a
 #: callback (`call cb()` / `callback`) carries no destination and simply does not match (FR-057).
+# `(?:^|;)` and not `^` alone: a diagram may chain statements on one physical line with `;`, and
+# anchoring only to the line start silently misses every directive but the first -- a false negative
+# in a feature whose whole purpose is that destinations stop dying unnoticed. It also makes the
+# comment guard below LOAD-BEARING: with `^` alone a `%%` line could never match, so the guard was
+# unreachable and its test passed for an unrelated reason.
 _MERMAID_CLICK_RE = re.compile(
-    r'^[ \t]*(?P<kw>click)[ \t]+\S+[ \t]+(?:href[ \t]+)?"(?P<dest>[^"\n]+)"',
+    r'(?:^|;)[ \t]*(?P<kw>click)[ \t]+\S+[ \t]+(?:href[ \t]+)?"(?P<dest>[^"\n]+)"',
     re.M,
 )
 
 #: A diagram comments with `%%`, not with `<!-- -->`. A comment line must never yield a destination
 #: even when it quotes a whole directive (FR-056) -- and that case is real, not hypothetical.
-_MERMAID_COMMENT_RE = re.compile(r"^[ \t]*%%")
+# No `^`: this is used as `.match(body, line_start)`, which already anchors AT that position,
+# and `^` without re.M only ever matches at index 0 of the string. With it, the guard was
+# unreachable except for a comment on the very first line of a region -- which is why its
+# test passed while testing nothing.
+_MERMAID_COMMENT_RE = re.compile(r"[ \t]*%%")
 
 
 def mermaid_region_bodies(content: str) -> List[Span]:
