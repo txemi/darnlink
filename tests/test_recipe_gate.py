@@ -260,19 +260,27 @@ def test_unavailable_create_readme_axis_does_not_mask_a_failing_core(tmp_path):
     the pass can't run — but that must NOT turn an ALREADY-failing core gate (integrity/strict) green.
     We simulate python3-missing with a minimal PATH and assert the core strict failure (exit 3) survives."""
     needed = {}
-    # `realpath`/`dirname` are NOT decoration and NOT needed by the recipe: they are needed by the
-    # `darnlink` binary this test injects. Built by `uv run`, that binary is a Python-shebang script
-    # and needs neither; built by `uvx`, it is a /bin/sh wrapper whose first lines call both. Omit
-    # them and the wrapper dies with 127, the recipe takes its designed "can't run darnlink -> SKIP"
-    # path, and this test fails claiming the GATE returned 0 when in fact the FIXTURE never ran it.
-    # That matters here more than it would elsewhere: `uvx` is how the fleet actually consumes
-    # darnlink, so a fixture that only works under `uv run` is blind in the consumption mode that
-    # ships.
-    for t in ("bash", "git", "mktemp", "rm", "tr", "env", "realpath", "dirname"):
+    for t in ("bash", "git", "mktemp", "rm", "tr", "env"):
         p = shutil.which(t)
         if p is None:
             pytest.skip(f"need {t} for this test")
         needed[t] = p
+    # `realpath`/`dirname` are needed by neither the recipe nor this test: they are needed by the
+    # `darnlink` binary the test injects. Built by `uv run`, that binary is a Python-shebang script
+    # and needs neither; built by `uvx`, it is a /bin/sh wrapper whose first lines call both. Omit
+    # them and the wrapper dies with 127, the recipe takes its designed "can't run darnlink -> SKIP"
+    # path, and this test fails claiming the GATE returned 0 when the FIXTURE never ran it. That
+    # matters more here than it would elsewhere: `uvx` is how the tool is actually consumed, so a
+    # fixture that only works under `uv run` is blind in the mode that ships.
+    #
+    # BEST-EFFORT ON PURPOSE, unlike the six above: a host missing them can still run this test
+    # whenever its injected binary does not need them, so requiring them would trade a real failure
+    # for a silent skip -- and losing coverage quietly is the failure mode this whole file exists to
+    # prevent. If they are missing AND the binary needs them, the probe below says so out loud.
+    for t in ("realpath", "dirname"):
+        p = shutil.which(t)
+        if p is not None:
+            needed[t] = p
     dbin = _darnlink_bin()
 
     repo = tmp_path / "repo"
