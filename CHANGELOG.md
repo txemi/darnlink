@@ -4,6 +4,17 @@ All notable changes to darnlink are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## 0.25.1
+
+The 0.25.0 rung was **inert in CI**, which is the only place it mattered. It read the default branch
+from  — a LOCAL symref that a CI checkout does not create: a multibranch PR job fetches
+only `+refs/pull/<n>/head:refs/remotes/origin/PR-<n>`, so there is no `refs/remotes/origin/master`
+and `symbolic-ref` fails. Every ordinary clone HAS that symref, which is why it looked correct.
+
+The local read stays first (free); the remote is asked with `ls-remote --symref` only when it
+fails. Unknown default branch still means inert — guessing `main` would forgive links in every repo
+whose default is something else.
+
 ## 0.25.0
 
 ### A link pending on the default branch is not a broken link

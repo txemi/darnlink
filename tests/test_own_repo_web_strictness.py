@@ -716,3 +716,46 @@ def test_the_marker_is_honoured_with_no_owner_set_at_all(tmp_path):
     assert _run_web_check_cli([str(tmp_path), "--online", "--write"],
                               fetcher=_fetcher({OWNED: _with_uuid()})) == 0
     assert (tmp_path / "src.md").read_text(encoding="utf-8") == before
+
+
+# --- the default branch must survive a CI checkout, where `origin/HEAD` does not exist ---
+
+def test_default_branch_falls_back_to_the_remote_when_origin_HEAD_is_absent(tmp_path, monkeypatch):
+    """⚠️ THE FAILURE THAT SHIPPED. `origin/HEAD` is a LOCAL symref and CI does not create it: a
+    Jenkins multibranch PR job fetches only `+refs/pull/<n>/head:refs/remotes/origin/PR-<n>`, so
+    there is no `refs/remotes/origin/master` and `symbolic-ref` fails. The rung went INERT in
+    exactly the environment it was written for — and it looked correct everywhere else, because
+    every ordinary clone HAS the symref.
+
+    This pins the shape of the bug without touching the network: a repo whose `origin/HEAD` is
+    missing must still resolve a default branch (here, from the remote), not silently give up."""
+    import subprocess
+    from darnlink.cli import _own_repo
+
+    origen = tmp_path / "origen"
+    subprocess.run(["git", "init", "-q", "-b", "master", str(origen)], check=True)
+    (origen / "a.md").write_text("x\n", encoding="utf-8")
+    for args in (["add", "-A"], ["-c", "user.email=b@b", "-c", "user.name=b", "commit", "-qm", "i"]):
+        subprocess.run(["git", "-C", str(origen), *args], check=True)
+
+    clon = tmp_path / "clon"          # a CI-shaped checkout: a remote, and no origin/HEAD
+    subprocess.run(["git", "init", "-q", str(clon)], check=True)
+    subprocess.run(["git", "-C", str(clon), "remote", "add", "origin",
+                    "https://github.com/example-org/handbook.git"], check=True)
+    assert subprocess.run(["git", "-C", str(clon), "symbolic-ref", "--short",
+                           "refs/remotes/origin/HEAD"], capture_output=True).returncode != 0, \
+        "the fixture must NOT have origin/HEAD, or it pins nothing"
+
+    # ⚠️ `insteadOf` is what makes this a REAL test instead of a skip. `_own_repo` needs the origin
+    # URL to READ as a GitHub URL (that is where the slug comes from) and to be REACHABLE (that is
+    # what `ls-remote` needs). A local path satisfies the second and fails the first. `insteadOf`
+    # rewrites the URL only at transport time, so the config still reads as GitHub while the fetch
+    # goes to a directory: no network, and the same code path the CI failure took.
+    subprocess.run(["git", "-C", str(clon), "config",
+                    f"url.{origen}.insteadOf", "https://github.com/example-org/handbook.git"],
+                   check=True)
+    own = _own_repo(clon)
+    assert own is not None and own.slug == "example-org/handbook"
+    assert own.default_ref == "master", (
+        "origin/HEAD is absent, so this can only have come from the remote fallback; an empty "
+        "value here means the rung is inert exactly where it is needed")
