@@ -23,7 +23,21 @@ from pathlib import Path
 
 import pytest
 
-requires_git = pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+# ⚠️ The platform test comes FIRST and `shutil.which` is only a fallback: on a GitHub windows-latest
+# runner `bash` IS on PATH -- it is the WSL launcher -- so `which` finds it and then every invocation
+# exits 1 with "Windows Subsystem for Linux has no installed distributions", in UTF-16. A
+# `which("bash") is None` guard alone does not skip; it turns the whole Windows matrix red. Measured
+# on this very PR: these two tests failed on all four Windows jobs, in exactly that way, and the
+# sibling file `test_recipe_examples.py` already carried this same guard for the same reason.
+#
+# Only the two EXECUTING tests are skipped. The text checks below stay live on Windows: they are the
+# ones most likely to rot and they cost nothing to run anywhere, and skipping the module wholesale
+# would leave the Windows matrix validating none of this.
+requires_bash = pytest.mark.skipif(
+    sys.platform.startswith("win") or os.name == "nt" or shutil.which("bash") is None
+    or shutil.which("git") is None,
+    reason="the guard is POSIX shell; on Windows agents `bash` is the WSL launcher",
+)
 CHECK_SH = Path(__file__).resolve().parent.parent / "tools" / "check.sh"
 LEAKY = ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE", "GIT_PREFIX")
 
@@ -44,7 +58,7 @@ def _where_does_a_child_git_point(tmp_path: Path, env_extra: dict, prelude: str 
     return r.stdout.strip()
 
 
-@requires_git
+@requires_bash
 def test_the_leak_is_REAL_hooks_redirect_a_child_git_at_this_repo(tmp_path):
     """The control. Without it the test below passes on a suite that was never vulnerable, and this
     file asserts nothing. My first attempt at this control FAILED -- I had guessed GIT_INDEX_FILE
@@ -58,7 +72,7 @@ def test_the_leak_is_REAL_hooks_redirect_a_child_git_at_this_repo(tmp_path):
         "and the guard in tools/check.sh needs re-measuring rather than trusting")
 
 
-@requires_git
+@requires_bash
 def test_the_guard_in_check_sh_stops_it(tmp_path):
     """Treatment: the SAME hijack, behind the exact `unset` line check.sh ships."""
     here = subprocess.run(["git", "rev-parse", "--absolute-git-dir"], cwd=CHECK_SH.parent,
