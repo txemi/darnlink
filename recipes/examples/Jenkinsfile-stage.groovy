@@ -28,6 +28,26 @@ stage('darnlink gate (links)') {
       # -f: fail on a 404 (moved/typo'd tag) instead of writing "404: Not Found" and running garbage.
       curl -fsSL "https://raw.githubusercontent.com/txemi/darnlink/$VER/recipes/darnlink-gate" \
         -o "$WORKSPACE/.darnlink-gate"
+      # ⚠️ VERIFY BEFORE `chmod +x` -- byte-identical in intent to the GitHub Actions example, and for
+      # the same reason: this fetches a script over the network and runs it. `recipe_sha256` is the
+      # only statement about the BYTES; the pin is a mutable pointer (and may be a branch or a SHA).
+      WANT=$(python3 -c 'import json;print(json.load(open("darnlink-gate.json")).get("recipe_sha256",""))')
+      if [ -n "$WANT" ]; then
+        GOT=$(sha256sum "$WORKSPACE/.darnlink-gate" | cut -d" " -f1)
+        if [ "$GOT" != "$WANT" ]; then
+          # THREE causes, most probable FIRST -- the mundane one is the one that actually happens.
+          echo "recipe checksum mismatch for $VER -- most likely someone bumped \`ref\` without re-sealing \`recipe_sha256\` next to it; otherwise the tag moved, or the download was tampered with" >&2
+          echo "  expected $WANT" >&2
+          echo "  got      $GOT" >&2
+          echo "  re-seal with: curl -fsSL \"https://raw.githubusercontent.com/txemi/darnlink/$VER/recipes/darnlink-gate\" | sha256sum" >&2
+          rm -f "$WORKSPACE/.darnlink-gate"   # never leave an unverified script on disk
+          exit 1
+        fi
+        echo "recipe checksum OK: $GOT"
+      else
+        # Say so. Silence reads as "verified", which is the failure this step exists to prevent.
+        echo "darnlink-gate.json declares no recipe_sha256 -- THIS DOWNLOAD IS NOT VERIFIED. See recipes/README.md." >&2
+      fi
       chmod +x "$WORKSPACE/.darnlink-gate"
       "$WORKSPACE/.darnlink-gate"          # scope=repo from darnlink-gate.json
       rm -f "$WORKSPACE/.darnlink-gate"

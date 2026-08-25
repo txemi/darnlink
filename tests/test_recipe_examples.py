@@ -214,3 +214,129 @@ def test_version_is_derived_and_lazy():
          "import sys, darnlink; print('importlib.metadata' in sys.modules)"],
         capture_output=True, text=True)
     assert probe.stdout.strip() == "False", "importing darnlink must not pull importlib.metadata"
+
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# The examples download a script and RUN it. Until this block existed, nothing checked that they
+# verified what they downloaded — and they did not, in either file, at any released version. The
+# defect shipped by copy-paste: every surface that pasted these templates inherited it, and the
+# copies are not reachable from here, which is exactly why the templates must be gated.
+#
+# ⚠️ These tests EXECUTE the shipped shell with a stubbed `curl`, rather than grepping it. A text
+# assertion ("the file mentions sha256sum") is satisfied by a comment, by a disabled branch, or by a
+# comparison placed AFTER `chmod +x` — all three of which look fine on inspection and verify nothing.
+# The mutation that motivated this: moving the comparison below the `chmod +x` kept every text check
+# green.
+RECIPE_SHA_KEY = "recipe_sha256"
+
+
+def _fetch_shell(path: Path) -> str:
+    """The shipped fetch-and-verify shell, with `curl` stubbed to write known bytes."""
+    if path is ACTIONS:
+        yaml = pytest.importorskip("yaml")
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        body = next(s["run"] for s in doc["jobs"]["gate"]["steps"]
+                    if "curl" in s.get("run", "") and "sha256sum" in s.get("run", ""))
+    else:
+        m = re.search(r"sh\s+'''(.*?)'''", path.read_text(encoding="utf-8"), re.DOTALL)
+        assert m, "no sh ''' … ''' block in the Jenkins example"
+        body = m.group(1)
+    stub = ('curl() { while [ $# -gt 0 ]; do if [ "$1" = "-o" ]; then shift; '
+            'printf "%s" "$PAYLOAD" > "$1"; return 0; fi; shift; done; }\n')
+    return stub + body
+
+
+def _run_fetch(path: Path, cwd: Path, payload: str, sealed):
+    cfg = {"ref": "git+https://github.com/txemi/darnlink@main"}
+    if sealed is not None:
+        cfg[RECIPE_SHA_KEY] = sealed
+    (cwd / "darnlink-gate.json").write_text(json.dumps(cfg), encoding="utf-8")
+    env = {**os.environ, "PAYLOAD": payload, "RUNNER_TEMP": str(cwd),
+           "WORKSPACE": str(cwd), "DARNLINK_GATE_VERSION": "main"}
+    return subprocess.run(["bash", "-c", _fetch_shell(path)],
+                          cwd=cwd, capture_output=True, text=True, env=env)
+
+
+def _sha(s: str) -> str:
+    import hashlib
+    return hashlib.sha256(s.encode()).hexdigest()
+
+
+@pytest.mark.parametrize("example", EXECUTED, ids=lambda p: p.name)
+@requires_bash
+def test_a_tampered_recipe_is_REFUSED_not_executed(tmp_path, example):
+    """The one that matters. A sealed digest plus different bytes must stop the build."""
+    r = _run_fetch(example, tmp_path, "#!/bin/sh\necho pwned\n", sealed=_sha("the original bytes"))
+    assert r.returncode != 0, f"a tampered recipe was accepted: {r.stdout}{r.stderr}"
+
+
+@pytest.mark.parametrize("example", EXECUTED, ids=lambda p: p.name)
+@requires_bash
+def test_the_refused_recipe_is_not_left_on_disk(tmp_path, example):
+    """A rejected download that stays on disk is a loaded gun for the next step that assumes the
+    fetch succeeded — and for anything else sharing the workspace."""
+    _run_fetch(example, tmp_path, "#!/bin/sh\necho pwned\n", sealed=_sha("the original bytes"))
+    left = [p.name for p in tmp_path.iterdir() if "darnlink-gate" in p.name and p.suffix != ".json"]
+    assert not left, f"the unverified script survived rejection: {left}"
+
+
+@pytest.mark.parametrize("example", EXECUTED, ids=lambda p: p.name)
+@requires_bash
+def test_the_genuine_recipe_passes(tmp_path, example):
+    """The control. Without it, a step that always failed would satisfy the test above."""
+    payload = "#!/usr/bin/env bash\n# the real thing\n"
+    r = _run_fetch(example, tmp_path, payload, sealed=_sha(payload))
+    assert r.returncode == 0, f"the genuine recipe was rejected: {r.stdout}{r.stderr}"
+
+
+@pytest.mark.parametrize("example", EXECUTED, ids=lambda p: p.name)
+@requires_bash
+def test_an_UNSEALED_download_says_so_instead_of_passing_quietly(tmp_path, example):
+    """Absent key = keep working (a hard failure on arrival gets the gate deleted) but SAY IT.
+    Silence at this exact spot is indistinguishable from 'verified', which is the failure the whole
+    step exists to prevent, one layer up."""
+    r = _run_fetch(example, tmp_path, "#!/bin/sh\n", sealed=None)
+    assert r.returncode == 0, "an unsealed repo must keep working"
+    assert "NOT VERIFIED" in (r.stdout + r.stderr), (
+        f"an unverified download passed silently: {r.stdout!r} {r.stderr!r}")
+
+
+@pytest.mark.parametrize("example", EXECUTED, ids=lambda p: p.name)
+@requires_bash
+def test_the_mismatch_message_offers_the_MUNDANE_cause_first(tmp_path, example):
+    """A message that lists only alarming causes ('the tag moved, or it was tampered with') turns the
+    common maintenance slip — bumping `ref` without re-sealing the digest — into a suspected supply
+    chain attack. That omission cost about an hour of wrong suspicion once; naming the third cause is
+    the fix, and asserting it is what stops the wording drifting back."""
+    r = _run_fetch(example, tmp_path, "different\n", sealed=_sha("original"))
+    # ⚠️ Asserted on the MISMATCH LINE, not on the whole output. The first version of this test
+    # searched all of stdout+stderr for "re-seal" and was satisfied by the *remediation hint* two
+    # lines below ("re-seal with: curl … | sha256sum"), so deleting the cause from the message left
+    # it green. Measured by mutation: that is the only reason this narrower assertion exists.
+    line = next((l for l in (r.stdout + r.stderr).splitlines() if "checksum mismatch" in l), None)
+    assert line, f"no mismatch line at all: {r.stdout!r} {r.stderr!r}"
+    assert "re-sealing" in line.lower(), (
+        f"the mismatch message offers only alarming causes and omits the common one: {line.strip()}")
+
+
+@pytest.mark.parametrize("example", EXECUTED, ids=lambda p: p.name)
+def test_the_comparison_happens_BEFORE_chmod(example):
+    """Order is the whole property: verifying an already-executable file verifies nothing useful.
+    Comment lines are stripped first — both files *mention* `chmod +x` in prose explaining this."""
+    lines = example.read_text(encoding="utf-8").splitlines()
+    code = [(i, l) for i, l in enumerate(lines) if not l.strip().startswith(("#", "//"))]
+    sha = min(i for i, l in code if "sha256sum" in l and "re-seal" not in l)
+    chmod = min(i for i, l in code if "chmod +x" in l)
+    assert sha < chmod, f"{example.name}: verification at line {sha+1} is after chmod at {chmod+1}"
+
+
+@pytest.mark.parametrize("doc", [
+    Path(__file__).resolve().parent.parent / "recipes" / "darnlink-gate",
+    Path(__file__).resolve().parent.parent / "recipes" / "README.md",
+], ids=lambda p: p.name)
+def test_the_checksum_key_is_DOCUMENTED_not_only_used(doc):
+    """`recipe_sha256` existed in consumer configs for months while appearing nowhere in this repo —
+    every consumer that verified had invented the key locally. A key that lives only in the examples
+    is a key nobody knows to set, and one no reader can look up."""
+    assert RECIPE_SHA_KEY in doc.read_text(encoding="utf-8"), (
+        f"{doc.name} does not document {RECIPE_SHA_KEY}")
