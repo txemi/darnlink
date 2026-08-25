@@ -6,6 +6,7 @@ SHIM on PATH that drops the `--from <ref> darnlink` prefix and execs the locally
 console script instead (the same one CI installs via `uv pip install -e .`). No network, no version pin.
 """
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -892,3 +893,92 @@ def test_a_bom_is_honoured_by_the_LENGTH_reader_too(sandbox, tmp_path):
                                      + _clean_env().get("PATH", "")})
     assert "empty entry/entries" in r2.stderr, (
         "con BOM, read_cfg_len devolvio 0 y el aviso de owners vacios no salio:\n" + r2.stderr)
+
+
+# --- (f) a JSON `false` must not turn a flag ON ------------------------------------------------
+#
+# `read_cfg` prints the raw Python value, so a JSON `false` reaches the shell as the STRING "False",
+# and the guard it feeds is `[ -n "$X" ]` -- true for ANY non-empty string. Every boolean key in this
+# recipe therefore needs a normalising `case` after its assignment, and two of them did not have one.
+#
+# ⚠️ The shape of the near-miss is worth keeping. Reading the file, five keys LOOKED guarded and two
+# did not; the two that did not were the two sitting directly above a `case` belonging to a key
+# assigned thirteen lines earlier. Counting `[ -n "$X" ]` occurrences gives seven "bugs"; running the
+# thing gives two. These tests run it.
+#
+# Asserted on DARNLINK_ARGV_LOG -- the argv the tool actually receives -- because the verdict cannot
+# tell you: with these flags the gate exits 0 either way, which is exactly how this survived.
+
+def _argv(sandbox, config, tmp_path):
+    repo, run = sandbox
+    log = tmp_path / "argv.log"
+    run(config, argv_log=log)
+    return log.read_text(encoding="utf-8") if log.exists() else ""
+
+
+@pytest.mark.parametrize("value", [False, "false", "False", "off", "no", 0])
+def test_include_mermaid_falsey_does_not_turn_the_axis_ON(sandbox, tmp_path, value):
+    """`include_mermaid: false` used to ADD `--include-mermaid`. The config said off and the gate
+    read on -- the one direction a config typo must never be able to go."""
+    argv = _argv(sandbox, {"ref": "x", "mode": "max", "web": True, "include_mermaid": value}, tmp_path)
+    assert "--include-mermaid" not in argv, f"include_mermaid={value!r} still turned the axis on"
+
+
+def test_include_mermaid_true_still_turns_the_axis_ON(sandbox, tmp_path):
+    """The control. A normaliser that blanks everything would pass the test above and break the
+    feature -- and no other test here would notice, because the verdict is 0 either way."""
+    argv = _argv(sandbox, {"ref": "x", "mode": "max", "web": True, "include_mermaid": True}, tmp_path)
+    assert "--include-mermaid" in argv, "include_mermaid: true no longer reaches the tool"
+
+
+@pytest.mark.parametrize("value", [False, True])
+def test_a_boolean_default_branch_is_REFUSED_not_passed_through(sandbox, tmp_path, value):
+    """`default_branch` is a NAME, so the fix is not a truthiness `case`: a branch may legitimately be
+    called `off` or `no`. What cannot be legitimate is a JSON boolean -- it arrives as "True"/"False"
+    and was passed straight through as `--default-branch False`, a branch that exists nowhere, which
+    makes every link look pending against it."""
+    argv = _argv(sandbox, {"ref": "x", "mode": "max", "web": True, "default_branch": value}, tmp_path)
+    assert "--default-branch" not in argv, f"default_branch={value!r} reached the tool as a branch name"
+
+
+@pytest.mark.parametrize("name", ["main", "master", "off", "no", "false"])
+def test_every_real_branch_name_still_survives_including_the_falsey_looking_ones(sandbox, tmp_path, name):
+    """The control that stops the obvious over-fix. Blanking `off`/`no`/`false` here would be a worse
+    bug than the one being fixed: a repo whose default branch is genuinely called `off` would silently
+    lose the setting, and the rung would go inert exactly like the failure this key exists to prevent."""
+    argv = _argv(sandbox, {"ref": "x", "mode": "max", "web": True, "default_branch": name}, tmp_path)
+    assert f"--default-branch {name}" in argv, f"a branch legitimately named {name!r} was dropped"
+
+
+def test_every_boolean_key_is_normalised_next_to_its_own_assignment():
+    """The class, not the two instances. Both bugs existed because a `case` sat thirteen lines below
+    its assignment, past two unrelated keys -- so the next person to add a key landed above a
+    normaliser that looked like theirs and was not. Adjacency is the property that stops the third."""
+    lines = RECIPE.read_text(encoding="utf-8").splitlines()
+    assigns, guards = {}, {}
+    for i, l in enumerate(lines):
+        m = re.match(r'^([A-Z_]+)="\$\{DARNLINK_[A-Z_]*:-\$\(read_cfg ', l)
+        if m:
+            assigns.setdefault(m.group(1), i)
+        m = re.match(r'^case "\$\{?([A-Z_]+)', l)
+        if m:
+            guards.setdefault(m.group(1), i)
+
+    # ⚠️ Measured as "is another key ASSIGNED in between", not as a line count. A line count is the
+    # wrong instrument twice over: it fires on a long explanatory comment (harmless) and it stays
+    # quiet when a second key is assigned three lines below (the actual trap). What made the two
+    # bugs possible was a `case` with somebody else's assignment sitting above it.
+    intruders = {}
+    for var, gi in guards.items():
+        ai = assigns.get(var)
+        if ai is None or gi < ai:
+            continue
+        between = [o for o, oi in assigns.items() if o != var and ai < oi < gi]
+        if between:
+            intruders[var] = (ai + 1, gi + 1, between)
+    assert not intruders, (
+        "a normaliser is separated from the key it guards by another key's assignment -- exactly the "
+        "shape that let two keys ship unguarded, because the next author landed above a `case` that "
+        "was not theirs: "
+        + "; ".join(f"{v} assigned at line {a}, normalised at line {g}, with {b} assigned in between"
+                    for v, (a, g, b) in intruders.items()))

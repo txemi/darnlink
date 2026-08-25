@@ -223,6 +223,10 @@ case "${WEB,,}" in ""|0|false|no|off) WEB="" ;; *) WEB=1 ;; esac
 mapfile -t OWN_WEB < <(read_cfg own_web "")
 OWN_WEB_N="$(read_cfg_len own_web)"; [[ "$OWN_WEB_N" =~ ^[0-9]+$ ]] || OWN_WEB_N=0
 OWN_WEB_FROM_ORIGIN="${DARNLINK_GATE_OWN_WEB_FROM_ORIGIN:-$(read_cfg own_web_from_origin "")}"
+# ⚠️ NORMALISE ON THE LINE AFTER THE ASSIGNMENT. This `case` used to sit thirteen lines below, past
+# two unrelated assignments -- and that is not a style point, it is how the bug below happened: the
+# next person to add a key landed right above a `case` that looked like theirs and was not.
+case "${OWN_WEB_FROM_ORIGIN,,}" in ""|0|false|no|off) OWN_WEB_FROM_ORIGIN="" ;; *) OWN_WEB_FROM_ORIGIN=1 ;; esac
 
 # The repo's DEFAULT BRANCH, for telling a link that is PENDING on it from one that is broken.
 # ⚠️ Normally derived from `origin`, and in CI that derivation FAILS: a multibranch PR job fetches
@@ -231,11 +235,26 @@ OWN_WEB_FROM_ORIGIN="${DARNLINK_GATE_OWN_WEB_FROM_ORIGIN:-$(read_cfg own_web_fro
 # exactly where it is needed -- three red builds before anyone could see that. Declaring it here
 # cannot fail and cannot be guessed wrong.
 DEFAULT_BRANCH="${DARNLINK_GATE_DEFAULT_BRANCH:-$(read_cfg default_branch "")}"
+# ⚠️ This one is a STRING, not a flag, so the fix is not a `case` -- a branch may legitimately be
+# called `off` or `no`, and silently blanking those would be a worse bug than the one being fixed.
+# What cannot be legitimate is a JSON boolean: `read_cfg` renders it "True"/"False", and the gate
+# would then run with `--default-branch False` -- a branch name that exists nowhere, making every
+# link look pending against a branch that does not exist. Refuse the type, keep every real name.
+# Same direction as `own_web_max` just below: a config typo may narrow what runs, never widen it.
+case "$DEFAULT_BRANCH" in
+  True|False)
+    echo "darnlink-gate: default_branch=$DEFAULT_BRANCH is a JSON boolean, not a branch name -- ignoring it." >&2
+    echo "  Quote it (\"main\") if you meant a branch; remove the key to derive it from origin." >&2
+    DEFAULT_BRANCH="" ;;
+esac
 # Feature 017 (opt-in, needs `web`): also watch the destinations a mermaid diagram carries in
 # its `click` directives. ABSENT MEANS OFF, per repository: a fleet of fail-closed gates has to
 # be able to switch this on one repo at a time. These links are report-only and never anchored.
 INCLUDE_MERMAID="${DARNLINK_GATE_INCLUDE_MERMAID:-$(read_cfg include_mermaid "")}"
-case "${OWN_WEB_FROM_ORIGIN,,}" in ""|0|false|no|off) OWN_WEB_FROM_ORIGIN="" ;; *) OWN_WEB_FROM_ORIGIN=1 ;; esac
+# `read_cfg` prints the raw Python value, so a JSON `false` arrives as the STRING "False" -- and the
+# `[ -n "$X" ]` this feeds is TRUE for any non-empty string. Without this line, `include_mermaid:
+# false` TURNED THE AXIS ON: the config said off, the gate read on, and nothing said a word.
+case "${INCLUDE_MERMAID,,}" in ""|0|false|no|off) INCLUDE_MERMAID="" ;; *) INCLUDE_MERMAID=1 ;; esac
 # A budget, so the rung is adoptable before a repo reaches zero. Non-numeric counts as ABSENT, never as
 # infinite: silently WIDENING an allowance is the one direction a config typo must not be able to go —
 # the same rule `dangling_max` follows, and for the same reason.
@@ -273,19 +292,24 @@ case "${CREATE_README,,}" in ""|0|false|no|off) CREATE_README="" ;; *) CREATE_RE
 # budget — an unlowered budget is the failure mode, and nothing else would catch it.
 # Only `repo` has a wall, so the budget only applies there. A non-numeric value is treated as 0
 # (strictest) on purpose: a typo must never silently WIDEN an allowance.
+# ⚠️ Each of these two is normalised on the lines directly after its own assignment. They used to be
+# interleaved (both assigned, then both normalised, in the other order) and BOTH were correct -- this
+# is prophylactic, not a bug fix. It is here because that interleaving is the exact shape that let two
+# other keys ship unguarded: an author adding a key lands above a `case` that belongs to someone else
+# and reasonably reads it as theirs. The pattern is what was dangerous, so the pattern is what goes.
 DANGLING="${DARNLINK_GATE_DANGLING:-$(read_cfg dangling off)}"
-DANGLING_MAX="${DARNLINK_GATE_DANGLING_MAX:-$(read_cfg dangling_max 0)}"
-case "$DANGLING_MAX" in
-  ''|*[!0-9]*)
-    echo "darnlink-gate: dangling_max='$DANGLING_MAX' is not a non-negative integer — using 0." >&2
-    DANGLING_MAX=0 ;;
-esac
 case "${DANGLING,,}" in
   off|""|0|false|no) DANGLING=off ;;
   warn) DANGLING=warn ;;
   added-lines|added_lines) DANGLING=added-lines ;;
   repo|all|on|1|true|yes) DANGLING=repo ;;
   *) echo "darnlink-gate: unknown dangling=$DANGLING (use off|warn|added-lines|repo) — treating as off." >&2; DANGLING=off ;;
+esac
+DANGLING_MAX="${DARNLINK_GATE_DANGLING_MAX:-$(read_cfg dangling_max 0)}"
+case "$DANGLING_MAX" in
+  ''|*[!0-9]*)
+    echo "darnlink-gate: dangling_max='$DANGLING_MAX' is not a non-negative integer — using 0." >&2
+    DANGLING_MAX=0 ;;
 esac
 mapfile -t EXCLUDES < <(read_cfg excludes "")
 mapfile -t IGNORE_BLOCKS < <(read_cfg ignore_blocks "")
