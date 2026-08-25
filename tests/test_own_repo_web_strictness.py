@@ -18,6 +18,9 @@ from pathlib import Path
 import pytest
 
 from darnlink.cli import _run_web_check_cli
+URL = "https://github.com/example-org/handbook/blob/main/docs/living/service-topology.md"
+UUID = "3f9c1a2b-4d5e-6f70-8192-a3b4c5d6e7f8"
+
 from darnlink.weblinks import GithubUrl, check_web_links_online
 
 UUID = "3f9c1a2b-4d5e-6f70-8192-a3b4c5d6e7f8"
@@ -759,3 +762,29 @@ def test_default_branch_falls_back_to_the_remote_when_origin_HEAD_is_absent(tmp_
     assert own.default_ref == "master", (
         "origin/HEAD is absent, so this can only have come from the remote fallback; an empty "
         "value here means the rung is inert exactly where it is needed")
+
+
+def test_default_branch_flag_wins_over_the_automatic_sources(tmp_path):
+    """The explicit value is the only source that cannot fail, and in CI it is often the only one
+    that CAN answer: the checkout has no `origin/HEAD`, and the credentials for `ls-remote` are
+    usually scoped to the checkout step rather than to what it spawns."""
+    import subprocess
+    from darnlink.cli import _own_repo
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "remote", "add", "origin",
+                    "https://github.com/example-org/handbook.git"], check=True)
+    own = _own_repo(tmp_path, "trunk")
+    assert own is not None and own.default_ref == "trunk"
+
+
+def test_an_INERT_rung_says_so_instead_of_looking_like_a_working_one(tmp_path, capsys, monkeypatch):
+    """⚠️ THE LESSON THAT COST THREE RED BUILDS. When the rung cannot identify the repo it disables
+    itself — correct — but it did so SILENTLY, and a disabled rung looks exactly like one that ran
+    and found a real break: the same `web_not_found`, the same exit 4. Three attempted fixes each
+    looked like they had never arrived, when in fact they had arrived and were switching themselves
+    off. Saying it costs one line on stderr and turns a mystery into a datum."""
+    _w(tmp_path / "docs" / "living" / "service-topology.md", "# present\n")
+    _w(tmp_path / "conta.md", f"see [t]({URL}) <!-- web-uuid: {UUID} -->\n")   # no git repo at all
+    monkeypatch.setenv("GITHUB_TOKEN", "tok")
+    _run_web_check_cli([str(tmp_path), "--online"], fetcher=_fetcher({}))
+    assert "rung is INERT" in capsys.readouterr().err

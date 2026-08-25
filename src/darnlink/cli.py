@@ -391,6 +391,11 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
                         help="feature 016: a GitHub owner you control (repeatable). A destination "
                              "owned by one of these whose .md has no uuid becomes a FAILURE — it is "
                              "not an external limitation, it is a missing edit in a repo you control.")
+    parser.add_argument("--default-branch", metavar="NAME", default=None,
+                        help="the repo's default branch, for telling a link that is PENDING on it "
+                             "from one that is broken. Normally derived from `origin`; pass it when "
+                             "the checkout cannot answer (CI fetches only the PR ref, so there is "
+                             "no origin/HEAD, and a credential-less `ls-remote` cannot ask either)")
     parser.add_argument("--own-from-origin", action="store_true",
                         help="also treat the owner of this repo's `origin` remote as yours. A separate "
                              "flag rather than a magic --own value, so an owner literally called "
@@ -496,7 +501,18 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
     # This is what lets us tell "pending on the default branch" from "broken" WITHOUT opening the
     # door to downgrading someone else's real break: only the repo we are actually in can have its
     # own working tree consulted about where a `blob/<default-branch>/...` URL points after a merge.
-    own = _own_repo(root)
+    own = _own_repo(root, getattr(args, "default_branch", None))
+    # ⚠️ A RUNG THAT DISABLES ITSELF IN SILENCE IS INDISTINGUISHABLE FROM ONE THAT WORKS, and it
+    # took THREE red builds to find that out: the rung was inert in CI and all anyone could see was
+    # the same `not-found` as always -- exactly what you would see if it had never been written.
+    # Each attempted fix looked like it had never arrived, when it had arrived and was switching
+    # itself off. Saying so costs one line on stderr and turns a mystery into a datum.
+    if own is None or not own.default_ref:
+        motivo = ("could not identify this repo from `origin`" if own is None
+                  else "could not determine the default branch (no origin/HEAD, and `ls-remote` "
+                       "could not be asked — pass --default-branch)")
+        print(f"  note: the pending-on-default-branch rung is INERT — {motivo}. A 404 to a file that "
+              "exists here will be reported as broken.", file=sys.stderr)
     findings, edits = check_web_links_online(root, token, fetcher or default_fetcher, block_markers,
                                              excludes, owners, out_of_root=web_out_of_root,
                                              include_mermaid=args.include_mermaid, own=own)
@@ -645,7 +661,7 @@ def _github_owner_from_origin(root: Path) -> Optional[str]:
     return m["owner"] if m else None
 
 
-def _own_repo(root: Path) -> Optional["OwnRepo"]:
+def _own_repo(root: Path, default_branch: Optional[str] = None) -> Optional["OwnRepo"]:
     """The repo we are running in: `owner/repo`, its REAL ROOT and its default branch. Or None.
 
     All three from the same reading of git, deliberately. Measured in adversarial review: the gate
@@ -701,8 +717,13 @@ def _own_repo(root: Path) -> Optional["OwnRepo"]:
     #
     # Guessing "main" would be worse than not knowing: it would forgive links in every repo whose
     # default is something else. Unknown still means inert.
-    head = _git("symbolic-ref", "--short", "refs/remotes/origin/HEAD") or ""
-    default_ref = head.split("/", 1)[1] if "/" in head else ""
+    # An explicit value wins over both automatic sources: it is the only one that cannot fail, and
+    # in CI it is often the only one that CAN answer -- the checkout has no origin/HEAD and the
+    # credentials for `ls-remote` are usually scoped to the checkout step, not to what it spawns.
+    default_ref = (default_branch or "").strip()
+    if not default_ref:
+        head = _git("symbolic-ref", "--short", "refs/remotes/origin/HEAD") or ""
+        default_ref = head.split("/", 1)[1] if "/" in head else ""
     if not default_ref:
         # `ref: refs/heads/master\tHEAD` on the first line, or nothing at all.
         salida = _git("ls-remote", "--symref", "origin", "HEAD") or ""
