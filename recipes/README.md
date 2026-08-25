@@ -66,6 +66,7 @@ is that orchestration in one place; a consumer carries only a tiny config + a 3-
   |---|---|---|
   | `own_web` | list of GitHub owners | the owners you control |
   | `own_web_from_origin` | bool | also count this repo's `origin` owner. A **separate key, not a sentinel** in the list, so an owner literally called `origin` stays expressible |
+  | `default_branch` | string | the repo's default branch, e.g. `main`. **Declare it in CI**: a multibranch PR job fetches only the pull ref, so there is no `origin/HEAD`, and `ls-remote` usually has no credentials there — without this the pending-vs-broken rung goes INERT exactly where it is needed. It says so on stderr when it does |
   | `own_web_max` | int | a budget, so the rung is adoptable before the repo reaches zero. **Non-numeric counts as ABSENT, never as infinite** — widening an allowance is the one direction a config typo must not be able to go |
 
 - `include_mermaid` (opt-in, **needs `web`**) → feature 017. A `mermaid` diagram carries its

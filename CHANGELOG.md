@@ -4,6 +4,19 @@ All notable changes to darnlink are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## 0.26.0
+
+**An inert rung now says so.** When the pending-on-default-branch rung cannot identify the repo or
+its default branch it disables itself — correct — but it did so SILENTLY, and a disabled rung looks
+exactly like one that ran and found a real break: same `web_not_found`, same exit 4. Three
+attempted fixes each looked like they had never arrived, when they had arrived and were switching
+themselves off. One line on stderr turns that mystery into a datum.
+
+**New `--default-branch NAME`**, which wins over both automatic sources. It is the only one that
+cannot fail, and in CI it is often the only one that CAN answer: the checkout has no `origin/HEAD`
+(only the PR ref is fetched) and the credentials for `ls-remote` are usually scoped to the checkout
+step rather than to what it spawns.
+
 ## 0.25.1
 
 The 0.25.0 rung was **inert in CI**, which is the only place it mattered. It read the default branch
