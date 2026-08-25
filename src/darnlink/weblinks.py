@@ -334,7 +334,8 @@ class WebFinding:
 
 def _classify(link: WebLink, gu: Optional[GithubUrl], status: int, dest_uuid: Optional[str],
               have_token: bool, f: Path, owners: frozenset = frozenset(),
-              dest_fm_status: Optional[str] = None, filtered: bool = False) -> WebFinding:
+              dest_fm_status: Optional[str] = None, filtered: bool = False,
+              local_root: Optional[Path] = None, own_slug: Optional[str] = None) -> WebFinding:
     """Feature 016 adds two kinds on top of 013's five. Two axes (§Precedence): visibility first —
     `--ignore-block` and code fences never reach here, and a file carrying `darnlink-ignore-file` /
     `darnlink-ignore-links` arrives with `filtered=True`, which suppresses ONLY the new finding
@@ -375,6 +376,29 @@ def _classify(link: WebLink, gu: Optional[GithubUrl], status: int, dest_uuid: Op
                               "destination 404s but no token — ambiguous (could be a private repo we "
                               "cannot see, not necessarily moved); a token is needed to call it broken",
                               token_would_help=True)
+        # PENDING-ON-DEFAULT-BRANCH, not broken. A `blob/<default-branch>/…` URL to a path that
+        # EXISTS in the working tree is not a dead link: it is a link that the merge will make
+        # resolve. Calling it `web_not_found` in a blocking gate creates a DEADLOCK — the red
+        # blocks the merge that would fix it — and the two states are genuinely different:
+        #
+        #     will never resolve   -> a real break, must cut
+        #     not there YET        -> resolves on merge, and cutting blocks the merge
+        #
+        # This repo's own doctrine already argues for it thirteen lines up in this file: *"a false
+        # `web_not_found` in a blocking gate is worse than the crash this replaces"*. And it needs no
+        # new kind: `web_unverifiable` is exactly the honest "cannot tell from here" bucket.
+        #
+        # ⚠️ TWO conditions, and the second is what makes it safe. Path-exists alone would silently
+        # downgrade a REAL break whenever an unrelated repo happens to share a filename (`README.md`
+        # is the obvious one). So it must also be OUR OWN repo — the only one whose working tree says
+        # anything about where that URL will point after a merge.
+        if (own_slug and local_root is not None
+                and f"{gu.owner}/{gu.repo}".casefold() == own_slug.casefold()
+                and (local_root / gu.path).exists()):
+            return WebFinding("web_unverifiable", f, link.href,
+                              f"destination 404s on `{gu.ref}` but `{gu.path}` EXISTS in this working "
+                              "tree — pending on the default branch, not broken; it resolves when this "
+                              "branch merges. Blocking here would block the merge that fixes it")
         return WebFinding("web_not_found", f, link.href,
                           "destination URL 404s; darnlink does not search where it moved (LLM layer's job)")
     if status == -3:
@@ -443,6 +467,7 @@ def check_web_links_online(
     owners: frozenset = frozenset(),
     out_of_root: Optional[List[Path]] = None,
     include_mermaid: bool = False,
+    own_slug: Optional[str] = None,
 ) -> Tuple[List[WebFinding], Dict[Path, str]]:
     """Fetch each web link's destination (once, cached per URL) and classify it. Returns the findings
     and the per-file rewritten content for any `web_anchor` (the caller writes it only under --write).
@@ -484,7 +509,8 @@ def check_web_links_online(
         for link in links:
             gu = parse_github_url(link.href)
             if gu is None:
-                findings.append(_classify(link, None, 0, None, have_token, f, owners))
+                findings.append(_classify(link, None, 0, None, have_token, f, owners,
+                                          local_root=root, own_slug=own_slug))
                 continue
             if link.href not in cache:
                 cache[link.href] = fetcher(gu, token)
@@ -495,7 +521,8 @@ def check_web_links_online(
             # `web_unverifiable` into an exit 4 telling you to add a uuid the file already has.
             dest_fm_status, dest_uuid = (read_frontmatter_uuid(text.lstrip("\ufeff"))
                                          if (status == 200 and text is not None) else (None, None))
-            fnd = _classify(link, gu, status, dest_uuid, have_token, f, owners, dest_fm_status, filtered)
+            fnd = _classify(link, gu, status, dest_uuid, have_token, f, owners, dest_fm_status, filtered,
+                            local_root=root, own_slug=own_slug)
             findings.append(fnd)
             if fnd.kind == "web_anchor" and fnd.anchored_uuid:
                 pieces.append(content[cursor:link.start])

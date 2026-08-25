@@ -505,3 +505,57 @@ def test_verdict_line_offers_the_token_when_it_WOULD_help(tmp_path, capsys, monk
     assert _run_web_check_cli([str(tmp_path), "--online"], fetcher=_fetcher({URL: (403, None)})) == 0
     out = capsys.readouterr().out
     assert "1 of them would resolve with GITHUB_TOKEN" in out
+
+
+# --- "pending on the default branch" vs "broken": the deadlock, and the guard that makes it safe ---
+#
+# Measured 2026-08-25 on a real repo: a branch added `systems/jenkins/informes.md`, whose sibling
+# docs link to it as `blob/master/systems/jenkins/informes.md`. That URL 404s until the branch
+# merges -> 6 `web_not_found` -> exit 4 -> red build -> **the red blocks the merge that would make
+# the links resolve**. The two states are genuinely different and one kind was covering both:
+#
+#     will never resolve  -> a real break, must cut
+#     not there YET       -> resolves on merge, and cutting blocks the merge
+#
+# `web_unverifiable` already existed as the honest "cannot tell from here" bucket, so no new kind.
+
+def test_404_on_OWN_repo_with_the_path_present_locally_is_pending_not_broken(tmp_path):
+    """The deadlock case. Own repo + the path exists in the working tree -> unverifiable, gate green."""
+    _w(tmp_path / "docs" / "living" / "service-topology.md", "# lives here already\n")
+    _w(tmp_path / "conta.md", f"see [topo]({URL}) <!-- web-uuid: {UUID} -->\n")
+    findings, _ = check_web_links_online(tmp_path, token="tok", fetcher=_fetcher({}),
+                                         own_slug="example-org/handbook")
+    assert findings[0].kind == "web_unverifiable"
+    assert "EXISTS in this working tree" in findings[0].detail
+
+
+def test_404_on_OWN_repo_with_the_path_ABSENT_is_still_a_real_break(tmp_path):
+    """The control that keeps the rung useful: without the file there is nothing pending, so a 404
+    stays exactly as broken as before. Without this test the change could silently downgrade
+    everything and still look correct."""
+    _w(tmp_path / "conta.md", f"see [topo]({URL}) <!-- web-uuid: {UUID} -->\n")
+    findings, _ = check_web_links_online(tmp_path, token="tok", fetcher=_fetcher({}),
+                                         own_slug="example-org/handbook")
+    assert findings[0].kind == "web_not_found"
+
+
+def test_404_on_ANOTHER_repo_is_NOT_downgraded_by_a_same_named_local_file(tmp_path):
+    """⚠️ THE ONE THAT MATTERS. Path-exists ALONE would silently downgrade a real break whenever an
+    unrelated repo happens to share a filename -- and shared filenames are the norm, not the
+    exception (`README.md`, `docs/index.md`). Only OUR OWN repo's working tree says anything about
+    where a `blob/<branch>/...` URL will point after a merge; for any other repo it says nothing.
+    Here the file exists locally and the link points elsewhere: it must stay `web_not_found`."""
+    _w(tmp_path / "docs" / "living" / "service-topology.md", "# same path, different repo\n")
+    _w(tmp_path / "conta.md", f"see [topo]({URL}) <!-- web-uuid: {UUID} -->\n")
+    findings, _ = check_web_links_online(tmp_path, token="tok", fetcher=_fetcher({}),
+                                         own_slug="someone-else/other-repo")
+    assert findings[0].kind == "web_not_found"
+
+
+def test_pending_rung_is_INERT_when_the_origin_slug_is_unknown(tmp_path):
+    """No `own_slug` (no origin, a non-GitHub remote, a bare tree) -> behaves exactly as before.
+    A rung that changed behaviour when it could not identify the repo would be worse than no rung."""
+    _w(tmp_path / "docs" / "living" / "service-topology.md", "# present\n")
+    _w(tmp_path / "conta.md", f"see [topo]({URL}) <!-- web-uuid: {UUID} -->\n")
+    findings, _ = check_web_links_online(tmp_path, token="tok", fetcher=_fetcher({}))
+    assert findings[0].kind == "web_not_found"
