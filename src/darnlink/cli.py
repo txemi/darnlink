@@ -493,9 +493,13 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
 
     token = os.environ.get("GITHUB_TOKEN") or None
     web_out_of_root: List[Path] = []
+    # This is what lets us tell "pending on the default branch" from "broken" WITHOUT opening the
+    # door to downgrading someone else's real break: only the repo we are actually in can have its
+    # own working tree consulted about where a `blob/<default-branch>/...` URL points after a merge.
+    own = _own_repo(root)
     findings, edits = check_web_links_online(root, token, fetcher or default_fetcher, block_markers,
                                              excludes, owners, out_of_root=web_out_of_root,
-                                             include_mermaid=args.include_mermaid)
+                                             include_mermaid=args.include_mermaid, own=own)
     ok = [x for x in findings if x.kind == "web_ok"]
     anchors = [x for x in findings if x.kind == "web_anchor"]
     mismatch = [x for x in findings if x.kind == "web_mismatch"]
@@ -639,6 +643,55 @@ def _github_owner_from_origin(root: Path) -> Optional[str]:
                   r"|(?:[^/@]*@)?github\.com:)(?P<owner>[^/]+)/",
                   out.stdout.strip(), _re.IGNORECASE | _re.ASCII)
     return m["owner"] if m else None
+
+
+def _own_repo(root: Path) -> Optional["OwnRepo"]:
+    """The repo we are running in: `owner/repo`, its REAL ROOT and its default branch. Or None.
+
+    All three from the same reading of git, deliberately. Measured in adversarial review: the gate
+    supports scanning a SUBDIRECTORY (a fleet gate takes it as an argument), and there `root` stops
+    being the repo root while `<path>` stays relative to it — so a broken link was compared against
+    the wrong tree and came out green. Hence the root comes from `rev-parse --show-toplevel` and not
+    from the scanned directory.
+
+    Same hardening as `_github_owner_from_origin`: scrubbed git environment (a hook exports GIT_DIR
+    and would answer about ANOTHER repository, silently and with a plausible answer) and an
+    ASCII-anchored regex (without `re.ASCII`, IGNORECASE folds U+0131 so a lookalike host resolves
+    as GitHub). Any failure returns None and the rung is INERT, which is the safe side.
+    """
+    import os as _os
+    import re as _re
+    import subprocess
+    from darnlink.weblinks import OwnRepo
+    env = {k: v for k, v in _os.environ.items()
+           if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR")}
+
+    def _git(*args: str) -> Optional[str]:
+        try:
+            out = subprocess.run(["git", "-C", str(root), *args],
+                                 capture_output=True, text=True, timeout=10, env=env)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return out.stdout.strip() if out.returncode == 0 else None
+
+    url = _git("config", "--get", "remote.origin.url")
+    if not url:
+        return None
+    m = _re.match(r"(?:(?:https?|ssh)://(?:[^/@]*@)?(?:www\.|ssh\.)?github\.com(?::\d+)?/"
+                  r"|(?:[^/@]*@)?github\.com:)(?P<owner>[^/]+)/(?P<repo>[^/]+?)(?:\.git)?/?$",
+                  url, _re.IGNORECASE | _re.ASCII)
+    if not m:
+        return None
+    top = _git("rev-parse", "--show-toplevel")
+    if not top:
+        return None
+    # `origin`'s default branch. `origin/HEAD` is a LOCAL symref that can be MISSING (a clone made
+    # with `--no-tags`, a remote added by hand), and when it is, this returns the empty string and
+    # the rung stays inert. Guessing "main" would be worse than not knowing: it would forgive links
+    # in every repo whose default is something else.
+    head = _git("symbolic-ref", "--short", "refs/remotes/origin/HEAD") or ""
+    default_ref = head.split("/", 1)[1] if "/" in head else ""
+    return OwnRepo(slug=f"{m['owner']}/{m['repo']}", root=Path(top), default_ref=default_ref)
 
 
 def _make_stdio_encoding_safe() -> None:
