@@ -27,7 +27,8 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from functools import lru_cache
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from urllib.parse import unquote
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from .frontmatter_index import read_frontmatter_uuid
@@ -332,10 +333,86 @@ class WebFinding:
     token_would_help: bool = False
 
 
+@dataclass(frozen=True)
+class OwnRepo:
+    """What we must know about the repo WE ARE IN to be able to say "pending, not broken".
+
+    The three facts travel together rather than loose because all three must come from the SAME
+    reading of git: mixing one repo's slug with another's toplevel IS one of the leaks an
+    adversarial review walked through — the gate supports scanning a SUBDIRECTORY, and there `root`
+    stops being the repo root while `<path>` stays relative to it.
+    """
+    slug: str          # owner/repo of `origin`
+    root: Path         # `git rev-parse --show-toplevel`, NOT the scanned directory
+    default_ref: str   # the default branch of `origin`, e.g. `main` or `master`
+
+
+def _pendiente_en_la_rama_por_defecto(gu: "GithubUrl", own: Optional["OwnRepo"]) -> bool:
+    """Is this 404 "not published yet" rather than "broken"? Only if ALL of the following hold.
+
+    Each condition closes a leak MEASURED in adversarial review. An earlier draft checked only two
+    — own repo, and `.exists()` — and every case below walked through it GREEN while being a link
+    that no merge will ever resolve. A gate that lets a real break past is worse than one that cuts
+    too much: green reads the same whether it is right or blind.
+    """
+    if own is None:
+        return False
+    # (1) ASCII SLUG, and `.lower()` rather than `.casefold()`. GitHub slugs are ASCII, so any URL
+    #     carrying anything else is a permanently dead link — and `casefold()` COLLAPSES exactly
+    #     those lookalikes: U+212A (KELVIN) folds to `k`, U+00DF to `ss`. The sibling helper
+    #     `_github_owner_from_origin` carries an explicit comment about `re.ASCII` and U+0131 for
+    #     this same reason; this comparison did not inherit that hardening.
+    if not (gu.owner.isascii() and gu.repo.isascii()):
+        return False
+    if f"{gu.owner}/{gu.repo}".lower() != own.slug.lower():
+        return False
+    # (2) THE REF MUST BE THE DEFAULT BRANCH. It is what the message claims ("resolves when this
+    #     branch merges") and what went unchecked: a `blob/<sha>/x` or `blob/v1.0.0/x` is IMMUTABLE
+    #     — it will never resolve — and was forgiven all the same. This file already ships the
+    #     detector (`_IMMUTABLE_REF_RE`, used for exactly this in FR-006); requiring the default
+    #     branch is stronger still and does not depend on guessing what an immutable ref looks like.
+    if not own.default_ref or gu.ref != own.default_ref:
+        return False
+    # (3) THE PATH, CONFINED TO THE TREE. URL paths are PERCENT-ENCODED, and this matters daily
+    #     here: folder names carry a timezone offset (`…T104500+0200_…`), which in a URL is `%2B`.
+    #     Undecoded, the rung sat silently inert on the commonest shape in the repo — it did not
+    #     fail, it did nothing. And `Path(root) / "/etc/hostname"` IS `/etc/hostname` on POSIX, so
+    #     an absolute path left the repo entirely and `.exists()` happily agreed.
+    ruta = unquote(gu.path)
+    if ruta.startswith("/") or ".." in PurePosixPath(ruta).parts:
+        return False
+    destino = own.root / ruta
+    try:
+        if not destino.resolve().is_relative_to(own.root.resolve()):
+            return False
+    except (OSError, ValueError):
+        return False
+    # (4) AND IT MUST BE A TRACKED FILE. `.exists()` accepts a DIRECTORY (which GitHub serves under
+    #     `/tree/`, so `/blob/<dir>` 404s forever) and a GITIGNORED file, which no merge puts on the
+    #     default branch. Neither of them is fixed by merging.
+    if not destino.is_file():
+        return False
+    return _esta_versionado(own.root, ruta)
+
+
+def _esta_versionado(root: "Path", ruta: str) -> bool:
+    """`git ls-files --error-unmatch`. Fail-closed: on any doubt, do NOT forgive."""
+    import os as _os
+    import subprocess
+    env = {k: v for k, v in _os.environ.items()
+           if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR")}
+    try:
+        r = subprocess.run(["git", "-C", str(root), "ls-files", "--error-unmatch", "--", ruta],
+                           capture_output=True, text=True, timeout=10, env=env)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return r.returncode == 0
+
+
 def _classify(link: WebLink, gu: Optional[GithubUrl], status: int, dest_uuid: Optional[str],
               have_token: bool, f: Path, owners: frozenset = frozenset(),
               dest_fm_status: Optional[str] = None, filtered: bool = False,
-              local_root: Optional[Path] = None, own_slug: Optional[str] = None) -> WebFinding:
+              own: Optional["OwnRepo"] = None) -> WebFinding:
     """Feature 016 adds two kinds on top of 013's five. Two axes (§Precedence): visibility first —
     `--ignore-block` and code fences never reach here, and a file carrying `darnlink-ignore-file` /
     `darnlink-ignore-links` arrives with `filtered=True`, which suppresses ONLY the new finding
@@ -392,13 +469,12 @@ def _classify(link: WebLink, gu: Optional[GithubUrl], status: int, dest_uuid: Op
         # downgrade a REAL break whenever an unrelated repo happens to share a filename (`README.md`
         # is the obvious one). So it must also be OUR OWN repo — the only one whose working tree says
         # anything about where that URL will point after a merge.
-        if (own_slug and local_root is not None
-                and f"{gu.owner}/{gu.repo}".casefold() == own_slug.casefold()
-                and (local_root / gu.path).exists()):
+        if _pendiente_en_la_rama_por_defecto(gu, own):
             return WebFinding("web_unverifiable", f, link.href,
-                              f"destination 404s on `{gu.ref}` but `{gu.path}` EXISTS in this working "
-                              "tree — pending on the default branch, not broken; it resolves when this "
-                              "branch merges. Blocking here would block the merge that fixes it")
+                              f"destination 404s on the default branch `{gu.ref}` but `{gu.path}` is a "
+                              "TRACKED FILE in this working tree — pending on the default branch, not "
+                              "broken. It resolves when this branch merges (or stays pending if the "
+                              "branch is abandoned); blocking here would block that merge")
         return WebFinding("web_not_found", f, link.href,
                           "destination URL 404s; darnlink does not search where it moved (LLM layer's job)")
     if status == -3:
@@ -467,7 +543,7 @@ def check_web_links_online(
     owners: frozenset = frozenset(),
     out_of_root: Optional[List[Path]] = None,
     include_mermaid: bool = False,
-    own_slug: Optional[str] = None,
+    own: Optional["OwnRepo"] = None,
 ) -> Tuple[List[WebFinding], Dict[Path, str]]:
     """Fetch each web link's destination (once, cached per URL) and classify it. Returns the findings
     and the per-file rewritten content for any `web_anchor` (the caller writes it only under --write).
@@ -510,7 +586,7 @@ def check_web_links_online(
             gu = parse_github_url(link.href)
             if gu is None:
                 findings.append(_classify(link, None, 0, None, have_token, f, owners,
-                                          local_root=root, own_slug=own_slug))
+                                          own=own))
                 continue
             if link.href not in cache:
                 cache[link.href] = fetcher(gu, token)
@@ -522,7 +598,7 @@ def check_web_links_online(
             dest_fm_status, dest_uuid = (read_frontmatter_uuid(text.lstrip("\ufeff"))
                                          if (status == 200 and text is not None) else (None, None))
             fnd = _classify(link, gu, status, dest_uuid, have_token, f, owners, dest_fm_status, filtered,
-                            local_root=root, own_slug=own_slug)
+                            own=own)
             findings.append(fnd)
             if fnd.kind == "web_anchor" and fnd.anchored_uuid:
                 pieces.append(content[cursor:link.start])

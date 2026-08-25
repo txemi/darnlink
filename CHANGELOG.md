@@ -4,6 +4,38 @@ All notable changes to darnlink are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## 0.25.0
+
+### A link pending on the default branch is not a broken link
+
+A `blob/<default-branch>/<path>` URL to a file that exists in the working tree but has not reached
+the default branch yet was classified `web_not_found` -> `exit 4`. In a blocking gate that is a
+**deadlock**: the red blocks the merge that would make the link resolve. Measured in the field as
+`not-found 6` on a branch that could not go green before merging and could not merge while red.
+
+It now becomes `web_unverifiable` — the kind that already existed for "cannot tell from here" —
+under **five** conditions, every one of which closes a way a permanently-dead link walked through
+an earlier draft of this rung, green:
+
+| condition | what it stops forgiving |
+|---|---|
+| the ref IS the default branch | `blob/<sha>/…`, a tag, a deleted branch — none of which any merge resolves |
+| the slug is ASCII and matches `origin` | lookalike hosts; `casefold()` collapses U+212A to `k` |
+| the path is confined to the tree | `blob/main//etc/hostname` escaped it entirely |
+| the destination is a FILE | a directory is served under `/tree/`, so `/blob/<dir>` 404s forever |
+| the destination is TRACKED | a gitignored artefact never reaches the default branch |
+
+The base of the path join is `rev-parse --show-toplevel`, not the scanned directory: scanning a
+subdirectory is supported, and there `<path>` (repo-relative) compared against the wrong tree.
+Percent-encoded paths are decoded, so the rung is not silently inert on `%2B` and `%20`.
+
+Unknown origin, non-GitHub remote or unknown default branch -> the rung is **inert** and behaviour
+is exactly as before. A rung that changed behaviour when it could not identify the repo would be
+worse than no rung.
+
+⚠️ **Consumers pin by SHA**, so merging this changes nothing for them until each `darnlink-gate.json`
+`ref` is bumped.
+
 ## [Unreleased]
 
 ### Added

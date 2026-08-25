@@ -507,26 +507,44 @@ def test_verdict_line_offers_the_token_when_it_WOULD_help(tmp_path, capsys, monk
     assert "1 of them would resolve with GITHUB_TOKEN" in out
 
 
-# --- "pending on the default branch" vs "broken": the deadlock, and the guard that makes it safe ---
+# --- "pending on the default branch" vs "broken": the deadlock, and the five guards ---
 #
-# Measured 2026-08-25 on a real repo: a branch added `systems/jenkins/informes.md`, whose sibling
-# docs link to it as `blob/master/systems/jenkins/informes.md`. That URL 404s until the branch
-# merges -> 6 `web_not_found` -> exit 4 -> red build -> **the red blocks the merge that would make
-# the links resolve**. The two states are genuinely different and one kind was covering both:
+# Measured on a real repo: a branch added `systems/jenkins/informes.md`, whose sibling docs link to
+# it as `blob/master/systems/jenkins/informes.md`. That URL 404s until the branch merges -> 6
+# `web_not_found` -> exit 4 -> red build -> **the red blocks the merge that makes the links
+# resolve**. Two genuinely different states shared one kind:
 #
 #     will never resolve  -> a real break, must cut
 #     not there YET       -> resolves on merge, and cutting blocks the merge
 #
-# `web_unverifiable` already existed as the honest "cannot tell from here" bucket, so no new kind.
+# ⚠️ THE FIRST VERSION OF THIS RUNG CHECKED ONLY TWO THINGS -- own repo, and `.exists()` -- and an
+# adversarial review found FIVE ways to walk a permanently-dead link straight through it, all of
+# them green. Every test below is one of those five. They are not padding: the four tests that
+# shipped first (own/other/absent/no-slug) pass in ALL five leaking cases.
+
+def _own(tmp_path, slug="example-org/handbook", ref="main"):
+    from darnlink.weblinks import OwnRepo
+    return OwnRepo(slug=slug, root=tmp_path, default_ref=ref)
+
+
+def _git_init(tmp_path):
+    """A real repo: the rung requires the destination to be a TRACKED file, so a bare tmpdir is not
+    enough. `git ls-files` is what tells a file that will reach the default branch from one that
+    never will (a gitignored build artefact looks identical to `.exists()`)."""
+    import subprocess
+    subprocess.run(["git", "-C", str(tmp_path), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True)
+
 
 def test_404_on_OWN_repo_with_the_path_present_locally_is_pending_not_broken(tmp_path):
     """The deadlock case. Own repo + the path exists in the working tree -> unverifiable, gate green."""
     _w(tmp_path / "docs" / "living" / "service-topology.md", "# lives here already\n")
     _w(tmp_path / "conta.md", f"see [topo]({URL}) <!-- web-uuid: {UUID} -->\n")
+    _git_init(tmp_path)
     findings, _ = check_web_links_online(tmp_path, token="tok", fetcher=_fetcher({}),
-                                         own_slug="example-org/handbook")
+                                         own=_own(tmp_path))
     assert findings[0].kind == "web_unverifiable"
-    assert "EXISTS in this working tree" in findings[0].detail
+    assert "TRACKED FILE in this working tree" in findings[0].detail
 
 
 def test_404_on_OWN_repo_with_the_path_ABSENT_is_still_a_real_break(tmp_path):
@@ -534,8 +552,9 @@ def test_404_on_OWN_repo_with_the_path_ABSENT_is_still_a_real_break(tmp_path):
     stays exactly as broken as before. Without this test the change could silently downgrade
     everything and still look correct."""
     _w(tmp_path / "conta.md", f"see [topo]({URL}) <!-- web-uuid: {UUID} -->\n")
+    _git_init(tmp_path)
     findings, _ = check_web_links_online(tmp_path, token="tok", fetcher=_fetcher({}),
-                                         own_slug="example-org/handbook")
+                                         own=_own(tmp_path))
     assert findings[0].kind == "web_not_found"
 
 
@@ -547,8 +566,9 @@ def test_404_on_ANOTHER_repo_is_NOT_downgraded_by_a_same_named_local_file(tmp_pa
     Here the file exists locally and the link points elsewhere: it must stay `web_not_found`."""
     _w(tmp_path / "docs" / "living" / "service-topology.md", "# same path, different repo\n")
     _w(tmp_path / "conta.md", f"see [topo]({URL}) <!-- web-uuid: {UUID} -->\n")
+    _git_init(tmp_path)
     findings, _ = check_web_links_online(tmp_path, token="tok", fetcher=_fetcher({}),
-                                         own_slug="someone-else/other-repo")
+                                         own=_own(tmp_path, slug="someone-else/other-repo"))
     assert findings[0].kind == "web_not_found"
 
 
@@ -557,5 +577,114 @@ def test_pending_rung_is_INERT_when_the_origin_slug_is_unknown(tmp_path):
     A rung that changed behaviour when it could not identify the repo would be worse than no rung."""
     _w(tmp_path / "docs" / "living" / "service-topology.md", "# present\n")
     _w(tmp_path / "conta.md", f"see [topo]({URL}) <!-- web-uuid: {UUID} -->\n")
+    _git_init(tmp_path)
     findings, _ = check_web_links_online(tmp_path, token="tok", fetcher=_fetcher({}))
     assert findings[0].kind == "web_not_found"
+
+
+# --- the five leaks an adversarial review walked straight through the FIRST version of this rung ---
+#
+# All five were permanently-dead links that came out GREEN. None of the four tests above catches any
+# of them: they all pass in every leaking case, which is why they are not enough on their own.
+
+def test_leak1_an_immutable_ref_is_never_pending(tmp_path):
+    """A `blob/<sha>/…` or `blob/<tag>/…` is IMMUTABLE: no merge makes it resolve, so calling it
+    "pending on the default branch" is a lie the operator acts on. This file already carried
+    `_IMMUTABLE_REF_RE` for exactly this distinction (FR-006) and the rung did not consult it. The
+    fix is stronger than that regex: the ref must BE the default branch, which is what the message
+    claims. A deleted long-lived branch is dead the same way and no regex would have caught it."""
+    _w(tmp_path / "docs" / "living" / "service-topology.md", "# present\n")
+    for ref in ("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", "v1.0.0", "branch-deleted-years-ago"):
+        url = f"https://github.com/example-org/handbook/blob/{ref}/docs/living/service-topology.md"
+        _w(tmp_path / "conta.md", f"see [topo]({url}) <!-- web-uuid: {UUID} -->\n")
+        _git_init(tmp_path)
+        findings, _ = check_web_links_online(tmp_path, token="tok", fetcher=_fetcher({}),
+                                             own=_own(tmp_path, ref="main"))
+        assert findings[0].kind == "web_not_found", f"ref {ref!r} was forgiven"
+
+
+def test_leak2_the_join_base_is_the_repo_ROOT_not_the_scanned_dir(tmp_path):
+    """`gu.path` is relative to the REPO ROOT, so joining it to the SCANNED directory compares
+    against the wrong tree. Not hypothetical: a fleet gate takes the scan root as an argument
+    (`SCAN_ROOT="${1:-.}"`). Here the file exists under `docs/` and the URL says root-level: with the
+    scanned dir as base it would "exist" and be forgiven; with the repo root it correctly stays broken."""
+    url = "https://github.com/example-org/handbook/blob/main/notes.md"
+    _w(tmp_path / "docs" / "notes.md", "# only under docs/\n")
+    _w(tmp_path / "docs" / "conta.md", f"see [n]({url}) <!-- web-uuid: {UUID} -->\n")
+    _git_init(tmp_path)
+    findings, _ = check_web_links_online(tmp_path / "docs", token="tok", fetcher=_fetcher({}),
+                                         own=_own(tmp_path, ref="main"))
+    assert findings[0].kind == "web_not_found"
+
+
+def test_leak3_a_directory_or_an_untracked_file_is_not_pending(tmp_path):
+    """`.exists()` says yes to two things that NO merge can put on the default branch as a `/blob/`
+    URL: a DIRECTORY (GitHub serves those under `/tree/`, so `/blob/<dir>` 404s forever) and a file
+    that is not tracked (a build artefact, a gitignored report). Both looked identical to a pending
+    file, and both were forgiven."""
+    _w(tmp_path / ".gitignore", "dist/\n")
+    _w(tmp_path / "docs" / "living" / "keep.md", "# tracked sibling so the dir exists\n")
+    _w(tmp_path / "dist" / "report.html", "<p>generated</p>\n")
+    _git_init(tmp_path)
+    for path in ("docs/living", "dist/report.html"):
+        url = f"https://github.com/example-org/handbook/blob/main/{path}"
+        _w(tmp_path / "conta.md", f"see [x]({url}) <!-- web-uuid: {UUID} -->\n")
+        findings, _ = check_web_links_online(tmp_path, token="tok", fetcher=_fetcher({}),
+                                             own=_own(tmp_path, ref="main"))
+        assert findings[0].kind == "web_not_found", f"{path!r} was forgiven"
+
+
+def test_leak4_the_path_cannot_escape_the_working_tree(tmp_path):
+    """`Path(root) / "/etc/hostname"` IS `/etc/hostname` in POSIX, so an absolute path in the URL
+    escaped the tree entirely and `.exists()` said yes — the rung then printed that a file OUTSIDE
+    the repo "EXISTS in this working tree".
+
+    ⚠️ WHAT THIS TEST DOES AND DOES NOT PIN DOWN, because it was measured and not assumed. Seeding
+    says it: remove the containment check and this test STILL PASSES. The escape is already blocked
+    one guard later, by `git ls-files --error-unmatch` — nothing outside the tree is ever tracked.
+    So this pins the BEHAVIOUR (an escaping path is never forgiven) and NOT which guard does it.
+
+    The containment check stays anyway, and deliberately: it is two comparisons, it fails closed,
+    and unlike the tracked check it does not depend on `git` being runnable — a subprocess that
+    cannot start is exactly when you want the cheap guard to still be there. But calling it
+    "the fix for this leak" would claim more than the measurement supports."""
+    repo = tmp_path / "repo"
+    _w(tmp_path / "vecino.md", "# outside the repo\n")
+    _w(repo / "docs" / "keep.md", "# something tracked\n")
+    _git_init(repo)
+    for path in ("/etc/hostname", "../vecino.md"):
+        url = f"https://github.com/example-org/handbook/blob/main/{path}"
+        _w(repo / "conta.md", f"see [x]({url}) <!-- web-uuid: {UUID} -->\n")
+        findings, _ = check_web_links_online(repo, token="tok", fetcher=_fetcher({}),
+                                             own=_own(repo, ref="main"))
+        assert all(f.kind != "web_unverifiable" or "TRACKED FILE" not in f.detail
+                   for f in findings), f"{path!r} escaped the tree and was forgiven"
+
+
+def test_leak5_a_non_ascii_slug_never_matches(tmp_path):
+    """GitHub slugs are ASCII, so a lookalike is a permanently dead link — and `casefold()` COLLAPSES
+    exactly those lookalikes (U+212A KELVIN folds to `k`, U+00DF to `ss`). Its sibling helper carries
+    an explicit comment about `re.ASCII` and U+0131 for this same reason; the comparison did not
+    inherit that hardening."""
+    url = "https://github.com/example-org/handbooK/blob/main/docs/living/service-topology.md"
+    _w(tmp_path / "docs" / "living" / "service-topology.md", "# present\n")
+    _w(tmp_path / "conta.md", f"see [x]({url}) <!-- web-uuid: {UUID} -->\n")
+    _git_init(tmp_path)
+    findings, _ = check_web_links_online(tmp_path, token="tok", fetcher=_fetcher({}),
+                                         own=_own(tmp_path, slug="example-org/handbook", ref="main"))
+    assert findings[0].kind != "web_unverifiable" or "TRACKED FILE" not in findings[0].detail
+
+
+def test_a_percent_encoded_path_still_resolves(tmp_path):
+    """⚠️ NOT a leak — the opposite: the rung was INERT here. URL paths are percent-encoded, and this
+    account's dominant convention puts a timezone offset in folder names (`…T104500+0200_…`), which
+    in a URL is `%2B`. Undecoded, the rung silently did nothing on precisely the most common shape."""
+    _w(tmp_path / "log" / "2026-08-11T104500+0200_x" / "README.md", "# pending\n")
+    url = ("https://github.com/example-org/handbook/blob/main/"
+           "log/2026-08-11T104500%2B0200_x/README.md")
+    _w(tmp_path / "conta.md", f"see [x]({url}) <!-- web-uuid: {UUID} -->\n")
+    _git_init(tmp_path)
+    findings, _ = check_web_links_online(tmp_path, token="tok", fetcher=_fetcher({}),
+                                         own=_own(tmp_path, ref="main"))
+    assert findings[0].kind == "web_unverifiable"
+    assert "TRACKED FILE" in findings[0].detail
