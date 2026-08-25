@@ -212,6 +212,14 @@ case "${WEB,,}" in ""|0|false|no|off) WEB="" ;; *) WEB=1 ;; esac
 mapfile -t OWN_WEB < <(read_cfg own_web "")
 OWN_WEB_N="$(read_cfg_len own_web)"; [[ "$OWN_WEB_N" =~ ^[0-9]+$ ]] || OWN_WEB_N=0
 OWN_WEB_FROM_ORIGIN="${DARNLINK_GATE_OWN_WEB_FROM_ORIGIN:-$(read_cfg own_web_from_origin "")}"
+
+# The repo's DEFAULT BRANCH, for telling a link that is PENDING on it from one that is broken.
+# ⚠️ Normally derived from `origin`, and in CI that derivation FAILS: a multibranch PR job fetches
+# only `+refs/pull/<n>/head:...`, so there is no `origin/HEAD`, and the credentials for `ls-remote`
+# are usually scoped to the checkout step rather than to what it spawns. The rung then goes INERT
+# exactly where it is needed -- three red builds before anyone could see that. Declaring it here
+# cannot fail and cannot be guessed wrong.
+DEFAULT_BRANCH="${DARNLINK_GATE_DEFAULT_BRANCH:-$(read_cfg default_branch "")}"
 # Feature 017 (opt-in, needs `web`): also watch the destinations a mermaid diagram carries in
 # its `click` directives. ABSENT MEANS OFF, per repository: a fleet of fail-closed gates has to
 # be able to switch this on one repo at a time. These links are report-only and never anchored.
@@ -483,6 +491,10 @@ if [ "$SCOPE" != "staged" ]; then
         echo "darnlink-gate: own_web has $((OWN_WEB_N - OWN_WEB_USED)) empty entry/entries out of" >&2
         echo "  $OWN_WEB_N — they were ignored, so fewer owners are enforced than the config lists." >&2
       fi
+      # ⚠️ Only added when declared: an empty `--default-branch ""` would be worse than absent --
+      # it would look like an answer. Absent means the rung falls back to deriving it, and says so
+      # on stderr if it cannot.
+      [ -n "$DEFAULT_BRANCH" ] && WEB_ARGS+=(--default-branch "$DEFAULT_BRANCH")
       run web-check . --online "${WEB_ARGS[@]}"; rc=$?
       set -e
       # Exit 1 CAN be a usage error — feature 016 makes it reachable from CONFIGURATION: own_web_max
