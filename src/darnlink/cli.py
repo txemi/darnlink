@@ -685,12 +685,31 @@ def _own_repo(root: Path) -> Optional["OwnRepo"]:
     top = _git("rev-parse", "--show-toplevel")
     if not top:
         return None
-    # `origin`'s default branch. `origin/HEAD` is a LOCAL symref that can be MISSING (a clone made
-    # with `--no-tags`, a remote added by hand), and when it is, this returns the empty string and
-    # the rung stays inert. Guessing "main" would be worse than not knowing: it would forgive links
-    # in every repo whose default is something else.
+    # `origin`'s default branch, and it takes TWO tries for a reason that cost a red build.
+    #
+    # ⚠️ `origin/HEAD` IS A LOCAL SYMREF, AND CI DOES NOT CREATE IT. Measured on the very build this
+    # rung exists for: a Jenkins multibranch PR job fetches ONLY the pull ref
+    #     +refs/pull/<n>/head:refs/remotes/origin/PR-<n>
+    # so there is no `refs/remotes/origin/master` and no `origin/HEAD` -- `symbolic-ref` fails and
+    # the rung went INERT in exactly the environment it was written for. It worked perfectly in
+    # every local clone, which is why it looked correct: the local clone has the symref, CI does not.
+    #
+    # So the local read stays first (free, no network) and the REMOTE is asked only when it fails.
+    # `ls-remote --symref` is authoritative and works with no local refs at all. It costs one round
+    # trip, which is why it is not the first choice -- but this only ever runs on the `--online` web
+    # axis, which is already making one request per link, so one more is not what makes it slow.
+    #
+    # Guessing "main" would be worse than not knowing: it would forgive links in every repo whose
+    # default is something else. Unknown still means inert.
     head = _git("symbolic-ref", "--short", "refs/remotes/origin/HEAD") or ""
     default_ref = head.split("/", 1)[1] if "/" in head else ""
+    if not default_ref:
+        # `ref: refs/heads/master\tHEAD` on the first line, or nothing at all.
+        salida = _git("ls-remote", "--symref", "origin", "HEAD") or ""
+        for linea in salida.splitlines():
+            if linea.startswith("ref:") and "refs/heads/" in linea:
+                default_ref = linea.split("refs/heads/", 1)[1].split()[0]
+                break
     return OwnRepo(slug=f"{m['owner']}/{m['repo']}", root=Path(top), default_ref=default_ref)
 
 
