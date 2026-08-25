@@ -6,7 +6,29 @@
 #
 # Exits non-zero on the first failure.
 set -euo pipefail
-cd "$(git rev-parse --show-toplevel)"
+_root="$(git rev-parse --show-toplevel)"
+
+# ⚠️ DROP GIT'S PER-INVOCATION ENVIRONMENT BEFORE RUNNING THE SUITE.
+#
+# This script IS the pre-commit and pre-push hook, and git runs hooks with GIT_DIR (and, for
+# pre-commit, GIT_INDEX_FILE) exported. Every `git` a child process runs inherits them -- so a test
+# that legitimately builds its own repo in a temp dir gets silently redirected at THIS one:
+#
+#     git init -q "$T/a"; git -C "$T/a" rev-parse --absolute-git-dir
+#       without GIT_DIR ->  /tmp/tmp.XXXX/a/.git          (the temp repo, as intended)
+#       with    GIT_DIR ->  <this repo>/.git              (this repo)
+#
+# Measured, and it is not theoretical: one ordinary `git commit` here produced a commit that DELETED
+# THE ENTIRE TREE, with a message ("i") belonging to a test fixture -- because the fixture's
+# `git add -A` and `git commit` had been redirected onto the real repo mid-commit. The working files
+# survive; the commit simply stops describing them, and `git status` then reports everything as
+# untracked. Four tests across two files drive git this way, so it is reachable from any commit.
+#
+# The same leak also makes the suite report failures that do not exist: run by hand it is green, run
+# as a hook those same four fail. A gate that is red only when it is the gate is worse than no gate.
+unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_PREFIX GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_NAMESPACE
+
+cd "$_root"
 
 # English-only gate. The rule is not new — CLAUDE.md has said "Everything in this repo is written
 # in English" since the start.
