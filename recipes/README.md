@@ -124,12 +124,26 @@ whole-repo where it's the wall.
 ```json
 {
   "ref": "git+https://github.com/txemi/darnlink@vX.Y.Z",
+  "recipe_sha256": "<64 hex chars — RESOLVE THIS, see below; do not paste it as-is>",
   "excludes": ["secrets", "external_repos"],
   "ignore_blocks": ["txmd-autogrid"],
   "mode": "check",
   "scope": "repo"
 }
 ```
+
+⚠️ **`recipe_sha256` is a placeholder too, and unlike `ref` it does not fail cleanly.** A wrong
+`ref` is a 404 and `curl -f` says so; a wrong digest is a *checksum mismatch*, and the first cause
+that message names is "someone bumped `ref` without re-sealing" — which is not what happened. The
+templates therefore check the SHAPE first (64 lowercase hex) and say "you pasted the placeholder"
+rather than crying tampering. Resolve it with the command in **"Verify what you download"** below,
+or drop the key while you adopt: absent is honest, wrong is misleading.
+
+⚠️ **`recipe_sha256` is the only key here the recipe never reads.** Every other key is consumed by
+`darnlink-gate` once it is already running; this one is consumed by whatever **fetches** it, *before*
+it runs. That asymmetry is the whole point, and it is why the key was easy to overlook: a CI surface
+that downloads this script and executes it cannot ask the script whether the download was genuine.
+See **"Verify what you download"** below for how to compute and re-seal it.
 
 ⚠️ **`vX.Y.Z` is a placeholder, and it is the one thing here you must not copy verbatim.** Resolve it
 when you paste — `gh release view -R txemi/darnlink --json tagName -q .tagName` — because this is the
@@ -202,6 +216,15 @@ any CI can fetch it **without a token** (no private checkout, no cred):
 # Derive the version from the `ref` you already declared — do NOT write a second copy of it here.
 VER=$(python3 -c 'import json;print(json.load(open("darnlink-gate.json"))["ref"].rsplit("@",1)[1])')
 curl -fsSL "https://raw.githubusercontent.com/txemi/darnlink/$VER/recipes/darnlink-gate" -o darnlink-gate
+# VERIFY BEFORE YOU MAKE IT EXECUTABLE — see "Verify what you download" below.
+WANT=$(python3 -c 'import json;print(json.load(open("darnlink-gate.json")).get("recipe_sha256",""))')
+WANT=$(printf '%s' "$WANT" | tr 'A-F' 'a-f')   # PowerShell's Get-FileHash returns uppercase
+if [ -n "$WANT" ]; then
+  case "$WANT" in *[!0-9a-f]*|"") echo "recipe_sha256 is not a digest — did you paste the placeholder?" >&2; exit 1 ;; esac
+  echo "$WANT  darnlink-gate" | sha256sum -c - || { rm -f darnlink-gate; exit 1; }
+else
+  echo "darnlink-gate.json declares no recipe_sha256 — THIS DOWNLOAD IS NOT VERIFIED." >&2
+fi
 chmod +x darnlink-gate
 ```
 
@@ -210,8 +233,61 @@ keep it pinned — and that instruction is what rotted: it sat at `v0.7.0` for *
 telling every new adopter to install a gate far behind the one documented right above it. Nothing
 fails when two copies of a version number drift, so the second copy has to go rather than be kept in
 sync. `-f` so a moved or typo'd version is a 404 instead of a file containing the words
-"404: Not Found". Windows agents fetch `darnlink-gate.ps1` the same way. Locally, drop it on your
+"404: Not Found". Windows agents fetch `darnlink-gate.ps1` the same way — ⚠️ **but `recipe_sha256` does NOT cover it.**
+The key is defined as the digest of `recipes/darnlink-gate`; the `.ps1` is a different file with a
+different digest, and there is no second key for it today. Sealing `recipe_sha256` on a Windows agent
+that fetches the `.ps1` gives a permanent mismatch. Until a `recipe_sha256_ps1` exists, verify that
+download by other means or leave it unsealed — knowingly, which is the whole point of the warning the
+templates print. Locally, drop it on your
 `PATH` (e.g. `~/.local/bin`).
+
+## Verify what you download
+
+Only piece 4 fetches anything, in both its forms — plus the manual snippet below. All three end
+with the same three lines: **fetch a script over the network, mark it executable, run it**. (Pieces 2 and 3
+`exec darnlink-gate` off your `PATH` and download nothing, so none of this applies to them.) A pin
+does not make the fetching ones safe. A tag is a mutable pointer — and this recipe
+deliberately accepts a branch or a SHA too — so the pin says *which name* you asked for, never *which
+bytes* you got. `recipe_sha256` is the only statement about the bytes.
+
+Compute it once, at the ref you pinned:
+
+```bash
+VER=$(python3 -c 'import json;print(json.load(open("darnlink-gate.json"))["ref"].rsplit("@",1)[1])')
+curl -fsSL "https://raw.githubusercontent.com/txemi/darnlink/$VER/recipes/darnlink-gate" \
+  | sha256sum | cut -d' ' -f1
+```
+
+⚠️ **The `cut` is not decoration.** `sha256sum` prints `<digest>  <name>` — two spaces and a name —
+and the templates compare against `cut -d" " -f1`. Paste the full line and you seal a value that can
+never match, reported as a mismatch. (On macOS: `shasum -a 256`, which the templates also accept.)
+
+Put the digest in `darnlink-gate.json` next to `ref`. The shipped examples then compare it
+**before** `chmod +x`, and — just as importantly — **say so when the key is absent** rather than
+staying quiet, because silence at that spot is indistinguishable from "verified".
+
+> ### ⚠️ The rule that actually bites: `ref` and `recipe_sha256` move TOGETHER
+>
+> They are two halves of one statement. Bump the pin and leave the digest behind, and the next build
+> fails with a checksum mismatch that *looks* like tampering. Keep them adjacent in the file, and
+> re-seal in the same commit that bumps the ref.
+>
+> This is why the examples' error message names **three** causes and puts the mundane one first. An
+> earlier wording offered only "the tag moved, or the fetch was tampered with" — both catastrophic,
+> neither of them what happens in practice. A message that only offers alarming explanations turns a
+> maintenance slip into a suspected supply-chain attack, and someone pays for that in wasted alarm.
+
+**Adopting this into an existing gate?** The two lines are additive and the key is optional, so a
+repo that has not sealed a digest yet keeps working exactly as before — it just starts warning that
+its download is unverified. That is deliberate: a hard failure on arrival would get the gate deleted
+rather than sealed.
+
+⚠️ **Fixing this file does not fix the copies.** These are copy-paste templates: every surface that
+already pasted the older version still runs unverified, and nothing here reaches them. Measured once
+across a private fleet: the wall was standing on the self-hosted-CI and local-script surfaces and
+**absent from every hosted-CI one**, in every repo — so it was not a stray bad copy, it was one whole
+axis that never had the check. When you take this update, grep your own surfaces rather than trusting
+a list.
 
 ## Notes
 

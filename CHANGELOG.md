@@ -4,6 +4,42 @@ All notable changes to darnlink are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+⚠️ **The recipe is consumed AT A TAG, so the two behaviour fixes below reach nobody until this is
+released.** Anyone following the new README today seals a digest of a recipe that does not yet
+contain them.
+
+**The shipped CI templates downloaded the recipe and executed it without verifying a byte** — both
+of them, at every released version. `recipes/examples/github-actions-darnlink-gate.yml` and
+`recipes/examples/Jenkinsfile-stage.groovy` now compare `recipe_sha256` **before** `chmod +x`, warn
+loudly (instead of silently) when the key is absent, reject a value that is not a 64-hex digest with
+a message about placeholders rather than crying tampering, and fall back to `shasum -a 256` where
+`sha256sum` does not exist.
+
+**New config key `recipe_sha256`** — and "new" understates it: consumers had been using the key for
+months while it appeared nowhere in this repo, so every surface that verified had invented it
+locally. It is now documented in the recipe's CONFIG header and in `recipes/README.md`, including
+the rule that prevents the failure it is most likely to produce: **`ref` and `recipe_sha256` move in
+the same commit.** It is the one key the recipe never reads — whoever fetches the script consumes
+it, because a downloaded script cannot vouch for its own download. It does **not** cover
+`darnlink-gate.ps1`, which is a different file with a different digest.
+
+### Fixed
+
+- **A JSON `false` turned `include_mermaid` ON**, and `default_branch: false` reached the tool as
+  `--default-branch False`, a branch that exists nowhere. `read_cfg` renders a JSON boolean as the
+  string `"False"`, and `[ -n "$X" ]` is true for any non-empty string. Five other keys were already
+  normalised; the two that were not sat directly above a `case` belonging to a key assigned thirteen
+  lines earlier, which is how both were missed. Normalisers now live beside their own assignment.
+- **A docstring in `frontmatter_index.py` claimed a leading BOM survives the read.** `utf-8-sig`
+  consumes it. Documentation only — and the same reader's other docstring already said the opposite,
+  correctly.
+- **`tools/check.sh` run as a git hook redirected the suite's git calls at this repository.** git
+  exports `GIT_DIR` to hooks; tests that build their own repo in a temp dir were silently pointed
+  here, and one ordinary `git commit` produced a commit that deleted the entire tree. It also made
+  four tests fail *only* when the suite was acting as the gate.
+
 ## 0.26.0
 
 **An inert rung now says so.** When the pending-on-default-branch rung cannot identify the repo or

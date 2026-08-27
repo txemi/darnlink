@@ -139,8 +139,9 @@ def scan_tree(
     Measured on a large repo in the fleet: ~25-30s per pass, so a plain `check` paid for two full
     tree reads to produce two verdicts neither of which alone needed the other's walk to also happen.
 
-    This is the ONE walk both axes now share. `read_text_keep_newlines` (byte-preserving: CRLF and
-    a leading BOM survive verbatim) is used rather than `read_text()`'s universal-newline read that
+    This is the ONE walk both axes now share. `read_text_keep_newlines` (no universal-newline
+    translation, so CRLF survives verbatim; a leading BOM is STRIPPED, since it reads `utf-8-sig`)
+    is used rather than `read_text()`'s universal-newline read that
     `build_index` used before this — parsing YAML frontmatter for a `uuid` does not care about the
     line-ending style, so this is a safe unification, not a behaviour change for the index; it is
     the mode the WRITE-side callers (repair, robustify) always needed, so unifying on it (rather
