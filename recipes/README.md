@@ -124,13 +124,20 @@ whole-repo where it's the wall.
 ```json
 {
   "ref": "git+https://github.com/txemi/darnlink@vX.Y.Z",
-  "recipe_sha256": "<sha256 of recipes/darnlink-gate at that ref>",
+  "recipe_sha256": "<64 hex chars — RESOLVE THIS, see below; do not paste it as-is>",
   "excludes": ["secrets", "external_repos"],
   "ignore_blocks": ["txmd-autogrid"],
   "mode": "check",
   "scope": "repo"
 }
 ```
+
+⚠️ **`recipe_sha256` is a placeholder too, and unlike `ref` it does not fail cleanly.** A wrong
+`ref` is a 404 and `curl -f` says so; a wrong digest is a *checksum mismatch*, and the first cause
+that message names is "someone bumped `ref` without re-sealing" — which is not what happened. The
+templates therefore check the SHAPE first (64 lowercase hex) and say "you pasted the placeholder"
+rather than crying tampering. Resolve it with the command in **"Verify what you download"** below,
+or drop the key while you adopt: absent is honest, wrong is misleading.
 
 ⚠️ **`recipe_sha256` is the only key here the recipe never reads.** Every other key is consumed by
 `darnlink-gate` once it is already running; this one is consumed by whatever **fetches** it, *before*
@@ -211,7 +218,11 @@ VER=$(python3 -c 'import json;print(json.load(open("darnlink-gate.json"))["ref"]
 curl -fsSL "https://raw.githubusercontent.com/txemi/darnlink/$VER/recipes/darnlink-gate" -o darnlink-gate
 # VERIFY BEFORE YOU MAKE IT EXECUTABLE — see "Verify what you download" below.
 WANT=$(python3 -c 'import json;print(json.load(open("darnlink-gate.json")).get("recipe_sha256",""))')
-[ -n "$WANT" ] && { echo "$WANT  darnlink-gate" | sha256sum -c - || exit 1; }
+if [ -n "$WANT" ]; then
+  echo "$WANT  darnlink-gate" | sha256sum -c - || { rm -f darnlink-gate; exit 1; }
+else
+  echo "darnlink-gate.json declares no recipe_sha256 — THIS DOWNLOAD IS NOT VERIFIED." >&2
+fi
 chmod +x darnlink-gate
 ```
 
@@ -220,13 +231,20 @@ keep it pinned — and that instruction is what rotted: it sat at `v0.7.0` for *
 telling every new adopter to install a gate far behind the one documented right above it. Nothing
 fails when two copies of a version number drift, so the second copy has to go rather than be kept in
 sync. `-f` so a moved or typo'd version is a 404 instead of a file containing the words
-"404: Not Found". Windows agents fetch `darnlink-gate.ps1` the same way. Locally, drop it on your
+"404: Not Found". Windows agents fetch `darnlink-gate.ps1` the same way — ⚠️ **but `recipe_sha256` does NOT cover it.**
+The key is defined as the digest of `recipes/darnlink-gate`; the `.ps1` is a different file with a
+different digest, and there is no second key for it today. Sealing `recipe_sha256` on a Windows agent
+that fetches the `.ps1` gives a permanent mismatch. Until a `recipe_sha256_ps1` exists, verify that
+download by other means or leave it unsealed — knowingly, which is the whole point of the warning the
+templates print. Locally, drop it on your
 `PATH` (e.g. `~/.local/bin`).
 
 ## Verify what you download
 
-Every CI surface in this page ends with the same three lines: **fetch a script over the network, mark
-it executable, run it.** A pin does not make that safe. A tag is a mutable pointer — and this recipe
+Two of the four pieces above end with the same three lines: **fetch a script over the network, mark
+it executable, run it** — piece 4 in both its forms, plus the manual snippet below. (Pieces 2 and 3
+`exec darnlink-gate` off your `PATH` and download nothing, so none of this applies to them.) A pin
+does not make the fetching ones safe. A tag is a mutable pointer — and this recipe
 deliberately accepts a branch or a SHA too — so the pin says *which name* you asked for, never *which
 bytes* you got. `recipe_sha256` is the only statement about the bytes.
 
@@ -234,10 +252,15 @@ Compute it once, at the ref you pinned:
 
 ```bash
 VER=$(python3 -c 'import json;print(json.load(open("darnlink-gate.json"))["ref"].rsplit("@",1)[1])')
-curl -fsSL "https://raw.githubusercontent.com/txemi/darnlink/$VER/recipes/darnlink-gate" | sha256sum
+curl -fsSL "https://raw.githubusercontent.com/txemi/darnlink/$VER/recipes/darnlink-gate" \
+  | sha256sum | cut -d' ' -f1
 ```
 
-and put the digest in `darnlink-gate.json` next to `ref`. The shipped examples then compare it
+⚠️ **The `cut` is not decoration.** `sha256sum` prints `<digest>  <name>` — two spaces and a name —
+and the templates compare against `cut -d" " -f1`. Paste the full line and you seal a value that can
+never match, reported as a mismatch. (On macOS: `shasum -a 256`, which the templates also accept.)
+
+Put the digest in `darnlink-gate.json` next to `ref`. The shipped examples then compare it
 **before** `chmod +x`, and — just as importantly — **say so when the key is absent** rather than
 staying quiet, because silence at that spot is indistinguishable from "verified".
 

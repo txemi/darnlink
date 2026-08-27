@@ -39,14 +39,25 @@ requires_bash = pytest.mark.skipif(
     reason="the guard is POSIX shell; on Windows agents `bash` is the WSL launcher",
 )
 CHECK_SH = Path(__file__).resolve().parent.parent / "tools" / "check.sh"
-LEAKY = ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE", "GIT_PREFIX")
+# ⚠️ THIS LIST MUST NAME EVERY VARIABLE THE GUARD CLEARS. It listed four of seven, and a review
+# seeded the gap: shrinking the `unset` to just those four left this file GREEN. A test whose
+# docstring promises "dropping one is a failure with the variable's name on it" while silently
+# ignoring three of them is worse than no test, because it is quoted as coverage.
+LEAKY = ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE", "GIT_PREFIX", "GIT_COMMON_DIR",
+         "GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE", "GIT_CONFIG_PARAMETERS")
 
 
 def _guard_line() -> str:
-    line = next((l for l in CHECK_SH.read_text(encoding="utf-8").splitlines()
-                 if l.startswith("unset ") and "GIT_DIR" in l), None)
-    assert line, "tools/check.sh no longer unsets git's per-invocation environment"
-    return line
+    """The whole `unset` statement, continuations included — it spans two lines now, and reading only
+    the first would silently stop checking the variables on the second."""
+    text = CHECK_SH.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    start = next((i for i, l in enumerate(lines) if l.startswith("unset ") and "GIT_DIR" in l), None)
+    assert start is not None, "tools/check.sh no longer unsets git's per-invocation environment"
+    out = [lines[start]]
+    while out[-1].rstrip().endswith("\\") and start + len(out) < len(lines):
+        out.append(lines[start + len(out)])
+    return " ".join(l.rstrip("\\").strip() for l in out)
 
 
 def _where_does_a_child_git_point(tmp_path: Path, env_extra: dict, prelude: str = "") -> str:
@@ -94,7 +105,7 @@ def test_the_guard_runs_before_anything_that_shells_out():
     already run against the inherited environment."""
     lines = CHECK_SH.read_text(encoding="utf-8").splitlines()
     code = [(i, l) for i, l in enumerate(lines) if not l.strip().startswith("#")]
-    unset = min(i for i, l in code if l.startswith("unset ") and "GIT_DIR" in l)
+    unset = min(i for i, l in code if l.startswith("unset ") and "GIT_DIR" in l)  # noqa: A001
     runs = [i for i, l in code if "uvx " in l or "uv run" in l or "python3 tools/" in l]
     assert runs, "check.sh no longer runs anything — this test is measuring the wrong file"
     assert unset < min(runs), (

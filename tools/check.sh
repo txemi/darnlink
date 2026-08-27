@@ -26,7 +26,12 @@ _root="$(git rev-parse --show-toplevel)"
 #
 # The same leak also makes the suite report failures that do not exist: run by hand it is green, run
 # as a hook those same four fail. A gate that is red only when it is the gate is worse than no gate.
-unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_PREFIX GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_NAMESPACE
+# ⚠️ GIT_CONFIG_PARAMETERS is in this list for a reason that is not obvious: it carries the `-c`
+# options of the invoking git, and `core.hooksPath` is one of them -- so a child `git commit`
+# in a test's temp repo could re-enter THIS repo's hooks. Found by a review that dumped a real
+# hook's environment instead of trusting the list.
+unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_PREFIX GIT_COMMON_DIR GIT_OBJECT_DIRECTORY \
+      GIT_NAMESPACE GIT_CONFIG_PARAMETERS
 
 cd "$_root"
 

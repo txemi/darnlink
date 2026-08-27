@@ -950,6 +950,37 @@ def test_every_real_branch_name_still_survives_including_the_falsey_looking_ones
     assert f"--default-branch {name}" in argv, f"a branch legitimately named {name!r} was dropped"
 
 
+def test_every_config_key_used_as_a_FLAG_has_a_guard_at_all():
+    """⚠️ THE ADJACENCY TEST BELOW DOES NOT COVER THIS, and a review caught it by seeding: it loops
+    over keys that ALREADY have a `case`, so a brand-new key with NO normaliser whatsoever is
+    invisible to it. Its docstring promised to stop "the third instance" and missed precisely that.
+
+    This is the check that keeps the promise: every scalar that comes from `read_cfg` AND is then
+    tested with `[ -n "$X" ]` must be guarded somewhere, because `[ -n ]` is true for the string
+    "False" that a JSON `false` turns into. Guard = a `case` on it, or a numeric/regex validation.
+
+    Loop variables are deliberately out of scope: `[ -n "$e" ]` inside `for e in "${ARRAY[@]}"`
+    guards against an EMPTY LIST ENTRY, which is correct and must not be flagged."""
+    text = RECIPE.read_text(encoding="utf-8")
+    lines = text.splitlines()
+
+    scalars = {}
+    for i, l in enumerate(lines):
+        m = re.match(r'^([A-Z_]+)="\$\{DARNLINK_[A-Z_]*:-\$\(read_cfg ', l)
+        if m:
+            scalars.setdefault(m.group(1), i)
+
+    used_as_flag = {v for v in scalars if re.search(r'\[ -n "\$' + v + r'" \]', text)}
+    guarded = {v for v in scalars
+               if re.search(r'^case "\$\{?' + v + r'[,"}]', text, re.M)
+               or re.search(r'\[\[ "\$' + v + r'" =~', text)}
+
+    missing = sorted(used_as_flag - guarded)
+    assert not missing, (
+        "these keys are read from JSON and then tested with `[ -n ]`, which is TRUE for the string "
+        '"False" a JSON `false` produces, and nothing normalises them: ' + ", ".join(missing))
+
+
 def test_every_boolean_key_is_normalised_next_to_its_own_assignment():
     """The class, not the two instances. Both bugs existed because a `case` sat thirteen lines below
     its assignment, past two unrelated keys -- so the next person to add a key landed above a

@@ -243,7 +243,10 @@ DEFAULT_BRANCH="${DARNLINK_GATE_DEFAULT_BRANCH:-$(read_cfg default_branch "")}"
 # Same direction as `own_web_max` just below: a config typo may narrow what runs, never widen it.
 case "$DEFAULT_BRANCH" in
   True|False)
-    echo "darnlink-gate: default_branch=$DEFAULT_BRANCH is a JSON boolean, not a branch name -- ignoring it." >&2
+    # "looks like", not "is": a QUOTED "True" lands here too, and the shell cannot tell the two
+    # apart. Claiming it was a JSON boolean would be a false statement in that case, and a branch
+    # genuinely named True is not worth passing an unusable value through for.
+    echo "darnlink-gate: default_branch=$DEFAULT_BRANCH looks like a JSON boolean, not a branch name -- ignoring it." >&2
     echo "  Quote it (\"main\") if you meant a branch; remove the key to derive it from origin." >&2
     DEFAULT_BRANCH="" ;;
 esac

@@ -51,7 +51,28 @@ jobs:
           # a SHA too. Only the checksum is a statement about the BYTES.
           WANT=$(python3 -c 'import json;print(json.load(open("darnlink-gate.json")).get("recipe_sha256",""))')
           if [ -n "$WANT" ]; then
-            GOT=$(sha256sum "$RUNNER_TEMP/darnlink-gate" | cut -d" " -f1)
+            # A digest is 64 lowercase hex. Anything else is a copied placeholder or a truncated
+            # paste — and without this check it is reported as a checksum MISMATCH, sending the
+            # reader to hunt a tampered download when they simply pasted the wrong thing. That is
+            # the most likely FIRST-CONTACT failure of this whole file, so it gets its own message.
+            case "$WANT" in
+              *[!0-9a-f]* | "" ) BAD=1 ;;
+              * ) [ ${#WANT} -eq 64 ] && BAD= || BAD=1 ;;
+            esac
+            if [ -n "$BAD" ]; then
+              echo "::error::recipe_sha256 is not a sha256 digest (expected 64 lowercase hex): $WANT"
+              echo "::error::  if that looks like the placeholder from recipes/README.md, replace it with a real digest."
+              rm -f "$RUNNER_TEMP/darnlink-gate"
+              exit 1
+            fi
+            # macOS ships shasum, not sha256sum: a macos-latest runner or a self-hosted mac agent
+            # would die with command-not-found. It fails closed, so no false green — but it breaks a
+            # consumer who works today, the moment they seal a digest.
+            if command -v sha256sum >/dev/null 2>&1; then
+              GOT=$(sha256sum "$RUNNER_TEMP/darnlink-gate" | cut -d" " -f1)
+            else
+              GOT=$(shasum -a 256 "$RUNNER_TEMP/darnlink-gate" | cut -d" " -f1)
+            fi
             if [ "$GOT" != "$WANT" ]; then
               # THREE causes, most probable FIRST. An earlier version of this message named only the
               # two alarming ones ("the tag moved, or the fetch was tampered with") and the cause that
@@ -61,7 +82,7 @@ jobs:
               echo "::error::recipe checksum mismatch for ${DARNLINK_GATE_VERSION} — most likely someone bumped \`ref\` without re-sealing \`recipe_sha256\` next to it; otherwise the tag moved, or the download was tampered with"
               echo "::error::  expected $WANT"
               echo "::error::  got      $GOT"
-              echo "::error::  re-seal with: curl -fsSL \"https://raw.githubusercontent.com/txemi/darnlink/${DARNLINK_GATE_VERSION}/recipes/darnlink-gate\" | sha256sum"
+              echo "::error::  re-seal: curl -fsSL 'https://raw.githubusercontent.com/txemi/darnlink/${DARNLINK_GATE_VERSION}/recipes/darnlink-gate' | sha256sum | cut -d' ' -f1"
               rm -f "$RUNNER_TEMP/darnlink-gate"   # never leave an unverified script on disk
               exit 1
             fi

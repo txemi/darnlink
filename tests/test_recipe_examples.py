@@ -340,3 +340,60 @@ def test_the_checksum_key_is_DOCUMENTED_not_only_used(doc):
     is a key nobody knows to set, and one no reader can look up."""
     assert RECIPE_SHA_KEY in doc.read_text(encoding="utf-8"), (
         f"{doc.name} does not document {RECIPE_SHA_KEY}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# THE JENKINS EXAMPLE IS GROOVY, AND GROOVY EATS BACKSLASHES BEFORE THE SHELL EVER SEES THEM.
+#
+# Escape sequences ARE processed inside a Groovy ''' … ''' string. A backslash that is not a valid
+# Groovy escape is a COMPILE error — and it takes down the adopter's entire Jenkinsfile at CPS
+# compile time, before any stage runs, not just this stage.
+#
+# ⚠️ Measured on this PR: `\`ref\`` (backslash-backtick, meant as a shell backtick) shipped here and
+# `main` parsed while this branch did not, on Groovy 2.4.21 and 4.0.22 alike. The whole suite stayed
+# GREEN on it, because `_fetch_shell` reads the RAW FILE TEXT and hands it to bash — bash is happy
+# with `\``, Groovy is not. The repo had already written this failure down twice (the `ps1-syntax`
+# CI job exists for the identical reason on the PowerShell side, and this file's own header records
+# an adversarial round where "a `\.` that is a Groovy compile error" survived the suite) and it
+# happened anyway.
+#
+# There is no Groovy parser in this test environment, so this asserts the INVARIANT THAT MAKES THE
+# CLASS IMPOSSIBLE instead of parsing: no backslash at all, except a line continuation. That is
+# strictly stronger than "it happens to parse today", and it is checkable everywhere.
+#
+# It is also what makes `_fetch_shell` honest: with no escapes, the raw text IS what Groovy hands to
+# the shell, so running the raw text tests the real thing. Without this, those tests measure a string
+# Jenkins never sees.
+
+def test_the_jenkins_example_contains_no_groovy_escape_the_shell_would_not_see():
+    text = JENKINS.read_text(encoding="utf-8")
+    m = re.search(r"sh\s+'''(.*?)'''", text, re.DOTALL)
+    assert m, "no sh ''' … ''' block in the Jenkins example"
+    body = m.group(1)
+    offenders = []
+    for n, line in enumerate(body.splitlines(), 1):
+        # A trailing backslash is a line continuation: Groovy drops backslash+newline, and so does
+        # the shell, so both agree. Every other backslash is an escape only ONE of them resolves.
+        stripped = line[:-1] if line.endswith("\\") else line
+        if "\\" in stripped:
+            offenders.append(f"line {n}: {line.strip()[:90]}")
+    assert not offenders, (
+        "backslash escapes in the Jenkins sh block — Groovy resolves these before the shell sees "
+        "them, so at best the shell gets different text and at worst the adopter's whole Jenkinsfile "
+        "fails to compile:\n  " + "\n  ".join(offenders))
+
+
+def test_both_examples_carry_the_same_verification_contract():
+    """The two templates drifted once already (the Jenkins one shipped without the fetch-version
+    check the Actions one had, and the suite was green). The checksum wall must not drift the same
+    way: whatever one verifies, the other verifies."""
+    a = ACTIONS.read_text(encoding="utf-8")
+    j = JENKINS.read_text(encoding="utf-8")
+    for token, what in [("recipe_sha256", "reads the digest key"),
+                        ("sha256sum", "computes a digest"),
+                        ("shasum -a 256", "has the macOS fallback"),
+                        ("NOT VERIFIED", "warns when the key is absent"),
+                        ("re-sealing", "names the mundane cause first"),
+                        ("64 lowercase hex", "rejects a non-digest before crying mismatch")]:
+        assert token in a, f"the Actions example no longer {what}"
+        assert token in j, f"the Jenkins example no longer {what}"
