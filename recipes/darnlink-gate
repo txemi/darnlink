@@ -384,6 +384,7 @@ dangling_findings() {
   set +e
   out="$(python3 - "$tmp" <<'PY'
 import json, sys
+sys.stdout.reconfigure(newline="\n")  # Windows: print() would emit \r\n and the CR travels glued to every value
 try:
     with open(sys.argv[1], encoding="utf-8") as fh:
         data = json.load(fh)
@@ -425,6 +426,7 @@ create_readme_offenders() {
   set +e
   out="$(python3 - "$tmp" <<'PY'
 import json, sys
+sys.stdout.reconfigure(newline="\n")  # Windows: print() would emit \r\n and the CR travels glued to every value
 try:
     with open(sys.argv[1], encoding="utf-8") as fh:
         d = json.load(fh)
@@ -719,6 +721,7 @@ fi
 # script either way → no injection from finding text.
 python3 <<'PY'
 import json, os, sys
+sys.stdout.reconfigure(newline="\n")  # Windows: print() would emit \r\n and the CR travels glued to every value
 root = os.environ["DL_ROOT"]
 mode = os.environ.get("DL_MODE", "check")
 

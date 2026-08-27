@@ -26,6 +26,11 @@ it, because a downloaded script cannot vouch for its own download. It does **not
 `darnlink-gate.ps1`, which is a different file with a different digest.
 
 ### Fixed
+- `recipes/darnlink-gate`: the three remaining Python heredocs (finding filter, README-offender
+  count and staged summary) now set `sys.stdout.reconfigure(newline="\n")`, as `read_cfg` and
+  `read_cfg_len` do since #97. On Windows the offender count came back as `"N\r"`, so the
+  `[ "$cr" -gt 0 ]` test failed with "integer expression expected" and the gate aborted; the
+  finding details carried a trailing CR. Behaviour on POSIX is byte-identical.
 
 - **A JSON `false` turned `include_mermaid` ON**, and `default_branch: false` reached the tool as
   `--default-branch False`, a branch that exists nowhere. `read_cfg` renders a JSON boolean as the
