@@ -94,9 +94,15 @@ def test_the_guard_in_check_sh_stops_it(tmp_path):
 
 
 @pytest.mark.parametrize("var", LEAKY)
-def test_every_variable_git_exports_to_hooks_is_cleared(var):
-    """Named individually so dropping one from the list is a failure with the variable's name on it,
-    rather than a silently narrower guard."""
+def test_every_variable_the_guard_CLEARS_is_named_here(var):
+    """Named individually so dropping one from the guard is a failure with the variable's name on it,
+    rather than a silently narrower guard.
+
+    ⚠️ The name says "the guard clears", not "git exports", and the difference is deliberate. git also
+    exports GIT_AUTHOR_NAME/EMAIL/DATE, GIT_EDITOR and GIT_EXEC_PATH to hooks, and those are left
+    alone on purpose: the author/editor set only affects commits a test makes in its OWN repo, which
+    is harmless, and clearing GIT_EXEC_PATH could break git itself on an unusual install. The list
+    here is the contract of the guard, and an earlier name overclaimed it as the contract of git."""
     assert var in _guard_line(), f"{var} is no longer cleared before the suite runs"
 
 

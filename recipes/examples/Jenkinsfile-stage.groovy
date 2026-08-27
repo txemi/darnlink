@@ -37,14 +37,20 @@ stage('darnlink gate (links)') {
       # escape sequences inside a triple-quoted string, so a backslash that is not a valid escape is a
       # COMPILE error in the adopter's whole Jenkinsfile -- not a runtime one, and not confined to
       # this stage. The first draft of this block wrote a shell backtick as a backslash-backtick and
-      # did exactly that. Second: with no backslashes the raw text of this block is byte-identical to
-      # what Groovy hands to the shell, which is the only reason a test can extract it and run it.
+      # did exactly that. Second: the ONLY transformation either side applies is joining a backslash-
+      # newline, and BOTH apply it, so bash reading this raw text and Groovy handing it to sh are
+      # behaviourally identical -- NOT byte-identical: Groovy has already joined the continuations,
+      # so the two differ by a few bytes. That equivalence is why a test can extract this and run it.
       # Use single quotes where the shell needs a quote. There is a test that fails on a backslash.
       WANT=$(python3 -c 'import json;print(json.load(open("darnlink-gate.json")).get("recipe_sha256",""))')
       if [ -n "$WANT" ]; then
         # A digest is 64 lowercase hex. Anything else is a copied placeholder or a truncated paste,
         # and without this it would be reported as a checksum MISMATCH -- sending the reader to hunt
         # a tampered download when they simply pasted the wrong thing.
+        # Uppercase is a REAL digest, not a typo: PowerShell's Get-FileHash returns A-F, and this
+        # page tells Windows agents to fetch the recipe. Rejecting it would call a correct value
+        # "not a digest" and tell the reader to replace it -- false, and it breaks a real adopter.
+        WANT=$(printf '%s' "$WANT" | tr 'A-F' 'a-f')
         case "$WANT" in
           *[!0-9a-f]* | "" ) BAD=1 ;;
           * ) [ ${#WANT} -eq 64 ] && BAD= || BAD=1 ;;

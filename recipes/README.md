@@ -218,7 +218,9 @@ VER=$(python3 -c 'import json;print(json.load(open("darnlink-gate.json"))["ref"]
 curl -fsSL "https://raw.githubusercontent.com/txemi/darnlink/$VER/recipes/darnlink-gate" -o darnlink-gate
 # VERIFY BEFORE YOU MAKE IT EXECUTABLE — see "Verify what you download" below.
 WANT=$(python3 -c 'import json;print(json.load(open("darnlink-gate.json")).get("recipe_sha256",""))')
+WANT=$(printf '%s' "$WANT" | tr 'A-F' 'a-f')   # PowerShell's Get-FileHash returns uppercase
 if [ -n "$WANT" ]; then
+  case "$WANT" in *[!0-9a-f]*|"") echo "recipe_sha256 is not a digest — did you paste the placeholder?" >&2; exit 1 ;; esac
   echo "$WANT  darnlink-gate" | sha256sum -c - || { rm -f darnlink-gate; exit 1; }
 else
   echo "darnlink-gate.json declares no recipe_sha256 — THIS DOWNLOAD IS NOT VERIFIED." >&2
@@ -241,8 +243,8 @@ templates print. Locally, drop it on your
 
 ## Verify what you download
 
-Two of the four pieces above end with the same three lines: **fetch a script over the network, mark
-it executable, run it** — piece 4 in both its forms, plus the manual snippet below. (Pieces 2 and 3
+Only piece 4 fetches anything, in both its forms — plus the manual snippet below. All three end
+with the same three lines: **fetch a script over the network, mark it executable, run it**. (Pieces 2 and 3
 `exec darnlink-gate` off your `PATH` and download nothing, so none of this applies to them.) A pin
 does not make the fetching ones safe. A tag is a mutable pointer — and this recipe
 deliberately accepts a branch or a SHA too — so the pin says *which name* you asked for, never *which

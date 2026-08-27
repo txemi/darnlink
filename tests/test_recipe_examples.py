@@ -246,13 +246,15 @@ def _fetch_shell(path: Path) -> str:
     return stub + body
 
 
-def _run_fetch(path: Path, cwd: Path, payload: str, sealed):
+def _run_fetch(path: Path, cwd: Path, payload: str, sealed, only_path: str | None = None):
     cfg = {"ref": "git+https://github.com/txemi/darnlink@main"}
     if sealed is not None:
         cfg[RECIPE_SHA_KEY] = sealed
     (cwd / "darnlink-gate.json").write_text(json.dumps(cfg), encoding="utf-8")
     env = {**os.environ, "PAYLOAD": payload, "RUNNER_TEMP": str(cwd),
            "WORKSPACE": str(cwd), "DARNLINK_GATE_VERSION": "main"}
+    if only_path:                        # a PATH without sha256sum: what a macOS agent looks like
+        env["PATH"] = only_path
     return subprocess.run(["bash", "-c", _fetch_shell(path)],
                           cwd=cwd, capture_output=True, text=True, env=env)
 
@@ -323,11 +325,18 @@ def test_the_mismatch_message_offers_the_MUNDANE_cause_first(tmp_path, example):
 def test_the_comparison_happens_BEFORE_chmod(example):
     """Order is the whole property: verifying an already-executable file verifies nothing useful.
     Comment lines are stripped first — both files *mention* `chmod +x` in prose explaining this."""
+    # ⚠️ ANCHOR ON THE COMPARISON, NOT ON THE WORD "sha256sum". This test was silently defanged
+    # once: it took the first non-comment line containing `sha256sum`, which used to be
+    # `GOT=$(sha256sum …)` — and then the macOS fallback added `if command -v sha256sum …` ABOVE it.
+    # A probe that verifies nothing became the anchor, and `chmod +x` could be moved below the probe
+    # but above the comparison with the whole suite green. Seeded and confirmed by a review round.
+    # The executing tests cannot cover this: they measure REJECTION, which happens either way.
     lines = example.read_text(encoding="utf-8").splitlines()
     code = [(i, l) for i, l in enumerate(lines) if not l.strip().startswith(("#", "//"))]
-    sha = min(i for i, l in code if "sha256sum" in l and "re-seal" not in l)
+    compare = min(i for i, l in code if '"$GOT" != "$WANT"' in l)
     chmod = min(i for i, l in code if "chmod +x" in l)
-    assert sha < chmod, f"{example.name}: verification at line {sha+1} is after chmod at {chmod+1}"
+    assert compare < chmod, (
+        f"{example.name}: the digest comparison is at line {compare+1}, AFTER chmod at {chmod+1}")
 
 
 @pytest.mark.parametrize("doc", [
@@ -361,24 +370,29 @@ def test_the_checksum_key_is_DOCUMENTED_not_only_used(doc):
 # CLASS IMPOSSIBLE instead of parsing: no backslash at all, except a line continuation. That is
 # strictly stronger than "it happens to parse today", and it is checkable everywhere.
 #
-# It is also what makes `_fetch_shell` honest: with no escapes, the raw text IS what Groovy hands to
-# the shell, so running the raw text tests the real thing. Without this, those tests measure a string
-# Jenkins never sees.
+# It is also what makes `_fetch_shell` honest. Precisely: the only transformation either side applies
+# is joining a backslash-newline, and both apply it, so bash's reading of the raw text and Groovy's
+# output are BEHAVIOURALLY identical. (Not byte-identical -- measured, they differ by four bytes and
+# two lines, because Groovy has already joined the continuations. The stronger word was in an earlier
+# draft and was false, and it is the sentence a maintainer leans on to judge a new construct.)
+# Without this invariant, those tests measure a string Jenkins never sees.
 
 def test_the_jenkins_example_contains_no_groovy_escape_the_shell_would_not_see():
+    # ⚠️ THE WHOLE FILE, not just the `sh` block. The first version scanned only the block, and a
+    # review seeded a backslash into the `environment` stanza: the suite passed and BOTH Groovy engines
+    # refused to parse. A compile error does not care which line it is on, so neither can this.
+    # (Scanning only the FIRST sh block had a second hole: a file with two left one unscanned.)
     text = JENKINS.read_text(encoding="utf-8")
-    m = re.search(r"sh\s+'''(.*?)'''", text, re.DOTALL)
-    assert m, "no sh ''' … ''' block in the Jenkins example"
-    body = m.group(1)
+    assert "sh " + "'" * 3 in text, "no sh block in the Jenkins example"
     offenders = []
-    for n, line in enumerate(body.splitlines(), 1):
+    for n, line in enumerate(text.splitlines(), 1):
         # A trailing backslash is a line continuation: Groovy drops backslash+newline, and so does
         # the shell, so both agree. Every other backslash is an escape only ONE of them resolves.
         stripped = line[:-1] if line.endswith("\\") else line
         if "\\" in stripped:
             offenders.append(f"line {n}: {line.strip()[:90]}")
     assert not offenders, (
-        "backslash escapes in the Jenkins sh block — Groovy resolves these before the shell sees "
+        "backslash escapes in the Jenkins example — Groovy resolves these before the shell sees "
         "them, so at best the shell gets different text and at worst the adopter's whole Jenkinsfile "
         "fails to compile:\n  " + "\n  ".join(offenders))
 
@@ -390,6 +404,7 @@ def test_both_examples_carry_the_same_verification_contract():
     a = ACTIONS.read_text(encoding="utf-8")
     j = JENKINS.read_text(encoding="utf-8")
     for token, what in [("recipe_sha256", "reads the digest key"),
+                        ("tr 'A-F' 'a-f'", "accepts an uppercase digest"),
                         ("sha256sum", "computes a digest"),
                         ("shasum -a 256", "has the macOS fallback"),
                         ("NOT VERIFIED", "warns when the key is absent"),
@@ -397,3 +412,60 @@ def test_both_examples_carry_the_same_verification_contract():
                         ("64 lowercase hex", "rejects a non-digest before crying mismatch")]:
         assert token in a, f"the Actions example no longer {what}"
         assert token in j, f"the Jenkins example no longer {what}"
+
+
+@pytest.mark.parametrize("example", EXECUTED, ids=lambda p: p.name)
+@requires_bash
+def test_the_README_placeholder_is_refused_as_a_PLACEHOLDER_not_as_tampering(tmp_path, example):
+    """The shape guard, EXECUTED. It shipped in round 1 covered only by a grep for the string
+    "64 lowercase hex" — and a review seeded it by deleting the whole guard while leaving the comment
+    that contains that phrase: 117 passed. A text assertion satisfied by a comment is not a test.
+
+    The value below is copied from the README's own config block, which is the realistic first-contact
+    mistake: non-empty, so without this guard it becomes a checksum MISMATCH whose first named cause
+    is an unsealed `ref` bump — sending the reader to hunt a tampered download they never had."""
+    r = _run_fetch(example, tmp_path, "#!/bin/sh\n",
+                   sealed="<64 hex chars — RESOLVE THIS, see below; do not paste it as-is>")
+    assert r.returncode != 0, "the placeholder was accepted as a digest"
+    out = r.stdout + r.stderr
+    assert "not a sha256 digest" in out, f"refused, but not as a placeholder: {out!r}"
+    assert "checksum mismatch" not in out, f"a placeholder was reported as tampering: {out!r}"
+
+
+@pytest.mark.parametrize("example", EXECUTED, ids=lambda p: p.name)
+@requires_bash
+def test_an_UPPERCASE_digest_is_accepted(tmp_path, example):
+    """PowerShell's `Get-FileHash` returns A-F, and the page tells Windows agents to fetch the recipe.
+    Rejecting uppercase would call a CORRECT value "not a digest" and tell the reader to replace it."""
+    payload = "#!/usr/bin/env bash\n# the real thing\n"
+    r = _run_fetch(example, tmp_path, payload, sealed=_sha(payload).upper())
+    assert r.returncode == 0, f"a legitimate uppercase digest was rejected: {r.stdout}{r.stderr}"
+
+
+@pytest.mark.parametrize("example", EXECUTED, ids=lambda p: p.name)
+@requires_bash
+def test_the_macOS_fallback_actually_works(tmp_path, example):
+    """`sha256sum` does not exist on macOS, so both templates fall back to `shasum -a 256`. Round 1
+    shipped that branch measured by nothing but a grep for the string `shasum -a 256`: a review seeded
+    it by dropping the branch's `| cut -d" " -f1` — so it would yield `<digest>  <path>` and never
+    match — and 117 tests passed.
+
+    ⚠️ A stub that merely FAILS does not work: the templates branch on `command -v sha256sum`, which
+    a non-executable-but-present stub still satisfies — the run then takes the sha256sum branch and
+    dies. `sha256sum` has to be genuinely ABSENT from PATH, which is what a macOS agent looks like.
+    So PATH is replaced with a directory holding only the tools the block needs, sha256sum excluded."""
+    if shutil.which("shasum") is None:
+        pytest.skip("no shasum here; this asserts the fallback a macOS agent would take")
+    fakebin = tmp_path / "bin"
+    fakebin.mkdir()
+    for tool in ("bash", "shasum", "cut", "tr", "rm", "chmod", "python3", "env", "sh", "cat"):
+        src = shutil.which(tool)
+        if src:
+            (fakebin / tool).symlink_to(src)
+    assert not (fakebin / "sha256sum").exists()
+    payload = "#!/usr/bin/env bash\n# genuine\n"
+    r = _run_fetch(example, tmp_path, payload, sealed=_sha(payload), only_path=str(fakebin))
+    assert r.returncode == 0, (
+        f"the shasum fallback did not produce a matching digest: {r.stdout}{r.stderr}")
+    assert "checksum OK" in (r.stdout + r.stderr), (
+        f"the fallback ran but did not confirm a match: {r.stdout}{r.stderr}")

@@ -950,35 +950,48 @@ def test_every_real_branch_name_still_survives_including_the_falsey_looking_ones
     assert f"--default-branch {name}" in argv, f"a branch legitimately named {name!r} was dropped"
 
 
-def test_every_config_key_used_as_a_FLAG_has_a_guard_at_all():
-    """⚠️ THE ADJACENCY TEST BELOW DOES NOT COVER THIS, and a review caught it by seeding: it loops
-    over keys that ALREADY have a `case`, so a brand-new key with NO normaliser whatsoever is
-    invisible to it. Its docstring promised to stop "the third instance" and missed precisely that.
+def test_every_config_key_is_guarded_or_explicitly_exempt():
+    """Every scalar that comes from `read_cfg` must be normalised, validated, or named below as a
+    free string. `read_cfg` renders a JSON `false` as the string "False", and every truthiness test
+    in shell is true for it, so an unguarded key can be turned ON by a config that asks for OFF.
 
-    This is the check that keeps the promise: every scalar that comes from `read_cfg` AND is then
-    tested with `[ -n "$X" ]` must be guarded somewhere, because `[ -n ]` is true for the string
-    "False" that a JSON `false` turns into. Guard = a `case` on it, or a numeric/regex validation.
+    ⚠️ INVERTED ON PURPOSE, after two rounds of getting this wrong. The first version required the
+    literal `[ -n "$VAR" ]`, and a review seeded four consumption forms that all evaded it:
+    `[ -n "${VAR}" ]`, `[ "$VAR" ]`, `[ -z "$VAR" ] || …`, and `[ -n "$A$B" ]`. The last is not
+    hypothetical -- this recipe ALREADY ships `[ -n "$OWN_WEB_FROM_ORIGIN$OWN_WEB_MAX" ]`, so a
+    future author has a precedent right here for the spelling the guard could not see.
 
-    Loop variables are deliberately out of scope: `[ -n "$e" ]` inside `for e in "${ARRAY[@]}"`
-    guards against an EMPTY LIST ENTRY, which is correct and must not be flagged."""
+    Enumerating consumption forms is unwinnable: shell has too many, and the test silently shrinks
+    each time someone invents one. Enumerating KEYS is finite and self-maintaining -- a new key is
+    guarded or it is listed here, and listing it is a decision someone has to write down."""
     text = RECIPE.read_text(encoding="utf-8")
-    lines = text.splitlines()
+
+    # Free strings: passed through as values, never used as flags. Each is a deliberate decision.
+    EXEMPT = {
+        "REF":   "a package spec, handed to uvx verbatim",
+        "MODE":  "compared with = / != against known words, so a boolean can only narrow, never widen",
+        "SCOPE": "same as MODE",
+    }
 
     scalars = {}
-    for i, l in enumerate(lines):
+    for n, l in enumerate(text.splitlines()):
         m = re.match(r'^([A-Z_]+)="\$\{DARNLINK_[A-Z_]*:-\$\(read_cfg ', l)
         if m:
-            scalars.setdefault(m.group(1), i)
+            scalars.setdefault(m.group(1), n)
 
-    used_as_flag = {v for v in scalars if re.search(r'\[ -n "\$' + v + r'" \]', text)}
-    guarded = {v for v in scalars
-               if re.search(r'^case "\$\{?' + v + r'[,"}]', text, re.M)
-               or re.search(r'\[\[ "\$' + v + r'" =~', text)}
+    def guarded(v):
+        return (re.search(r'^case "\$\{?' + v + r'[,"}]', text, re.M)      # truthiness or type case
+                or re.search(r'\[\[ "\$' + v + r'" =~', text)             # regex validation
+                or re.search(r'case "\$' + v + r'" in', text))             # plain case
 
-    missing = sorted(used_as_flag - guarded)
+    missing = sorted(v for v in scalars if v not in EXEMPT and not guarded(v))
     assert not missing, (
-        "these keys are read from JSON and then tested with `[ -n ]`, which is TRUE for the string "
-        '"False" a JSON `false` produces, and nothing normalises them: ' + ", ".join(missing))
+        "these keys come from JSON and nothing normalises or validates them, so a JSON `false` "
+        'reaches the shell as the non-empty string "False": ' + ", ".join(missing)
+        + " — guard them, or add them to EXEMPT with the reason they are safe as free strings.")
+
+    stale = sorted(set(EXEMPT) - set(scalars))
+    assert not stale, f"EXEMPT names keys that no longer exist, so it is not being maintained: {stale}"
 
 
 def test_every_boolean_key_is_normalised_next_to_its_own_assignment():

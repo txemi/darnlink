@@ -55,6 +55,10 @@ jobs:
             # paste — and without this check it is reported as a checksum MISMATCH, sending the
             # reader to hunt a tampered download when they simply pasted the wrong thing. That is
             # the most likely FIRST-CONTACT failure of this whole file, so it gets its own message.
+            # Uppercase is a REAL digest, not a typo: PowerShell's Get-FileHash returns A-F, and this
+            # page tells Windows agents to fetch the recipe. Rejecting it would call a correct value
+            # "not a digest" and tell the reader to replace it -- false, and it breaks a real adopter.
+            WANT=$(printf '%s' "$WANT" | tr 'A-F' 'a-f')
             case "$WANT" in
               *[!0-9a-f]* | "" ) BAD=1 ;;
               * ) [ ${#WANT} -eq 64 ] && BAD= || BAD=1 ;;
@@ -79,7 +83,7 @@ jobs:
               # actually occurs is the mundane third: a `ref` bumped without re-sealing the checksum
               # beside it. Offering only catastrophic branches makes a maintenance slip look like
               # sabotage; measured cost of that omission, once: about an hour of the wrong suspicion.
-              echo "::error::recipe checksum mismatch for ${DARNLINK_GATE_VERSION} — most likely someone bumped \`ref\` without re-sealing \`recipe_sha256\` next to it; otherwise the tag moved, or the download was tampered with"
+              echo "::error::recipe checksum mismatch for ${DARNLINK_GATE_VERSION} — most likely someone bumped 'ref' without re-sealing 'recipe_sha256' next to it; otherwise the tag moved, or the download was tampered with"
               echo "::error::  expected $WANT"
               echo "::error::  got      $GOT"
               echo "::error::  re-seal: curl -fsSL 'https://raw.githubusercontent.com/txemi/darnlink/${DARNLINK_GATE_VERSION}/recipes/darnlink-gate' | sha256sum | cut -d' ' -f1"
