@@ -24,7 +24,7 @@ from typing import Dict, Iterable, List, Optional, Set, Tuple
 from .frontmatter_index import DEFAULT_EXCLUDES, FrontmatterIndex, iter_markdown_files
 from .links import (code_spans, emit_robust_link, file_ignores_links, file_is_ignored,
                     find_robust_links, ignored_spans)
-from .paths import DIR_ANCHOR, is_web_href, names_md, relative_link, resolve_href, split_fragment
+from .paths import DIR_ANCHOR, is_web_href, names_md, relative_link, resolve_href, resolved, split_fragment
 from .frontmatter_edit import read_text_keep_newlines, write_text_keep_newlines
 from .report import Finding, Kind
 from .scope import in_scope
@@ -132,7 +132,7 @@ def plan_repairs(
                 )
                 continue
             intended = target.parent if dir_link else target
-            if current == intended.resolve():
+            if current == resolved(intended):
                 continue  # already correct (cosmetic ./ or trailing-slash differences are fine)
             # Defensive: the written path still resolves to a real target while the uuid lives
             # elsewhere — the two halves disagree (typically a mis-pasted uuid). It is NOT a move, so

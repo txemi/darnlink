@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
+from .paths import resolve_cache
 from .frontmatter_index import DEFAULT_EXCLUDES, build_index, index_from_contents, scan_tree
 from .repair import apply_repairs, plan_repairs
 from .report import Finding, Kind
@@ -748,6 +749,14 @@ def _make_stdio_encoding_safe() -> None:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    # `main()` IS the run: it opens the one resolution-cache scope, and leaving it drops every
+    # entry. Anything that reaches the public plan_*/apply_* functions without coming through here
+    # simply does not memoise -- slower, never stale. `tests/test_paths.py` pins both halves.
+    with resolve_cache():
+        return _main(argv)
+
+
+def _main(argv: Optional[List[str]] = None) -> int:
     _make_stdio_encoding_safe()
     raw = list(sys.argv[1:] if argv is None else argv)
     if raw and raw[0] == "check":  # feature 007: report-only gate subcommand

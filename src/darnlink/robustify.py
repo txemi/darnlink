@@ -27,7 +27,7 @@ from .frontmatter_index import DEFAULT_EXCLUDES, dir_excluded, iter_markdown_fil
 from .links import (DetachedAnchor, PlainLink, code_spans, emit_robust_link, file_ignores_links,
                     file_is_ignored, find_detached_anchors, find_plain_links, ignored_spans,
                     line_bounds, pandoc_attrs_at)
-from .paths import (DIR_ANCHOR, is_absolute_local_path, is_local_relative, names_md, resolve_href,
+from .paths import (DIR_ANCHOR, is_absolute_local_path, is_local_relative, names_md, resolve_href, resolved,
                      split_fragment)
 from .report import Finding, Kind
 from .scope import in_scope
@@ -69,7 +69,7 @@ def _anchor_target(href: str, linking_file: Path, extra_targets: AbstractSet[Pat
         return t if (t.is_file() and t.suffix.lower() == ".md") else None
     if t.is_dir():
         readme = t / DIR_ANCHOR
-        if readme.is_file() or readme.resolve() in extra_targets:  # a dir named `README.md` is not an anchor
+        if readme.is_file() or resolved(readme) in extra_targets:  # a dir named `README.md` is not an anchor
             return readme
     return None
 
@@ -172,7 +172,7 @@ def _within_excluded(directory: Path, root: Path, excludes) -> bool:
     an *included* file can still point at a directory *inside* an excluded one — this closes that path.
     """
     try:
-        rel = directory.resolve().relative_to(root)
+        rel = resolved(directory).relative_to(root)
     except ValueError:
         return False  # outside root is handled by the caller's own root check
     return any(dir_excluded(part, excludes) for part in rel.parts)
@@ -268,11 +268,11 @@ def plan_robustify(
         files.append(f)
         contents[f] = c  # this run's OWN copy — see the docstring note on --create-readme below
         if file_ignores_links(c):
-            link_ignored.add(f.resolve())
+            link_ignored.add(resolved(f))
             continue  # no spans: nothing reads them for this file, and computing them re-parses it
         spans[f] = ignored_spans(c, block_markers) + code_spans(c)
 
-    ignored_targets = {p.resolve() for p in result.ignored}  # opted-out files: never become targets
+    ignored_targets = {resolved(p) for p in result.ignored}  # opted-out files: never become targets
 
     # --- Phase A: decide the uuid for every target of a plain link ---
     target_uuid: Dict[Path, str] = {}   # target -> uuid to annotate with
@@ -290,15 +290,15 @@ def plan_robustify(
     planned_readmes: Set[Path] = set()      # resolved README paths this run will create
     created_readmes: Dict[Path, str] = {}   # README path -> full content to write
     if create_readme:
-        root_resolved = root.resolve()
+        root_resolved = resolved(root)
         for f in files:
-            if f.resolve() in link_ignored or not in_scope(f, only):
+            if resolved(f) in link_ignored or not in_scope(f, only):
                 continue  # same guards as Phase A: these links never drive writes
             for link in find_plain_links(contents.get(f, ""), spans.get(f, [])):
                 d = _dir_link_missing_readme(link.href, f)
                 if d is None:
                     continue
-                readme = (d / DIR_ANCHOR).resolve()
+                readme = resolved(d / DIR_ANCHOR)
                 if readme in planned_readmes:
                     continue  # one README per directory, however many links point at it
                 if not readme.is_relative_to(root_resolved):
@@ -318,7 +318,7 @@ def plan_robustify(
                 target_uuid[readme] = u
 
     def decide(target: Path) -> None:
-        target = target.resolve()
+        target = resolved(target)
         if (target in target_uuid or target in skip_no_fm or target in skip_denied
                 or target in invalid_fm or target in skip_out_of_scope or target in skip_target_write):
             return
@@ -355,7 +355,7 @@ def plan_robustify(
         needs_uuid_write.add(target)
 
     for f in files:
-        if f.resolve() in link_ignored:
+        if resolved(f) in link_ignored:
             continue  # FR-033: its links are never rewritten -> they must not drive uuid creation
         if not in_scope(f, only):
             continue  # 010: its links are never rewritten either -> they must not create uuids
@@ -363,7 +363,7 @@ def plan_robustify(
             t = _anchor_target(link.href, f, planned_readmes)
             # Skip self-links (a file linking to itself, e.g. autogrid `path` rows): robustifying
             # them is meaningless and would touch machine-generated blocks.
-            if t is not None and t.resolve() != f.resolve():
+            if t is not None and resolved(t) != resolved(f):
                 decide(t)
 
     # --- Phase A′ (only when narrowed): count what a full run would have anchored elsewhere ---
@@ -383,13 +383,13 @@ def plan_robustify(
             return cached
 
         for f in files:
-            if in_scope(f, only) or f.resolve() in link_ignored:
+            if in_scope(f, only) or resolved(f) in link_ignored:
                 continue
             for link in find_plain_links(contents.get(f, ""), spans.get(f, [])):
                 t = _anchor_target(link.href, f, planned_readmes)
-                if t is None or t.resolve() == f.resolve():
+                if t is None or resolved(t) == resolved(f):
                     continue
-                tr = t.resolve()
+                tr = resolved(t)
                 if tr in ignored_targets or tr not in contents:
                     continue
                 if _target_has_uuid(tr):
@@ -402,7 +402,7 @@ def plan_robustify(
         cursor = 0
         changed = False
         scoped = in_scope(f, only)  # 010: may this file's own links be rewritten?
-        if f.resolve() in link_ignored:
+        if resolved(f) in link_ignored:
             # FR-033: leave every link in it alone. We still fall through to the uuid write below,
             # because opting out as a SOURCE says nothing about being a target (FR-034/FR-035).
             result.link_ignored.append(f)
@@ -412,11 +412,11 @@ def plan_robustify(
                     "file carries darnlink-ignore-links; its links are left as-is (still a target)"))
         # Out of the write scope: its links are left alone here too, but it may still RECEIVE its own
         # uuid below — being a target is not a write the caller has to name (FR-006).
-        links = () if (f.resolve() in link_ignored or not scoped) else find_plain_links(original, spans.get(f, []))
+        links = () if (resolved(f) in link_ignored or not scoped) else find_plain_links(original, spans.get(f, []))
         anchorable: List[Tuple[PlainLink, str]] = []  # (plain link, the uuid that will anchor it)
         for link in links:
             t = _anchor_target(link.href, f, planned_readmes)
-            if t is None or t.resolve() == f.resolve():
+            if t is None or resolved(t) == resolved(f):
                 # 015: this `None` used to be the end of the road for a link to a path that is
                 # simply not there — no category, not even a tolerated one. Name it before dropping
                 # it. A self-link (t is not None) is not a candidate.
@@ -446,7 +446,7 @@ def plan_robustify(
                             "resolves only on the machine that wrote it; never checked or anchorable",
                             line=lineno))
                 continue  # skip non-md/external and self-links
-            tr = t.resolve()
+            tr = resolved(t)
             if tr in ignored_targets or tr in invalid_fm:
                 continue  # opted-out or invalid-YAML target: leave the link plain (invalid reported below)
             if tr in skip_denied:
@@ -568,8 +568,8 @@ def plan_robustify(
             changed = True
         content = ("".join(pieces) + original[cursor:]) if changed else original
 
-        if f.resolve() in needs_uuid_write:
-            added = add_uuid_to_content(content, target_uuid[f.resolve()], create_frontmatter)
+        if resolved(f) in needs_uuid_write:
+            added = add_uuid_to_content(content, target_uuid[resolved(f)], create_frontmatter)
             if added is not None:
                 content = added
 

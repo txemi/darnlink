@@ -13,6 +13,8 @@ import sys
 from pathlib import Path
 from typing import Iterable, List, Optional, Set
 
+from .paths import resolved
+
 
 class ScopeError(ValueError):
     """A `--only` path that cannot be part of a write scope (FR-003)."""
@@ -41,10 +43,10 @@ def resolve_write_scope(paths: Iterable[str], root: Path) -> Optional[Set[Path]]
     paths = list(paths)
     if not paths:
         return None
-    root = root.resolve()
+    root = resolved(root)
     scope: Set[Path] = set()
     for raw in paths:
-        p = Path(raw).resolve()
+        p = resolved(Path(raw))
         if not p.exists():
             raise ScopeError(f"--only: no such file: {raw}")
         if not p.is_file() or p.suffix.lower() != ".md":
@@ -57,4 +59,4 @@ def resolve_write_scope(paths: Iterable[str], root: Path) -> Optional[Set[Path]]
 
 def in_scope(path: Path, scope: Optional[Set[Path]]) -> bool:
     """True if `path` may be written (always true when there is no narrowing)."""
-    return scope is None or path.resolve() in scope
+    return scope is None or resolved(path) in scope

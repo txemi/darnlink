@@ -2,13 +2,72 @@
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Tuple
+from typing import Dict, Iterator, Optional, Tuple
 
 
 # Feature 011: a link to a directory is anchored to the uuid of this file inside it. A folder has no
 # frontmatter of its own, so its README.md carries the folder's stable identity.
 DIR_ANCHOR = "README.md"
+
+
+# --- Resolution cache -------------------------------------------------------
+# `Path.resolve()` walks every component and issues real syscalls, and darnlink calls it on the
+# SAME paths over and over: a run over a ~3,900-file tree issues 31,470 calls for only 5,767
+# distinct paths - 81.7% of them repeats - and spends ~24% of the wall clock inside them.
+#
+# Memoising is sound for the duration of ONE run because a non-strict `resolve()` (= realpath) can
+# only change if a symlink, a mount, or a directory-vs-symlink component changes. Creating a file,
+# creating a `README.md` anchor, or rewriting file content cannot change it -- and content is the
+# only thing darnlink ever writes (there is no mkdir/rename/symlink_to anywhere in `src/`).
+#
+# But "one run" is a concept only `main()` has: `plan_robustify`, `plan_repairs`, `resolve_write_scope`
+# and friends are public, and an embedder calling them twice around a filesystem change would get a
+# stale answer -- and, through `apply_robustify`, a WRONG uuid written to disk. So the cache is
+# OPT-IN: `resolved()` is a plain passthrough unless a `resolve_cache()` scope is open, and `main()`
+# opens exactly one. The worst that can happen to a library consumer is now that it is as slow as
+# darnlink was before this cache existed, never that it is wrong.
+#
+# Relative paths are never memoised: their resolution depends on the process cwd. darnlink itself
+# never chdirs, but `--only-from` accepts relative paths (its help advertises piping
+# `git diff --cached --name-only`), so the key would be ambiguous for an embedder that does.
+_RESOLVE_CACHE: Optional[Dict[str, Path]] = None
+
+
+@contextmanager
+def resolve_cache() -> Iterator[None]:
+    """Open a scope in which `resolved()` memoises. Nesting reuses the outer scope, and leaving the
+    outermost one drops every entry -- so a cached resolution can never outlive the run that made it."""
+    global _RESOLVE_CACHE
+    outer = _RESOLVE_CACHE
+    if outer is None:
+        _RESOLVE_CACHE = {}
+    try:
+        yield
+    finally:
+        _RESOLVE_CACHE = outer
+
+
+def resolved(path: Path) -> Path:
+    """`path.resolve()`, memoised only while a `resolve_cache()` scope is open (see the note above).
+
+    Outside a scope, and for relative paths, this is exactly `path.resolve()`."""
+    cache = _RESOLVE_CACHE
+    if cache is None or not path.is_absolute():
+        return path.resolve()
+    key = str(path)
+    hit = cache.get(key)
+    if hit is None:
+        hit = path.resolve()
+        cache[key] = hit
+    return hit
+
+
+def clear_resolve_cache() -> None:
+    """Drop the entries of the open scope, if any. A no-op outside one."""
+    if _RESOLVE_CACHE is not None:
+        _RESOLVE_CACHE.clear()
 
 
 def split_fragment(href: str) -> Tuple[str, str]:
@@ -25,7 +84,7 @@ def resolve_href(href: str, linking_file: Path) -> Path:
     The fragment is dropped. Returns a resolved (normalized) path; the target need not exist.
     """
     path_part, _ = split_fragment(href)
-    return (linking_file.parent / path_part).resolve()
+    return resolved(linking_file.parent / path_part)
 
 
 def relative_link(target: Path, linking_file: Path, fragment: str = "") -> str:
@@ -33,7 +92,7 @@ def relative_link(target: Path, linking_file: Path, fragment: str = "") -> str:
 
     Re-appends `#fragment` if given. This is the value to write inside `(...)`.
     """
-    rel = os.path.relpath(target.resolve(), start=linking_file.parent.resolve())
+    rel = os.path.relpath(resolved(target), start=resolved(linking_file.parent))
     rel_posix = Path(rel).as_posix()
     return f"{rel_posix}#{fragment}" if fragment else rel_posix
 
