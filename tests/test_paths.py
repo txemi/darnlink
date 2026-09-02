@@ -1,4 +1,4 @@
-from concurrent.futures import ThreadPoolExecutor
+import threading
 from pathlib import Path
 
 from darnlink import cli, paths
@@ -124,19 +124,44 @@ def test_main_opens_the_scope_and_closes_it(tmp_path, monkeypatch):
     assert paths._RESOLVE_CACHE.get() is None           # ...and leave none behind
 
 
-def test_concurrent_runs_do_not_leak_a_scope(tmp_path):
-    """Two INTERLEAVED scopes are what a save/restore of a module global gets wrong: the second one
-    to leave puts back the dict the first had already closed, and the cache stays open process-wide
-    with no run alive. A ContextVar is per-thread, so each run owns its own."""
-    roots = []
-    for i in range(6):
-        r = tmp_path / f"r{i}"
-        r.mkdir()
-        (r / "a.md").write_text(f"---\nuuid: 1111{i:04d}-1111-4111-8111-111111111111\n---\n# a\n",
-                                encoding="utf-8")
-        roots.append(r)
-    with ThreadPoolExecutor(max_workers=6) as ex:
-        list(ex.map(lambda r: cli.main(["check", str(r)]), roots))
+def test_interleaved_scopes_do_not_leak(tmp_path):
+    """The failure a saved-and-restored global has is INTERLEAVING, not concurrency: A enters,
+    B enters, A leaves, B leaves -- and B's restore puts back the dict A had already closed.
+
+    This forces that exact order with Events instead of hoping the scheduler produces it. Hoping
+    is not good enough: an earlier version of this test ran six `main()` calls in a pool and let
+    them race, and it went green over the seeded regression roughly one run in seven. A gate that
+    passes 14% of the time on the very defect it is named after is worse than no gate, because
+    nobody looks at it again."""
+    a_in, b_in, a_out = threading.Event(), threading.Event(), threading.Event()
+    errors = []
+
+    def first():
+        try:
+            with resolve_cache():
+                resolved(tmp_path / "f.md")
+                a_in.set()
+                b_in.wait(5)          # B is inside its scope while A is still open
+            a_out.set()
+        except Exception as exc:      # pragma: no cover - only on a broken scope
+            errors.append(exc)
+
+    def second():
+        try:
+            a_in.wait(5)
+            with resolve_cache():
+                b_in.set()
+                a_out.wait(5)         # A left while B is still open
+                resolved(tmp_path / "g.md")
+        except Exception as exc:      # pragma: no cover
+            errors.append(exc)
+
+    ta, tb = threading.Thread(target=first), threading.Thread(target=second)
+    ta.start()
+    tb.start()
+    ta.join(10)
+    tb.join(10)
+    assert not errors, errors
     assert paths._RESOLVE_CACHE.get() is None, "a scope outlived every run that could own it"
 
 

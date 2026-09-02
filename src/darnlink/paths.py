@@ -41,6 +41,11 @@ DIR_ANCHOR = "README.md"
 # prevent. Reproduced with a ThreadPoolExecutor running `main()` over several roots, the most
 # plausible embedder shape there is. A ContextVar is per-thread and per-task, so each run gets its
 # own scope and `reset(token)` cannot clobber anyone else's.
+#
+# The single hottest `resolve()` in a real run is NOT memoised and stays that way on purpose:
+# `frontmatter_index.iter_markdown_files` uses `resolve(strict=True)`, which raises instead of
+# returning, and issues one call per file with no repeats to save. Measured on a ~3,900-file tree it
+# is ~45% of all raw resolutions -- so this cache covers the repeats, not the total.
 _RESOLVE_CACHE: ContextVar[Optional[Dict[str, Path]]] = ContextVar(
     "darnlink_resolve_cache", default=None)
 
@@ -48,8 +53,10 @@ _RESOLVE_CACHE: ContextVar[Optional[Dict[str, Path]]] = ContextVar(
 @contextmanager
 def resolve_cache() -> Iterator[None]:
     """Open a scope in which `resolved()` memoises. Nesting reuses the scope already open and owns
-    nothing; leaving the outermost one drops every entry, so a cached resolution cannot outlive the
-    run that made it -- including when several runs share a process on different threads."""
+    nothing; leaving the outermost one drops every entry, so a cached resolution does not outlive
+    the run that made it -- including when several runs share a process on different threads --
+    provided the scope is left normally. A generator that opens one and is abandoned mid-yield keeps
+    it open until it is collected, like any other context manager."""
     if _RESOLVE_CACHE.get() is not None:
         yield                       # nested: reuse, own nothing
         return

@@ -18,8 +18,8 @@ from pathlib import Path
 from typing import List, Optional
 
 from .frontmatter_index import DEFAULT_EXCLUDES, build_index, index_from_contents, scan_tree
-from .repair import apply_repairs, plan_repairs
 from .paths import resolve_cache, resolved
+from .repair import apply_repairs, plan_repairs
 from .report import Finding, Kind
 from .robustify import apply_robustify, plan_robustify
 from .scope import ScopeError, read_paths_from, resolve_write_scope
