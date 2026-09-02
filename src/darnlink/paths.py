@@ -2,13 +2,84 @@
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
-from typing import Tuple
+from typing import Dict, Iterator, Optional, Tuple
 
 
 # Feature 011: a link to a directory is anchored to the uuid of this file inside it. A folder has no
 # frontmatter of its own, so its README.md carries the folder's stable identity.
 DIR_ANCHOR = "README.md"
+
+
+# --- Resolution cache -------------------------------------------------------
+# `Path.resolve()` walks every component and issues real syscalls, and darnlink calls it on the
+# SAME paths over and over: a run over a ~3,900-file tree issues 31,470 calls for only 5,767
+# distinct paths - 81.7% of them repeats - and spends ~24% of the wall clock inside them.
+#
+# Memoising is sound for the duration of ONE run because a non-strict `resolve()` (= realpath) can
+# only change if a symlink, a mount, or a directory-vs-symlink component changes. Creating a file,
+# creating a `README.md` anchor, or rewriting file content cannot change it -- and content is the
+# only thing darnlink ever writes (there is no mkdir/rename/symlink_to anywhere in `src/`).
+#
+# But "one run" is a concept only `main()` has: `plan_robustify`, `plan_repairs`, `resolve_write_scope`
+# and friends are public, and an embedder calling them twice around a filesystem change would get a
+# stale answer -- and, through `apply_robustify`, a WRONG uuid written to disk. So the cache is
+# OPT-IN: `resolved()` is a plain passthrough unless a `resolve_cache()` scope is open, and `main()`
+# opens exactly one. The worst that can happen to a library consumer is now that it is as slow as
+# darnlink was before this cache existed, never that it is wrong.
+#
+# Relative paths are never memoised: their resolution depends on the process cwd. darnlink itself
+# never chdirs, but `--only-from` accepts relative paths (its help advertises piping
+# `git diff --cached --name-only`), so the key would be ambiguous for an embedder that does.
+#
+# The scope lives in a ContextVar, not a module global. A global saved and restored around the
+# `with` looks equivalent and is not: with two INTERLEAVED scopes (A enters, B enters, A exits,
+# B exits) B's restore puts back the dict A had already closed, and the cache stays open with no
+# scope alive -- process-wide and never cleared, which is the exact failure this design exists to
+# prevent. Reproduced with a ThreadPoolExecutor running `main()` over several roots, the most
+# plausible embedder shape there is. A ContextVar is per-thread and per-task, so each run gets its
+# own scope and `reset(token)` cannot clobber anyone else's.
+#
+# The single hottest `resolve()` in a real run is NOT memoised and stays that way on purpose:
+# `frontmatter_index.iter_markdown_files` uses `resolve(strict=True)`, which raises instead of
+# returning, and issues one call per file with no repeats to save. Measured on a ~3,900-file tree it
+# is ~45% of all raw resolutions -- so this cache covers the repeats, not the total.
+_RESOLVE_CACHE: ContextVar[Optional[Dict[str, Path]]] = ContextVar(
+    "darnlink_resolve_cache", default=None)
+
+
+@contextmanager
+def resolve_cache() -> Iterator[None]:
+    """Open a scope in which `resolved()` memoises. Nesting reuses the scope already open and owns
+    nothing; leaving the outermost one drops every entry, so a cached resolution does not outlive
+    the run that made it -- including when several runs share a process on different threads --
+    provided the scope is left normally. A generator that opens one and is abandoned mid-yield keeps
+    it open until it is collected, like any other context manager."""
+    if _RESOLVE_CACHE.get() is not None:
+        yield                       # nested: reuse, own nothing
+        return
+    token = _RESOLVE_CACHE.set({})
+    try:
+        yield
+    finally:
+        _RESOLVE_CACHE.reset(token)
+
+
+def resolved(path: Path) -> Path:
+    """`path.resolve()`, memoised only while a `resolve_cache()` scope is open (see the note above).
+
+    Outside a scope, and for relative paths, this is exactly `path.resolve()`."""
+    cache = _RESOLVE_CACHE.get()
+    if cache is None or not path.is_absolute():
+        return path.resolve()
+    key = str(path)
+    hit = cache.get(key)
+    if hit is None:
+        hit = path.resolve()
+        cache[key] = hit
+    return hit
 
 
 def split_fragment(href: str) -> Tuple[str, str]:
@@ -25,7 +96,7 @@ def resolve_href(href: str, linking_file: Path) -> Path:
     The fragment is dropped. Returns a resolved (normalized) path; the target need not exist.
     """
     path_part, _ = split_fragment(href)
-    return (linking_file.parent / path_part).resolve()
+    return resolved(linking_file.parent / path_part)
 
 
 def relative_link(target: Path, linking_file: Path, fragment: str = "") -> str:
@@ -33,7 +104,7 @@ def relative_link(target: Path, linking_file: Path, fragment: str = "") -> str:
 
     Re-appends `#fragment` if given. This is the value to write inside `(...)`.
     """
-    rel = os.path.relpath(target.resolve(), start=linking_file.parent.resolve())
+    rel = os.path.relpath(resolved(target), start=resolved(linking_file.parent))
     rel_posix = Path(rel).as_posix()
     return f"{rel_posix}#{fragment}" if fragment else rel_posix
 

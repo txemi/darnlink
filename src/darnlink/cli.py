@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from .frontmatter_index import DEFAULT_EXCLUDES, build_index, index_from_contents, scan_tree
+from .paths import resolve_cache, resolved
 from .repair import apply_repairs, plan_repairs
 from .report import Finding, Kind
 from .robustify import apply_robustify, plan_robustify
@@ -189,13 +190,13 @@ def _run_check(root: Path, excludes: set, as_json: bool, block_markers: tuple,
     unresolved = [f for f in rep.findings if f.kind in (Kind.UNRESOLVABLE, Kind.AMBIGUOUS)]
     # Invalid frontmatter is a file-level integrity fault; when scoped, only the caller's own files
     # count — a gate must not fail my commit over someone else's un-staged invalid YAML.
-    invalid = [p for p in index.invalid if only is None or p.resolve() in only]
+    invalid = [p for p in index.invalid if only is None or resolved(p) in only]
     integrity_fail = bool(repairs or conflicts or unresolved or invalid)
 
     # Strict axis (robustify, dry-run): plain links to an anchorable target left un-anchored.
     rob = plan_robustify(root, create_frontmatter=False, excludes=excludes, block_markers=block_markers, only=only, prescanned=prescanned)
     upgrades = [f for f in rob.findings if f.kind is Kind.ROBUSTIFY]
-    rob_invalid = [p for p in rob.invalid if only is None or p.resolve() in only]
+    rob_invalid = [p for p in rob.invalid if only is None or resolved(p) in only]
     strict_fail = bool(upgrades or rob_invalid)
 
     # Dangling axis (015): plain links pointing at nothing. Reported on its own axis and DELIBERATELY
@@ -748,6 +749,14 @@ def _make_stdio_encoding_safe() -> None:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    # `main()` IS the run: it opens the one resolution-cache scope, and leaving it drops every
+    # entry. Anything that reaches the public plan_*/apply_* functions without coming through here
+    # simply does not memoise -- slower, never stale. `tests/test_paths.py` pins both halves.
+    with resolve_cache():
+        return _main(argv)
+
+
+def _main(argv: Optional[List[str]] = None) -> int:
     _make_stdio_encoding_safe()
     raw = list(sys.argv[1:] if argv is None else argv)
     if raw and raw[0] == "check":  # feature 007: report-only gate subcommand
