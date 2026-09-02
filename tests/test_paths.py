@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from darnlink import cli, paths
@@ -103,19 +104,40 @@ def test_nesting_reuses_the_outer_scope_and_does_not_close_it_early(tmp_path):
     with resolve_cache():
         with resolve_cache():
             first = resolved(f)
-        assert paths._RESOLVE_CACHE is not None   # inner exit must NOT close the outer scope
+        assert paths._RESOLVE_CACHE.get() is not None   # inner exit must NOT close the outer scope
         assert resolved(f) is first               # ...and the entry survives
-    assert paths._RESOLVE_CACHE is None
+    assert paths._RESOLVE_CACHE.get() is None
 
 
-def test_main_is_the_run_boundary(tmp_path):
-    """`main()` opens the only scope in the shipped code path, and closing it is structural rather
-    than a line someone can delete: there is no clear() to forget."""
+def test_main_opens_the_scope_and_closes_it(tmp_path, monkeypatch):
+    """Asserting only "no scope afterwards" would pass with `main()` opening none at all -- i.e. with
+    the whole optimisation deleted. So observe it OPEN during the run, which is what makes the line
+    in `main()` load-bearing rather than decorative."""
     (tmp_path / "a.md").write_text("---\nuuid: 11111111-1111-4111-8111-111111111111\n---\n# a\n",
                                    encoding="utf-8")
-    assert paths._RESOLVE_CACHE is None
+    seen = []
+    real = cli._main
+    monkeypatch.setattr(cli, "_main", lambda argv=None: (seen.append(paths._RESOLVE_CACHE.get()), real(argv))[1])
+    assert paths._RESOLVE_CACHE.get() is None
     cli.main(["check", str(tmp_path)])
-    assert paths._RESOLVE_CACHE is None           # the run ended -> nothing memoised survives it
+    assert seen and seen[0] is not None, "main() must run its body inside an open scope"
+    assert paths._RESOLVE_CACHE.get() is None           # ...and leave none behind
+
+
+def test_concurrent_runs_do_not_leak_a_scope(tmp_path):
+    """Two INTERLEAVED scopes are what a save/restore of a module global gets wrong: the second one
+    to leave puts back the dict the first had already closed, and the cache stays open process-wide
+    with no run alive. A ContextVar is per-thread, so each run owns its own."""
+    roots = []
+    for i in range(6):
+        r = tmp_path / f"r{i}"
+        r.mkdir()
+        (r / "a.md").write_text(f"---\nuuid: 1111{i:04d}-1111-4111-8111-111111111111\n---\n# a\n",
+                                encoding="utf-8")
+        roots.append(r)
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        list(ex.map(lambda r: cli.main(["check", str(r)]), roots))
+    assert paths._RESOLVE_CACHE.get() is None, "a scope outlived every run that could own it"
 
 
 def test_relative_paths_are_never_memoised(tmp_path, monkeypatch):

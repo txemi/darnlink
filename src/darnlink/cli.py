@@ -17,9 +17,9 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from .paths import resolve_cache
 from .frontmatter_index import DEFAULT_EXCLUDES, build_index, index_from_contents, scan_tree
 from .repair import apply_repairs, plan_repairs
+from .paths import resolve_cache, resolved
 from .report import Finding, Kind
 from .robustify import apply_robustify, plan_robustify
 from .scope import ScopeError, read_paths_from, resolve_write_scope
@@ -190,13 +190,13 @@ def _run_check(root: Path, excludes: set, as_json: bool, block_markers: tuple,
     unresolved = [f for f in rep.findings if f.kind in (Kind.UNRESOLVABLE, Kind.AMBIGUOUS)]
     # Invalid frontmatter is a file-level integrity fault; when scoped, only the caller's own files
     # count — a gate must not fail my commit over someone else's un-staged invalid YAML.
-    invalid = [p for p in index.invalid if only is None or p.resolve() in only]
+    invalid = [p for p in index.invalid if only is None or resolved(p) in only]
     integrity_fail = bool(repairs or conflicts or unresolved or invalid)
 
     # Strict axis (robustify, dry-run): plain links to an anchorable target left un-anchored.
     rob = plan_robustify(root, create_frontmatter=False, excludes=excludes, block_markers=block_markers, only=only, prescanned=prescanned)
     upgrades = [f for f in rob.findings if f.kind is Kind.ROBUSTIFY]
-    rob_invalid = [p for p in rob.invalid if only is None or p.resolve() in only]
+    rob_invalid = [p for p in rob.invalid if only is None or resolved(p) in only]
     strict_fail = bool(upgrades or rob_invalid)
 
     # Dangling axis (015): plain links pointing at nothing. Reported on its own axis and DELIBERATELY

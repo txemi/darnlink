@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Dict, Iterator, Optional, Tuple
 
@@ -32,28 +33,38 @@ DIR_ANCHOR = "README.md"
 # Relative paths are never memoised: their resolution depends on the process cwd. darnlink itself
 # never chdirs, but `--only-from` accepts relative paths (its help advertises piping
 # `git diff --cached --name-only`), so the key would be ambiguous for an embedder that does.
-_RESOLVE_CACHE: Optional[Dict[str, Path]] = None
+#
+# The scope lives in a ContextVar, not a module global. A global saved and restored around the
+# `with` looks equivalent and is not: with two INTERLEAVED scopes (A enters, B enters, A exits,
+# B exits) B's restore puts back the dict A had already closed, and the cache stays open with no
+# scope alive -- process-wide and never cleared, which is the exact failure this design exists to
+# prevent. Reproduced with a ThreadPoolExecutor running `main()` over several roots, the most
+# plausible embedder shape there is. A ContextVar is per-thread and per-task, so each run gets its
+# own scope and `reset(token)` cannot clobber anyone else's.
+_RESOLVE_CACHE: ContextVar[Optional[Dict[str, Path]]] = ContextVar(
+    "darnlink_resolve_cache", default=None)
 
 
 @contextmanager
 def resolve_cache() -> Iterator[None]:
-    """Open a scope in which `resolved()` memoises. Nesting reuses the outer scope, and leaving the
-    outermost one drops every entry -- so a cached resolution can never outlive the run that made it."""
-    global _RESOLVE_CACHE
-    outer = _RESOLVE_CACHE
-    if outer is None:
-        _RESOLVE_CACHE = {}
+    """Open a scope in which `resolved()` memoises. Nesting reuses the scope already open and owns
+    nothing; leaving the outermost one drops every entry, so a cached resolution cannot outlive the
+    run that made it -- including when several runs share a process on different threads."""
+    if _RESOLVE_CACHE.get() is not None:
+        yield                       # nested: reuse, own nothing
+        return
+    token = _RESOLVE_CACHE.set({})
     try:
         yield
     finally:
-        _RESOLVE_CACHE = outer
+        _RESOLVE_CACHE.reset(token)
 
 
 def resolved(path: Path) -> Path:
     """`path.resolve()`, memoised only while a `resolve_cache()` scope is open (see the note above).
 
     Outside a scope, and for relative paths, this is exactly `path.resolve()`."""
-    cache = _RESOLVE_CACHE
+    cache = _RESOLVE_CACHE.get()
     if cache is None or not path.is_absolute():
         return path.resolve()
     key = str(path)
@@ -62,12 +73,6 @@ def resolved(path: Path) -> Path:
         hit = path.resolve()
         cache[key] = hit
     return hit
-
-
-def clear_resolve_cache() -> None:
-    """Drop the entries of the open scope, if any. A no-op outside one."""
-    if _RESOLVE_CACHE is not None:
-        _RESOLVE_CACHE.clear()
 
 
 def split_fragment(href: str) -> Tuple[str, str]:

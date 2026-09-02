@@ -6,7 +6,36 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
-_Nothing yet._
+### Path resolution is memoised inside an explicit run scope (~-18%)
+
+`Path.resolve()` was called on the same paths over and over: on a ~3,900-file documentation tree one
+`check` run issues **31,470 calls for only 5,767 distinct paths** — 81.7% repeats — and spends ~24%
+of its wall clock inside them. `robustify` walks the same file list in several passes and each pass
+re-resolves the same file; `resolve_href()` re-resolves the same link targets.
+
+Measured paired and interleaved, warm-up discarded: **min -18.6%**, 7/7 paired iterations favouring
+the cache. Independently re-measured twice during review, in both orders and on a different tree:
+-16.9% / -19.8% and -17.6%, 18/18 and 7/7 paired iterations.
+
+**The cache is opt-in, and that is the load-bearing decision.** `paths.resolved()` is a plain
+passthrough unless a `paths.resolve_cache()` scope is open, and `main()` opens exactly one. Two
+earlier drafts got this wrong in ways adversarial review reproduced end to end, both with the same
+consequence — a stale resolution reaching `apply_robustify` and writing the **wrong uuid to disk**:
+
+- an always-on process-wide dict cleared at the top of `main()`, which the public `plan_*`/`apply_*`
+  functions never clear;
+- then a module global saved and restored around the scope, which two **interleaved** scopes corrupt
+  (the second to leave restores the dict the first had already closed), leaving the cache open
+  process-wide with no run alive. Reproduced with a `ThreadPoolExecutor` running `main()` over
+  several roots. It is now a `ContextVar`, which is per-thread and per-task.
+
+Relative paths are never memoised: their resolution depends on the process cwd, which is not part of
+the key. darnlink never chdirs; an embedder might.
+
+### Added
+
+- `darnlink.paths.resolve_cache()` — context manager opening a memoisation scope for `resolved()`.
+- `darnlink.paths.resolved()` — `Path.resolve()`, memoised inside such a scope.
 
 ## [0.26.0] — 2026-08-28
 

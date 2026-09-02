@@ -32,6 +32,7 @@ from urllib.parse import unquote
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from .frontmatter_index import read_frontmatter_uuid
+from .paths import resolved
 from .links import (MD_LINK_RE, Span, _in_spans, code_spans, ignored_spans,
                     mermaid_click_destinations)
 
@@ -383,7 +384,7 @@ def _pendiente_en_la_rama_por_defecto(gu: "GithubUrl", own: Optional["OwnRepo"])
         return False
     destino = own.root / ruta
     try:
-        if not destino.resolve().is_relative_to(own.root.resolve()):
+        if not resolved(destino).is_relative_to(resolved(own.root)):
             return False
     except (OSError, ValueError):
         return False
