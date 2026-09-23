@@ -5,6 +5,8 @@ Each test seeds one way the gate used to report "clean" while checking nothing.
 import os
 import shutil
 import subprocess
+
+from gitenv import GIT_ENV as _GIT_ENV
 from pathlib import Path
 
 import pytest
@@ -16,7 +18,8 @@ pytestmark = pytest.mark.skipif(shutil.which("bash") is None or os.name == "nt",
 
 def git(repo, *args):
     subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.invalid",
-                    "-c", "commit.gpgsign=false", *args], check=True, capture_output=True)
+                    "-c", "commit.gpgsign=false", *args], check=True, capture_output=True,
+                   env=_GIT_ENV)
 
 
 @pytest.fixture()

@@ -63,8 +63,7 @@ def _kinds(tmp_path, fetch, owners=frozenset({"owned"})):
 #: A git hook exports GIT_DIR and friends, and they override `-C`. Without stripping them these
 #: fixtures build (and then read) the WRONG repository — which is exactly how this was found: the
 #: suite passed standalone and failed under this project's own pre-commit hook.
-_GIT_ENV = {k: v for k, v in os.environ.items()
-            if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR")}
+from gitenv import GIT_ENV as _GIT_ENV
 
 
 def _git_repo(tmp_path, origin: str | None):
@@ -736,17 +735,17 @@ def test_default_branch_falls_back_to_the_remote_when_origin_HEAD_is_absent(tmp_
     from darnlink.cli import _own_repo
 
     origen = tmp_path / "origen"
-    subprocess.run(["git", "init", "-q", "-b", "master", str(origen)], check=True)
+    subprocess.run(["git", "init", "-q", "-b", "master", str(origen)], check=True, env=_GIT_ENV)
     (origen / "a.md").write_text("x\n", encoding="utf-8")
     for args in (["add", "-A"], ["-c", "user.email=b@b", "-c", "user.name=b", "commit", "-qm", "i"]):
-        subprocess.run(["git", "-C", str(origen), *args], check=True)
+        subprocess.run(["git", "-C", str(origen), *args], check=True, env=_GIT_ENV)
 
     clon = tmp_path / "clon"          # a CI-shaped checkout: a remote, and no origin/HEAD
-    subprocess.run(["git", "init", "-q", str(clon)], check=True)
+    subprocess.run(["git", "init", "-q", str(clon)], check=True, env=_GIT_ENV)
     subprocess.run(["git", "-C", str(clon), "remote", "add", "origin",
-                    "https://github.com/example-org/handbook.git"], check=True)
+                    "https://github.com/example-org/handbook.git"], check=True, env=_GIT_ENV)
     assert subprocess.run(["git", "-C", str(clon), "symbolic-ref", "--short",
-                           "refs/remotes/origin/HEAD"], capture_output=True).returncode != 0, \
+                           "refs/remotes/origin/HEAD"], capture_output=True, env=_GIT_ENV).returncode != 0, \
         "the fixture must NOT have origin/HEAD, or it pins nothing"
 
     # ⚠️ `insteadOf` is what makes this a REAL test instead of a skip. `_own_repo` needs the origin
@@ -756,7 +755,7 @@ def test_default_branch_falls_back_to_the_remote_when_origin_HEAD_is_absent(tmp_
     # goes to a directory: no network, and the same code path the CI failure took.
     subprocess.run(["git", "-C", str(clon), "config",
                     f"url.{origen}.insteadOf", "https://github.com/example-org/handbook.git"],
-                   check=True)
+                   check=True, env=_GIT_ENV)
     own = _own_repo(clon)
     assert own is not None and own.slug == "example-org/handbook"
     assert own.default_ref == "master", (
@@ -770,9 +769,9 @@ def test_default_branch_flag_wins_over_the_automatic_sources(tmp_path):
     usually scoped to the checkout step rather than to what it spawns."""
     import subprocess
     from darnlink.cli import _own_repo
-    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, env=_GIT_ENV)
     subprocess.run(["git", "-C", str(tmp_path), "remote", "add", "origin",
-                    "https://github.com/example-org/handbook.git"], check=True)
+                    "https://github.com/example-org/handbook.git"], check=True, env=_GIT_ENV)
     own = _own_repo(tmp_path, "trunk")
     assert own is not None and own.default_ref == "trunk"
 
