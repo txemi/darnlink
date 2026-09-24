@@ -55,3 +55,17 @@ def test_the_check_itself_would_catch_a_new_offender():
     limpio = 'import subprocess\nsubprocess.run(["git", "init", "-q", "x"], check=True, env={})\n'
     assert _llamadas_sin_env(sucio) == [2]
     assert _llamadas_sin_env(limpio) == []
+
+
+def test_the_list_covers_everything_the_real_guard_unsets():
+    """The blocker this file was sent back for: the list used to be hand-written and covered LESS
+    than `tools/check.sh` — it lacked `GIT_NAMESPACE` and `GIT_CONFIG_PARAMETERS`, and the second
+    one carries the invoking git's `-c` options (`core.hooksPath` among them), so a child
+    `git commit` in a temp repo could re-enter THIS repository's hooks. It is now read from the
+    script; this pins that it stays a superset even if someone reverts to a literal."""
+    import gitenv
+
+    guarda = set(gitenv._del_guardia(gitenv.CHECK_SH))
+    assert guarda, "the `unset` line of tools/check.sh could not be read"
+    assert {"GIT_DIR", "GIT_NAMESPACE", "GIT_CONFIG_PARAMETERS"} <= guarda, guarda
+    assert guarda <= set(gitenv.FUGAS), sorted(guarda - set(gitenv.FUGAS))
