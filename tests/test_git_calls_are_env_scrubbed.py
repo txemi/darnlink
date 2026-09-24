@@ -29,7 +29,15 @@ def _llamadas_sin_env(fuente: str) -> list[int]:
         if not (isinstance(nodo, ast.Call) and getattr(nodo.func, "attr", "") in ("run", "Popen")):
             continue
         trozo = ast.get_source_segment(fuente, nodo) or ""
-        if ('"git"' in trozo or "'git'" in trozo or '["git' in trozo) and "env=" not in trozo:
+        if "env=" in trozo:
+            continue
+        if '"git"' in trozo or "'git'" in trozo or '["git' in trozo:
+            fuera.append(nodo.lineno)
+        elif nodo.args and isinstance(nodo.args[0], ast.Name):
+            # Blind spot found in review: the command held in a variable (`cmd = ["git", …];
+            # run(cmd)`) is invisible to a textual match, so a future call site could reintroduce
+            # exactly what this file removes. Unverifiable is not the same as clean: it is flagged
+            # too, and the way out is to pass env= or to write the list inline.
             fuera.append(nodo.lineno)
     return fuera
 
@@ -44,8 +52,9 @@ def test_no_git_call_in_the_suite_runs_with_the_inherited_environment():
             culpables[p.name] = lineas
     assert not culpables, (
         "these git calls inherit the environment, so under a hook (or any shell with GIT_DIR set) "
-        "they act on the REAL repository: " + str(culpables) +
-        ". Pass env=GIT_ENV (tests/gitenv.py).")
+        "they act on the REAL repository, or hold the command in a variable and cannot be "
+        "checked from here: " + str(culpables) +
+        ". Pass env=GIT_ENV (tests/gitenv.py), or write the command inline.")
 
 
 def test_the_check_itself_would_catch_a_new_offender():
@@ -55,6 +64,11 @@ def test_the_check_itself_would_catch_a_new_offender():
     limpio = 'import subprocess\nsubprocess.run(["git", "init", "-q", "x"], check=True, env={})\n'
     assert _llamadas_sin_env(sucio) == [2]
     assert _llamadas_sin_env(limpio) == []
+    # The blind spot review measured: the command in a variable is now flagged, not passed over.
+    variable = 'import subprocess\ncmd = ["git", "status"]\nsubprocess.run(cmd)\n'
+    variable_ok = 'import subprocess\ncmd = ["git", "status"]\nsubprocess.run(cmd, env={})\n'
+    assert _llamadas_sin_env(variable) == [3]
+    assert _llamadas_sin_env(variable_ok) == []
 
 
 def test_the_list_covers_everything_the_real_guard_unsets():

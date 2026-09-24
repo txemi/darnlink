@@ -6,8 +6,14 @@ suite, and `test_hook_env_does_not_leak_into_the_suite.py` pins that guard — b
 ONE surface. `uv run pytest` straight from a shell that has those variables (a hook of ANOTHER
 repository, `.github/workflows/ci.yml`) never passes through it, and then:
 
-    GIT_DIR set, no GIT_WORK_TREE, cwd inside a worktree
+    GIT_DIR = the WORKTREE's git-dir (<clone>/.git/worktrees/<name>, which is exactly what a hook
+    running there exports), no GIT_WORK_TREE
     `git init <tmp>` -> writes `core.bare = true` into the SHARED clone's config
+
+The git-dir has to be the WORKTREE's, and that is the half a reviewer's first attempt missed: with
+GIT_DIR pointing at the main `<clone>/.git` nothing happens. The mechanism explains why the damage
+lands on the clone and not on the temp directory: with GIT_DIR set, `git init <path>` IGNORES the
+path and REINITIALISES the git-dir ("Reinitialized existing Git repository in …/worktrees/wt/").
 
 which leaves every worktree of that clone unusable ("this operation must be run in a work tree").
 Measured on throwaway repositories: `false` before, `true` after. Cleaning the environment at each
@@ -38,8 +44,9 @@ def _del_guardia(script: Path) -> tuple:
 
 
 CHECK_SH = Path(__file__).resolve().parents[1] / "tools" / "check.sh"
-FUGAS = tuple(dict.fromkeys(_del_guardia(CHECK_SH) + _EXTRA))
-if not _del_guardia(CHECK_SH):      # el `unset` cambió de forma: no se adivina, se avisa
+_GUARDIA = _del_guardia(CHECK_SH)
+FUGAS = tuple(dict.fromkeys(_GUARDIA + _EXTRA))
+if not _GUARDIA:                    # el `unset` cambió de forma: no se adivina, se avisa
     raise RuntimeError(
         "tests/gitenv.py could not read the `unset` line of tools/check.sh. Do NOT fall back to a "
         "hand-written list: that is exactly the drift this reader exists to prevent. Fix the regex "
