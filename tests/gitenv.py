@@ -37,10 +37,26 @@ _EXTRA = ("GIT_ALTERNATE_OBJECT_DIRECTORIES",)
 
 
 def _del_guardia(script: Path) -> tuple:
-    """The names `tools/check.sh` unsets, read from the script itself."""
-    texto = script.read_text(encoding="utf-8")
-    m = re.search(r"^unset\s+((?:[A-Z_]+\s*\\?\s*)+)$", texto, re.M)
-    return tuple(m.group(1).replace("\\", " ").split()) if m else ()
+    """The names `tools/check.sh` unsets, read from the script itself.
+
+    It takes the `unset` statement that MENTIONS `GIT_DIR`, not the first one in the file, and it
+    follows backslash continuations. Review seeded both ways of fooling a first-match reader: an
+    unrelated `unset LC_ALL` earlier in the script made the list come out as `('LC_ALL',)` — not
+    empty, so the RuntimeError below never fired and nothing was scrubbed; and splitting the git
+    names across two `unset` statements silently dropped the second, which is exactly how the
+    hand-kept list drifted the first time."""
+    lineas = script.read_text(encoding="utf-8").splitlines()
+    i = next((n for n, l in enumerate(lineas)
+              if l.startswith("unset ") and "GIT_DIR" in l), None)
+    if i is None:
+        return ()
+    bloque = [lineas[i]]
+    while bloque[-1].rstrip().endswith("\\") and i + len(bloque) < len(lineas):
+        bloque.append(lineas[i + len(bloque)])
+    nombres = " ".join(l.rstrip("\\").strip() for l in bloque).removeprefix("unset ").split()
+    # A git scrub that does not name GIT_DIR does not exist: if the block read lacks it, something
+    # else was read, and no list is better than a short one.
+    return tuple(nombres) if "GIT_DIR" in nombres else ()
 
 
 CHECK_SH = Path(__file__).resolve().parents[1] / "tools" / "check.sh"

@@ -40,7 +40,10 @@ def repo(tmp_path):
 def run(repo, tmp_path, patterns, **env):
     deny = tmp_path / "deny.txt"
     deny.write_bytes(patterns)
-    full = dict(os.environ, DENYLIST_FILE=str(deny), BASELINE_FILE=str(tmp_path / "no-baseline"), **env)
+    # GIT_ENV, not os.environ: the script shells out to `git ls-files`/`rev-parse`/`log`, so with
+    # GIT_DIR inherited it judges ANOTHER repository and the gate comes out clean without having
+    # looked at the test's one (measured in review: rc=0 where 1 is expected, rc=2 in another case).
+    full = dict(_GIT_ENV, DENYLIST_FILE=str(deny), BASELINE_FILE=str(tmp_path / "no-baseline"), **env)
     done = subprocess.run(["bash", str(repo / "tools" / "privacy_gate.sh")], env=full,
                           capture_output=True, text=True)
     return done.returncode, done.stdout + done.stderr

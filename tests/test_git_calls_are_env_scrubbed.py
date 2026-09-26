@@ -22,22 +22,76 @@ TESTS = Path(__file__).resolve().parent
 EXENTOS = {"test_hook_env_does_not_leak_into_the_suite.py"}
 
 
+#: The process launchers worth looking at. `run`/`Popen` are not the only ones: review seeded
+#: `subprocess.call`, `check_call`, `check_output`, `from subprocess import run` (where `func` is an
+#: `ast.Name`, not an attribute) and `os.system`, and all five slipped through.
+_LANZADORES = ("run", "Popen", "call", "check_call", "check_output")
+
+
+def _alias(arbol: ast.AST) -> tuple[set, set, set]:
+    """What `subprocess` and `os` are called here, and what was imported FROM subprocess.
+
+    Without this the rule flagged any `run(something)`: this suite has local helpers named `run`
+    (test_privacy_gate, test_recipe_gate) and they came out as 13 false culprits. A ratchet that
+    shouts where there is nothing gets switched off, so scoping it is part of the fix."""
+    sp, oss, desde_sp = set(), set(), set()
+    for n in ast.walk(arbol):
+        if isinstance(n, ast.Import):
+            for a in n.names:
+                (sp if a.name == "subprocess" else oss if a.name == "os" else set()).add(a.asname or a.name)
+        elif isinstance(n, ast.ImportFrom) and n.module in ("subprocess", "os"):
+            for a in n.names:
+                desde_sp.add(a.asname or a.name)
+    return sp, oss, desde_sp
+
+
+def _nombre_del_lanzador(nodo: ast.Call, sp: set, oss: set, desde_sp: set) -> str:
+    """The launcher's name IF the call resolves to subprocess/os; otherwise an empty string."""
+    f = nodo.func
+    if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name):
+        if f.value.id in sp or f.value.id in oss:
+            return f.attr
+        return ""
+    if isinstance(f, ast.Name) and f.id in desde_sp:
+        return f.id
+    return ""
+
+
+def _menciona_git(nodo: ast.Call) -> bool:
+    """A literal `git` as the list's first element, or at the start of the string."""
+    if not nodo.args:
+        return False
+    a = nodo.args[0]
+    if isinstance(a, ast.List) and a.elts and isinstance(a.elts[0], ast.Constant):
+        return str(a.elts[0].value) == "git"
+    if isinstance(a, ast.Constant) and isinstance(a.value, str):
+        return a.value == "git" or a.value.startswith("git ")
+    return False
+
+
 def _llamadas_sin_env(fuente: str) -> list[int]:
     arbol = ast.parse(fuente)
+    sp, oss, desde_sp = _alias(arbol)
     fuera = []
     for nodo in ast.walk(arbol):
-        if not (isinstance(nodo, ast.Call) and getattr(nodo.func, "attr", "") in ("run", "Popen")):
+        if not isinstance(nodo, ast.Call):
             continue
-        trozo = ast.get_source_segment(fuente, nodo) or ""
-        if "env=" in trozo:
+        nombre = _nombre_del_lanzador(nodo, sp, oss, desde_sp)
+        if nombre == "system":                       # os.system takes no env: there is no clean way out
+            if _menciona_git(nodo):
+                fuera.append(nodo.lineno)
             continue
-        if '"git"' in trozo or "'git'" in trozo or '["git' in trozo:
+        if nombre not in _LANZADORES:
+            continue
+        # `env=` MUST be an argument of THIS call. Matching it as a substring of the source read a
+        # nested one as clean: `run(["git",…], cwd=helper(), text="env=fake")` passed.
+        if any(k.arg == "env" for k in nodo.keywords):
+            continue
+        if _menciona_git(nodo):
             fuera.append(nodo.lineno)
         elif nodo.args and isinstance(nodo.args[0], ast.Name):
-            # Blind spot found in review: the command held in a variable (`cmd = ["git", …];
-            # run(cmd)`) is invisible to a textual match, so a future call site could reintroduce
-            # exactly what this file removes. Unverifiable is not the same as clean: it is flagged
-            # too, and the way out is to pass env= or to write the list inline.
+            # A command held in a variable cannot be read from here: unverifiable is not the same
+            # as clean. The way out is to pass `env=` or write the list inline.
             fuera.append(nodo.lineno)
     return fuera
 
@@ -69,6 +123,19 @@ def test_the_check_itself_would_catch_a_new_offender():
     variable_ok = 'import subprocess\ncmd = ["git", "status"]\nsubprocess.run(cmd, env={})\n'
     assert _llamadas_sin_env(variable) == [3]
     assert _llamadas_sin_env(variable_ok) == []
+    # The four shapes review seeded that used to pass, plus the nested `env=`.
+    otras = {
+        'import subprocess\nsubprocess.check_output(["git", "log"])\n': [2],
+        'import subprocess\nsubprocess.call(["git", "log"])\n': [2],
+        'from subprocess import run\nrun(["git", "log"])\n': [2],
+        'import os\nos.system("git init x")\n': [2],
+        'import subprocess\nsubprocess.run(["git","status"], text="env=falso")\n': [2],
+        'import subprocess as sp\nsp.run(["git", "log"])\n': [2],
+        # And what it must NOT flag: a local helper that happens to be called `run`.
+        'def run(cfg):\n    return cfg\nrun({"a": 1})\n': [],
+    }
+    for fuente, esperado in otras.items():
+        assert _llamadas_sin_env(fuente) == esperado, fuente
 
 
 def test_the_list_covers_everything_the_real_guard_unsets():

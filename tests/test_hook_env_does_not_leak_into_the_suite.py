@@ -23,6 +23,8 @@ from pathlib import Path
 
 import pytest
 
+from gitenv import GIT_ENV
+
 # ⚠️ The platform test comes FIRST and `shutil.which` is only a fallback: on a GitHub windows-latest
 # runner `bash` IS on PATH -- it is the WSL launcher -- so `which` finds it and then every invocation
 # exits 1 with "Windows Subsystem for Linux has no installed distributions", in UTF-16. A
@@ -60,12 +62,27 @@ def _guard_line() -> str:
     return " ".join(l.rstrip("\\").strip() for l in out)
 
 
+def _throwaway_git_dir(tmp_path: Path) -> str:
+    """A DECOY git-dir for the probe, and it is the difference between measuring and breaking.
+
+    These two tests pointed `GIT_DIR` at THIS worktree's git-dir. With `GIT_DIR` set, `git init
+    <path>` IGNORES the path and REINITIALISES the git-dir it names, so every `pytest` run from a
+    worktree left `core.bare = true` in the SHARED clone and broke all of its worktrees. Measured:
+    it was the cause of the breakage this fleet had been repairing by hand. A throwaway repo proves
+    the same thing -- that a child git obeys `GIT_DIR` -- without touching anything real."""
+    decoy = tmp_path / "decoy"
+    subprocess.run(["git", "init", "-q", str(decoy)], check=True, env=GIT_ENV)
+    r = subprocess.run(["git", "rev-parse", "--absolute-git-dir"], cwd=decoy,
+                       capture_output=True, text=True, check=True, env=GIT_ENV)
+    return r.stdout.strip()
+
+
 def _where_does_a_child_git_point(tmp_path: Path, env_extra: dict, prelude: str = "") -> str:
     """Build a repo in a temp dir and ask the child git which repo it is actually talking to."""
     target = tmp_path / "elsewhere"
     script = f'{prelude}\ngit init -q "{target}"\ngit -C "{target}" rev-parse --absolute-git-dir\n'
     r = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
-                       env={**os.environ, **env_extra})
+                       env={**GIT_ENV, **env_extra})
     return r.stdout.strip()
 
 
@@ -75,8 +92,7 @@ def test_the_leak_is_REAL_hooks_redirect_a_child_git_at_this_repo(tmp_path):
     file asserts nothing. My first attempt at this control FAILED -- I had guessed GIT_INDEX_FILE
     alone and could not reproduce the damage, so the fix was withheld until the variable was pinned.
     Keeping the control is what turned a plausible story into a measured one."""
-    here = subprocess.run(["git", "rev-parse", "--absolute-git-dir"], cwd=CHECK_SH.parent,
-                          capture_output=True, text=True, check=True).stdout.strip()
+    here = _throwaway_git_dir(tmp_path)
     got = _where_does_a_child_git_point(tmp_path, {"GIT_DIR": here})
     assert got == here, (
         "expected GIT_DIR to hijack a child git; if this no longer holds, git changed its behaviour "
@@ -86,8 +102,7 @@ def test_the_leak_is_REAL_hooks_redirect_a_child_git_at_this_repo(tmp_path):
 @requires_bash
 def test_the_guard_in_check_sh_stops_it(tmp_path):
     """Treatment: the SAME hijack, behind the exact `unset` line check.sh ships."""
-    here = subprocess.run(["git", "rev-parse", "--absolute-git-dir"], cwd=CHECK_SH.parent,
-                          capture_output=True, text=True, check=True).stdout.strip()
+    here = _throwaway_git_dir(tmp_path)
     got = _where_does_a_child_git_point(tmp_path, {"GIT_DIR": here}, prelude=_guard_line())
     assert got != here, "the guard did not stop the redirect"
     assert got.startswith(str(tmp_path)), f"child git landed somewhere unexpected: {got}"
