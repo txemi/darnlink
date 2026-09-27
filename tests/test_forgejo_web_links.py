@@ -28,8 +28,7 @@ FILE = f"{TS}/acme/handbook/src/branch/main/docs/a.md"
 FILE_VIA_LAN = f"{LAN}/acme/handbook/src/branch/main/docs/a.md"
 GH = "https://github.com/acme/handbook/blob/main/docs/a.md"
 
-_GIT_ENV = {k: v for k, v in os.environ.items()
-            if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR")}
+from gitenv import GIT_ENV as _GIT_ENV
 
 
 @pytest.fixture(autouse=True)

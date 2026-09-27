@@ -13,6 +13,8 @@ from pathlib import Path
 
 import pytest
 
+from gitenv import GIT_ENV as _GIT_ENV
+
 from darnlink.cli import UNVERIFIABLE_PREVIEW, _run_web_check_cli, main
 from darnlink.weblinks import (GithubUrl, check_web_links_online, find_web_links,
                                parse_github_url)
@@ -532,8 +534,8 @@ def _git_init(tmp_path):
     enough. `git ls-files` is what tells a file that will reach the default branch from one that
     never will (a gitignored build artefact looks identical to `.exists()`)."""
     import subprocess
-    subprocess.run(["git", "-C", str(tmp_path), "init", "-q"], check=True)
-    subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "init", "-q"], check=True, env=_GIT_ENV)
+    subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True, env=_GIT_ENV)
 
 
 def test_404_on_OWN_repo_with_the_path_present_locally_is_pending_not_broken(tmp_path):

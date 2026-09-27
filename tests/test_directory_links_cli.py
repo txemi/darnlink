@@ -10,6 +10,8 @@ each directory link, the two paths repair compares, so a CI log is enough to dia
 """
 import json
 import subprocess
+
+from gitenv import GIT_ENV as _GIT_ENV
 import sys
 from pathlib import Path
 
@@ -37,8 +39,8 @@ def _tree(root: Path) -> None:
        f"---\nuuid: {TOP_UUID}\n---\n# Guide\n\n"
        f"- [topic/](topic/) <!-- uuid: {DIR_UUID} -->\n"
        f"- [other](../other/) <!-- uuid: {OTHER_UUID} -->\n")
-    subprocess.run(["git", "init", "-q", str(root)], check=True)
-    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+    subprocess.run(["git", "init", "-q", str(root)], check=True, env=_GIT_ENV)
+    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True, env=_GIT_ENV)
 
 
 def _diagnose(root: Path) -> str:
