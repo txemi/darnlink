@@ -4,6 +4,17 @@ All notable changes to darnlink are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- The `dangling` axis no longer reports a link whose target a **sparse checkout** left out of the
+  worktree. Such a path is still in the index (flagged skip-worktree) and in every full clone, so
+  the link is not broken; reporting it made a light worktree look like a tree full of dead links,
+  and the only ways out were to drop the sparse checkout or switch the axis off. Only skip-worktree
+  entries are forgiven: a target that is absent and untracked, or tracked but deleted from a full
+  checkout, is still dangling. Without git, outside a repository, or if git fails, nothing changes.
+
 ## [0.27.0] — 2026-09-23
 
 ### Fixed

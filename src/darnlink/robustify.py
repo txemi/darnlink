@@ -101,13 +101,89 @@ def _dangling_target(href: str, linking_file: Path) -> Path | None:
     if encoded and not is_local_relative(decoded):
         return None
     t = resolve_href(href, linking_file)  # drops the fragment
-    if t.exists():
+    if t.exists() or _sparse_absent(t):
         return None
     if encoded:
         d = resolve_href(decoded, linking_file)
         # Report the DECODED path: it is the one the link denotes, and the one to look for on disk.
-        return None if d.exists() else d
+        return None if (d.exists() or _sparse_absent(d)) else d
     return t
+
+
+def _sparse_absent(t: Path) -> bool:
+    """True when `t` is in the repository but a sparse checkout left it out of this worktree.
+
+    A sparse checkout keeps a path in the index (flagged skip-worktree) and never writes it to disk.
+    The link still points at something the repository holds: every full clone, and CI, has the file.
+    Reporting it as dangling would turn "this worktree is light" into "this tree has broken links",
+    and the only ways out would be to drop the sparse checkout or to switch the axis off.
+
+    Only skip-worktree entries are forgiven. A path that is absent AND untracked is still dangling,
+    and so is a tracked file deleted from a full checkout. On any doubt (no git, not a repository,
+    git fails) the answer is False, so this can only remove a finding a full checkout would not raise.
+    """
+    root = _git_root(t)
+    if root is None:
+        return False
+    return resolved(t) in _skip_worktree_paths(root)
+
+
+def _git_root(t: Path) -> Optional[Path]:
+    """The worktree root above `t`, asked from the nearest ancestor that exists on disk."""
+    p = t
+    while not p.exists():
+        if p.parent == p:
+            return None
+        p = p.parent
+    if p.is_file():
+        p = p.parent
+    out = _git(p, "rev-parse", "--show-toplevel")
+    return Path(out.strip()) if out else None
+
+
+_SKIP_CACHE: Dict[Path, frozenset] = {}
+
+
+def _skip_worktree_paths(root: Path) -> frozenset:
+    """Every skip-worktree file under `root`, plus each of its parent directories, resolved.
+
+    Directories are included because a link may name a folder whose contents were all left out.
+    Read once per root: `git ls-files -t` lists the whole index, and a tree with many candidates
+    would otherwise pay for it once per link.
+    """
+    key = resolved(root)
+    if key in _SKIP_CACHE:
+        return _SKIP_CACHE[key]
+    paths: Set[Path] = set()
+    # Cheap gate first: without a sparse checkout there is nothing to find, and most trees are full.
+    if (_git(root, "config", "--bool", "core.sparseCheckout") or "").strip() == "true":
+        for entry in (_git(root, "ls-files", "-t", "-z") or "").split("\0"):
+            if not entry.startswith("S "):
+                continue
+            p = resolved(key / entry[2:])
+            paths.add(p)
+            for parent in p.parents:
+                if parent == key:
+                    break
+                paths.add(parent)
+    _SKIP_CACHE[key] = frozenset(paths)
+    return _SKIP_CACHE[key]
+
+
+def _git(cwd: Path, *args: str) -> Optional[str]:
+    """Run git in `cwd`; None on any failure, which every caller reads as "not sparse-absent"."""
+    import os
+    import subprocess
+    # A git hook exports GIT_DIR/GIT_INDEX_FILE. Inherited, they would aim this call at the
+    # repository running the hook instead of the one that holds `cwd`.
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR")}
+    try:
+        r = subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True,
+                           timeout=30, env=env)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout if r.returncode == 0 else None
 
 
 def _absolute_local_target(href: str) -> str | None:
