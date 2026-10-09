@@ -466,3 +466,49 @@ def test_the_nesting_bound_is_two_levels_and_that_is_pinned(tmp_path):
     _w(tmp_path / "doc.md", f"---\nuuid: {U_A}\n---\n\n[r](a(b(c)d).md)\n")
 
     assert _dangling(plan_robustify(tmp_path)) == [], "the bound dropped below two levels"
+
+
+# --- A sparse checkout is not a broken link --------------------------------------------------------
+# A path left out by a sparse checkout is still in the index (skip-worktree) and in every full clone.
+# Only those are forgiven: absent-and-untracked, or tracked-but-deleted, stay dangling.
+
+import subprocess  # noqa: E402
+
+from gitenv import GIT_ENV  # noqa: E402
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, env=GIT_ENV)
+
+
+def _sparse_repo(tmp_path: Path) -> Path:
+    """A repository whose `big/` folder is tracked but left out by a sparse checkout."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "t@example.invalid")
+    _git(repo, "config", "user.name", "t")
+    _w(repo / "doc.md", f"---\nuuid: {U_A}\n---\n\n[pdf](big/report.pdf)\n[dir](big/)\n"
+                        "[gone](never.pdf)\n")
+    _w(repo / "big" / "report.pdf", "binary\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "init")
+    _git(repo, "sparse-checkout", "set", "--no-cone", "/*", "!/big/**")
+    assert not (repo / "big" / "report.pdf").exists()
+    return repo
+
+
+def test_a_target_left_out_by_sparse_checkout_is_not_dangling(tmp_path):
+    """The file and the folder are in the repository; only the untracked `never.pdf` is dangling."""
+    repo = _sparse_repo(tmp_path)
+    found = _dangling(plan_robustify(repo))
+    assert [x.detail.split(": ")[1] for x in found] == ["never.pdf"]
+
+
+def test_a_tracked_file_deleted_from_a_full_checkout_is_still_dangling(tmp_path):
+    """Being tracked is not enough: only the skip-worktree flag says the absence is deliberate."""
+    repo = _sparse_repo(tmp_path)
+    _git(repo, "sparse-checkout", "disable")
+    (repo / "big" / "report.pdf").unlink()
+    found = sorted(x.detail.split(": ")[1] for x in _dangling(plan_robustify(repo)))
+    assert found == ["big/report.pdf", "never.pdf"]
