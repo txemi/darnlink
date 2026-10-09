@@ -6,6 +6,8 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.28.0] — 2026-10-09
+
 ### Fixed
 
 - The `dangling` axis no longer reports a link whose target a **sparse checkout** left out of the
@@ -14,6 +16,14 @@ All notable changes to darnlink are documented here. The format is based on
   and the only ways out were to drop the sparse checkout or switch the axis off. Only skip-worktree
   entries are forgiven: a target that is absent and untracked, or tracked but deleted from a full
   checkout, is still dangling. Without git, outside a repository, or if git fails, nothing changes.
+
+### Repository
+
+- `repo_policy.yaml` is now generated from the repository sheet and validated against
+  `repo_policy.schema.json`; as a public repository, darnlink no longer publishes a `ci` entry (#8).
+- The test suite no longer corrupts the clone it runs from: every `git` call it spawns drops the
+  variables a hook exports (`GIT_DIR`, `GIT_INDEX_FILE`…), read from the guard in `tools/check.sh`
+  instead of a hand-kept list, and a test checks that no call site forgets it (#6).
 
 ## [0.27.0] — 2026-09-23
 
@@ -1226,7 +1236,8 @@ First public release.
 - Ships a [pre-commit](https://pre-commit.com/) hook (`darnlink`, `darnlink-repair`).
 - Format specification: [FORMAT.md](FORMAT.md) <!-- uuid: 9052d864-2a45-4ed4-8725-d8a394e7a7ef -->.
 
-[Unreleased]: https://github.com/txemi/darnlink/compare/v0.27.0...HEAD
+[Unreleased]: https://github.com/txemi/darnlink/compare/v0.28.0...HEAD
+[0.28.0]: https://github.com/txemi/darnlink/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/txemi/darnlink/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/txemi/darnlink/compare/v0.24.0...v0.26.0
 [0.24.0]: https://github.com/txemi/darnlink/compare/v0.23.0...v0.24.0
