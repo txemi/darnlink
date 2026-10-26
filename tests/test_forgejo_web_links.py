@@ -336,6 +336,29 @@ def test_a_real_404_with_a_slashed_reading_still_reaches_the_repo_probe(monkeypa
     assert wl.default_fetcher(gu, "fj", attempts=1, sleep=lambda _s: None) == (-2, None)
 
 
+def test_a_flaky_answer_on_the_right_reading_is_retried(monkeypatch):
+    answers = iter([(502, None), (-1, None), _with_uuid()])
+    tried = []
+
+    def once(gu, token, base=None):
+        tried.append(gu.ref)
+        return next(answers) if gu.ref == "reports/data" else (404, None)
+
+    monkeypatch.setattr(wl, "_fetch_once", once)
+    gu = parse_github_url(SLASHED, SERVER)
+    assert wl.default_fetcher(gu, "fj", attempts=3, sleep=lambda _s: None) == _with_uuid()
+    assert tried == ["reports"] * 3 + ["reports/data"] * 3
+    assert TS not in wl._forgejo_unreachable    # the name answered: one blip does not bury it
+
+
+def test_a_one_segment_path_has_no_other_reading(monkeypatch):
+    tried = []
+    monkeypatch.setattr(wl, "_fetch_once", lambda gu, t, base=None: tried.append(gu.ref) or (404, None))
+    gu = parse_github_url(f"{TS}/acme/handbook/raw/branch/main/a.md", SERVER)
+    assert wl.default_fetcher(gu, None, attempts=1, sleep=lambda _s: None) == (404, None)
+    assert tried == ["main"]
+
+
 def test_a_non_404_on_a_longer_reading_is_that_readings_answer(monkeypatch):
     once, _ = _only("reports/data", "out/index.html", answer=(403, None))
     monkeypatch.setattr(wl, "_fetch_once", once)

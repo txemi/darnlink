@@ -591,8 +591,8 @@ _MAX_REF_SLASHES = 4
 
 def _longer_refs(gu: GithubUrl):
     """The other readings of a `branch/` or `tag/` link whose ref contains a slash. The URL cannot
-    say where the ref ends — `raw/branch/informes/datos/x.html` is ref `informes` + path
-    `datos/x.html` OR ref `informes/datos` + path `x.html`; Forgejo resolves it by looking the name
+    say where the ref ends — `raw/branch/reports/data/x.html` is ref `reports` + path
+    `data/x.html` OR ref `reports/data` + path `x.html`; Forgejo resolves it by looking the name
     up, and the parse (`[^/]+`) only ever takes the first segment. A `commit/` ref is a SHA and never
     holds a slash, so it has no other reading."""
     if gu.ref_kind not in ("branch", "tag"):
@@ -602,13 +602,28 @@ def _longer_refs(gu: GithubUrl):
         yield replace(gu, ref=f"{gu.ref}/{'/'.join(parts[:i])}", path="/".join(parts[i:]))
 
 
+def _retry_unless_404(call: Callable[[], Tuple[int, Optional[str]]], attempts: int,
+                      sleep) -> Tuple[int, Optional[str]]:
+    """`_with_retries` for the extra readings of `_longer_refs`: a 404 there is the EXPECTED answer
+    (all but one reading of a slashed ref 404), so it is final at once — retrying it would sleep
+    through every broken link. Every other transient status is retried as usual: a 502 on the one
+    reading that exists must not turn a good link into `web_unverifiable`, nor a real break into it."""
+    status, text = call()
+    for i in range(1, attempts):
+        if status == 404 or status not in _TRANSIENT_STATUSES:
+            break
+        sleep(min(0.5 * (2 ** (i - 1)), 4.0))
+        status, text = call()
+    return status, text
+
+
 def _fetch_forgejo(gu: GithubUrl, token: Optional[str], attempts: int,
                    sleep) -> Tuple[int, Optional[str]]:
     """Try the server's names in declared order; the first that ANSWERS decides. A name that only
     yields network errors is skipped — and remembered as unreachable for the rest of the run.
     A 404 on a reachable name is never retried through another name: it is the server's answer,
     and the other names are the same server. It IS retried, on that same name, with the ref
-    lengthened one segment at a time (`_longer_refs`): a branch named `informes/datos` otherwise
+    lengthened one segment at a time (`_longer_refs`): a branch named `reports/data` otherwise
     reads as a false `web_not_found` on every file it holds."""
     assert gu.forge is not None
     for base in gu.forge.bases:
@@ -620,9 +635,8 @@ def _fetch_forgejo(gu: GithubUrl, token: Optional[str], attempts: int,
             continue
         if status == 404:
             for alt in _longer_refs(gu):
-                # One try each, no retries: 404 counts as transient in `_with_retries`, and these
-                # readings are expected to 404 — retrying them would sleep through every broken link.
-                alt_status, alt_text = _fetch_once(alt, token, base)
+                alt_status, alt_text = _retry_unless_404(
+                    lambda alt=alt: _fetch_once(alt, token, base), attempts, sleep)
                 if alt_status != 404:
                     return (alt_status, alt_text)
         if status == 404 and token and not _forgejo_repo_accessible(gu.forge, base, gu.owner, gu.repo, token):

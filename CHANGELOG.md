@@ -12,8 +12,9 @@ All notable changes to darnlink are documented here. The format is based on
   whose **branch or tag name contains a slash** (`…/raw/branch/reports/data/out/index.html`). The
   URL alone cannot say where the ref ends, and the parse always took the first segment, so every
   file on such a branch read as missing although Forgejo served it. On a 404, the same server name
-  is now asked again with the ref lengthened one path segment at a time (up to four), one request
-  each and without retries; the first reading that is not a 404 is the answer. `commit/` links are
+  is now asked again with the ref lengthened one path segment at a time (up to four). A 404 on
+  one of those readings is final at once (most of them are expected to 404), while any other
+  transient status is retried as usual; the first reading that is not a 404 is the answer. `commit/` links are
   untouched (a SHA holds no slash), and a link that 404s under every reading is still broken.
 
 ## [0.28.0] — 2026-10-09
