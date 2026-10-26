@@ -25,7 +25,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path, PurePosixPath
 from urllib.parse import unquote
@@ -584,12 +584,32 @@ def _with_retries(call: Callable[[], Tuple[int, Optional[str]]], attempts: int,
     return status, text
 
 
+#: How many path segments a slashed branch or tag name may borrow (`release/2026/q4` borrows two).
+#: A bound, because each extra split costs one request on a link that is probably just broken.
+_MAX_REF_SLASHES = 4
+
+
+def _longer_refs(gu: GithubUrl):
+    """The other readings of a `branch/` or `tag/` link whose ref contains a slash. The URL cannot
+    say where the ref ends — `raw/branch/informes/datos/x.html` is ref `informes` + path
+    `datos/x.html` OR ref `informes/datos` + path `x.html`; Forgejo resolves it by looking the name
+    up, and the parse (`[^/]+`) only ever takes the first segment. A `commit/` ref is a SHA and never
+    holds a slash, so it has no other reading."""
+    if gu.ref_kind not in ("branch", "tag"):
+        return
+    parts = gu.path.split("/")
+    for i in range(1, min(len(parts), _MAX_REF_SLASHES + 1)):
+        yield replace(gu, ref=f"{gu.ref}/{'/'.join(parts[:i])}", path="/".join(parts[i:]))
+
+
 def _fetch_forgejo(gu: GithubUrl, token: Optional[str], attempts: int,
                    sleep) -> Tuple[int, Optional[str]]:
     """Try the server's names in declared order; the first that ANSWERS decides. A name that only
     yields network errors is skipped — and remembered as unreachable for the rest of the run.
     A 404 on a reachable name is never retried through another name: it is the server's answer,
-    and the other names are the same server."""
+    and the other names are the same server. It IS retried, on that same name, with the ref
+    lengthened one segment at a time (`_longer_refs`): a branch named `informes/datos` otherwise
+    reads as a false `web_not_found` on every file it holds."""
     assert gu.forge is not None
     for base in gu.forge.bases:
         if base in _forgejo_unreachable:
@@ -598,6 +618,13 @@ def _fetch_forgejo(gu: GithubUrl, token: Optional[str], attempts: int,
         if status == -1:
             _forgejo_unreachable.add(base)
             continue
+        if status == 404:
+            for alt in _longer_refs(gu):
+                # One try each, no retries: 404 counts as transient in `_with_retries`, and these
+                # readings are expected to 404 — retrying them would sleep through every broken link.
+                alt_status, alt_text = _fetch_once(alt, token, base)
+                if alt_status != 404:
+                    return (alt_status, alt_text)
         if status == 404 and token and not _forgejo_repo_accessible(gu.forge, base, gu.owner, gu.repo, token):
             return (-2, None)
         return (status, text)
