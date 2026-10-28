@@ -6,6 +6,16 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- `darnlink yaml-refs` (**experimental**): checks typed `{uuid, link}` references in YAML data files
+  and, with `--write`, repairs the ones whose target moved. It only looks at the positions the
+  file's own JSON Schema (its `yaml-language-server` modeline) declares as the reference type: a
+  `$ref` to a definition named `DarnlinkRef`, or to the published `ref.schema.json` (spec 019). A
+  mapping that merely has `uuid` and `link` keys is never touched. Targets are the frontmatter `uuid`
+  of every `.md` file and the top-level `uuid` of every YAML file. Exit code 0 when every reference
+  is correct, 2 when one is broken. `--json` for machines.
+
 ### Removed
 
 - `repo_policy.yaml`, `repo_policy.schema.json` and `tools/repo_policy_check.py`, with their CI

@@ -802,6 +802,9 @@ def _main(argv: Optional[List[str]] = None) -> int:
         return _run_check_cli(raw[1:])
     if raw and raw[0] == "web-check":  # feature 013 (EXPERIMENTAL): cross-repo web-link resolver
         return _run_web_check_cli(raw[1:])
+    if raw and raw[0] == "yaml-refs":  # EXPERIMENTAL: typed {uuid, link} references in YAML data files
+        from .yaml_refs import run_cli as _run_yaml_refs_cli
+        return _run_yaml_refs_cli(raw[1:])
 
     parser = argparse.ArgumentParser(
         prog="darnlink",
