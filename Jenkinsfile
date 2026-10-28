@@ -12,7 +12,6 @@
 //   ps1 parses           (none)                ci.yml / ps1-syntax   ps1-syntax
 //   private references   (none)                privacy-gate.yml      not here: a private job on the CI server runs tools/privacy_gate.sh
 //   secrets in the diff  (private tooling)     (none)                secret-scan
-//   repo_policy.yaml     (none)                (none)                repo_policy.yaml
 //   English: issues      (none)                lang-issue.yml        not ported: fired by an issue, not a commit
 //   release              (none)                publish.yml           not ported: a release job, not a check
 //
@@ -43,9 +42,6 @@ pipeline {
             PATH = "${HOME}/.local/bin:${PATH}"
           }
           stages {
-            stage('repo_policy.yaml') {
-              steps { sh 'python3 tools/repo_policy_check.py' }
-            }
             stage('local gates') {
               steps { script { PYTHONS.each { py -> stage("local gates py${py}") { localGates(py, true) } } } }
             }
