@@ -6,6 +6,12 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+### Removed
+
+- `repo_policy.yaml`, `repo_policy.schema.json` and `tools/repo_policy_check.py`, with their CI
+  stage. They were maintainer tooling, not part of the package, and no longer live in this
+  repository.
+
 ## [0.28.0] — 2026-10-09
 
 ### Fixed
