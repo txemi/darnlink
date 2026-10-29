@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional, Tuple
@@ -38,6 +39,7 @@ HEAD_BYTES = 64 * 1024
 #: A larger JSON file is not read: data that size is not a document anyone links to by hand.
 JSON_MAX_BYTES = 8 * 1024 * 1024
 KINDS = ("yaml", "json", "code")
+_LINE_END = re.compile(r"\r\n|\r|\n")
 
 
 @dataclass
@@ -82,7 +84,9 @@ def iter_data_files(root: Path, excludes: set = DEFAULT_EXCLUDES,
 def leading_comments(text: str) -> List[str]:
     """The leading lines of `text` that start with `#` (a shebang is one), without their line ends."""
     out: List[str] = []
-    for line in text.splitlines():
+    # Only \n, \r\n and \r end a line: `str.splitlines` also splits on U+2028, U+0085 and form feed, which would cut
+    # a comment line in two and lose the block without a word.
+    for line in _LINE_END.split(text):
         if not line.startswith("#"):
             break
         out.append(line)
@@ -114,10 +118,11 @@ def _code_anchor(path: Path, head: str, rel: str, found: TypedAnchors) -> None:
     if value is None:
         return   # a block without a `uuid` (other metadata) declares no anchor
     if isinstance(value, str) and CANONICAL_UUID.fullmatch(value):
-        found.anchors.setdefault(path, []).append(("", value))
+        _add(found, path, [("", value)])
     else:
-        found.findings.append(RefFinding(INVALID_ANCHOR, rel, "/uuid", "", str(value),
-                                         "an anchor must be a lowercase canonical uuid: not a link target"))
+        found.findings.append(RefFinding(INVALID_ANCHOR, rel, f"{CODE_FENCE}/uuid", "", str(value),
+                                         f"the uuid of the {CODE_FENCE} block must be a lowercase canonical uuid: "
+                                         "not a link target"))
 
 
 class _Schemas:
@@ -165,8 +170,15 @@ def _schema_anchors(doc: object, schema: dict, recognizer: TypeRecognizer, path:
         return
     good, bad, _ = file_anchors(doc, schema, recognizer, rel)
     found.findings += bad
-    if good:
-        found.anchors.setdefault(path, []).extend(good)
+    _add(found, path, good)
+
+
+def _add(found: TypedAnchors, path: Path, items: List[Tuple[str, str]]) -> None:
+    """Add anchors to a file, once each: a YAML file may declare the same uuid in a typed field and in its block."""
+    have = found.anchors.setdefault(path, [])
+    have += [item for item in items if item not in have]
+    if not have:
+        del found.anchors[path]
 
 
 def _is_local(decl: object) -> bool:
@@ -180,26 +192,31 @@ def collect(root: Path, excludes: set = DEFAULT_EXCLUDES, kinds: Tuple[str, ...]
     schemas = _Schemas()
     for path in iter_data_files(root, excludes, found.out_of_root):
         rel = path.relative_to(root).as_posix()
-        name = path.name.lower()
         try:
-            if name.endswith(".json"):
-                if "json" in kinds and path.stat().st_size <= JSON_MAX_BYTES:
-                    _json_file(path, rel, schemas, found)
-                continue
-            with path.open("rb") as fh:
-                raw = fh.read(HEAD_BYTES)
-        except OSError:
-            continue
-        if raw.startswith(b"\xef\xbb\xbf"):
-            raw = raw[3:]
-        if not raw.startswith(b"#") and not (name.endswith(YAML_SUFFIXES) and raw.startswith(b"---")):
-            continue   # no leading comment: neither a modeline nor a code block
-        head = raw.decode("utf-8", errors="replace")
-        if name.endswith(YAML_SUFFIXES) and "yaml" in kinds:
-            _yaml_file(path, rel, schemas, found)
-        if "code" in kinds:
-            _code_anchor(path, head, rel, found)
+            _one_file(path, rel, kinds, schemas, found)
+        except Exception as e:   # one hostile file (a NUL in `$schema`, JSON nested past the recursion limit) never
+            found.findings.append(RefFinding(UNREADABLE, rel, "/", "", "",   # aborts check, repair or yaml-refs
+                                             f"could not be read for anchors: {type(e).__name__}"))
     return found
+
+
+def _one_file(path: Path, rel: str, kinds: Tuple[str, ...], schemas: _Schemas, found: TypedAnchors) -> None:
+    name = path.name.lower()
+    if name.endswith(".json"):
+        if "json" in kinds and path.stat().st_size <= JSON_MAX_BYTES:
+            _json_file(path, rel, schemas, found)
+        return
+    with path.open("rb") as fh:
+        raw = fh.read(HEAD_BYTES)
+    if raw.startswith(b"\xef\xbb\xbf"):
+        raw = raw[3:]
+    if not raw.startswith(b"#") and not (name.endswith(YAML_SUFFIXES) and raw.startswith(b"---")):
+        return   # no leading comment: neither a modeline nor a code block
+    head = raw.decode("utf-8", errors="replace")
+    if name.endswith(YAML_SUFFIXES) and "yaml" in kinds:
+        _yaml_file(path, rel, schemas, found)
+    if "code" in kinds:
+        _code_anchor(path, head, rel, found)
 
 
 def _yaml_file(path: Path, rel: str, schemas: _Schemas, found: TypedAnchors) -> None:
@@ -245,12 +262,12 @@ def with_typed_anchors(index: FrontmatterIndex, anchors: Dict[Path, List[Tuple[s
                               pointers=dict(index.pointers))
     for path, items in anchors.items():
         for element, u in items:
+            if merged.by_uuid.get(u) == path and merged.pointers.get(u, "") == element:
+                continue   # the same anchor declared twice by one file (a typed field and its block): one target
             merged.typed_anchors += 1
             if u in merged.duplicates:
                 merged.duplicates[u].append(path)
             elif u in merged.by_uuid:
-                if merged.by_uuid[u] == path and merged.pointers.get(u, "") == element:
-                    continue
                 merged.duplicates[u] = [merged.by_uuid.pop(u), path]
                 merged.pointers.pop(u, None)
             else:

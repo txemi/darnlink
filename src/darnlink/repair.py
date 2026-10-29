@@ -20,7 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Tuple
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 
 from .frontmatter_index import DEFAULT_EXCLUDES, FrontmatterIndex, iter_markdown_files
 from .links import (code_spans, emit_robust_link, file_ignores_links, file_is_ignored,
@@ -38,6 +38,12 @@ class RepairResult:
     ignored: List[Path] = field(default_factory=list)  # files skipped via the ignore-file marker
     link_ignored: List[Path] = field(default_factory=list)  # sources via the ignore-links marker (006)
     suppressed: int = 0  # findings in files outside the write scope (feature 010): counted, never hidden
+
+
+def pointer_fragment(pointer: str) -> str:
+    """A JSON Pointer written as the fragment of a Markdown link: percent-encoded, so a key with a space, a
+    parenthesis or a `#` cannot end the link destination (reading compares the decoded fragment)."""
+    return quote(pointer, safe="/~-._!$&'*+,;=:@")
 
 
 def plan_repairs(
@@ -142,7 +148,7 @@ def plan_repairs(
             if current == resolved(intended):
                 if not element or frag == element or unquote(frag) == element:  # `%20` in a link is a space
                     continue  # already correct (cosmetic ./ or trailing-slash differences are fine)
-                new_href = f"{path_part}#{element}"
+                new_href = f"{path_part}#{pointer_fragment(element)}"
                 local.append(Finding(Kind.REPAIR, f, f"{link.href} -> {new_href} (the element moved)"))
                 pieces.append(content[cursor:link.start])
                 pieces.append(emit_robust_link(link.text, new_href, link.uuid, link.attrs))
@@ -169,7 +175,7 @@ def plan_repairs(
             base = relative_link(intended, f)  # path only; fragment re-appended below
             if dir_link and not base.endswith("/"):
                 base += "/"  # keep directory links visibly directories (and re-recognisable as such)
-            want = element or frag
+            want = pointer_fragment(element) if element else frag
             new_href = f"{base}#{want}" if want else base
             local.append(Finding(Kind.REPAIR, f, f"{link.href} -> {new_href}"))
             # splice the rewritten robust link in place of the old span

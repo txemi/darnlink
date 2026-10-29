@@ -175,3 +175,79 @@ def test_a_yaml_reference_to_a_json_element_and_to_a_code_file(tmp_path, capsys)
     [f] = out["findings"]
     assert (f["file"], f["kind"], f["new_link"]) == ("svc/card.yaml", "repair", "../inv/hosts.json#/hosts/0")
     assert out["stats"]["ok"] == 1
+
+
+# --- what the review of 39f1018 found -------------------------------------------------------------
+
+
+def test_a_pointer_with_a_space_is_written_encoded_and_stays_a_robust_link(tmp_path, capsys):
+    _schemas(tmp_path)
+    _w(tmp_path / "schemas" / "named.schema.json", json.dumps({"type": "object", "properties": {"hosts": {
+        "type": "object", "additionalProperties": {"type": "object", "properties": {
+            "uuid": {"$ref": "darnlink_types.schema.json#/$defs/DarnlinkAnchor"}}}}}}))
+    _w(tmp_path / "inv" / "h.yaml", "# yaml-language-server: $schema=../schemas/named.schema.json\n"
+                                    f"hosts:\n  my host (a):\n    uuid: {H1}\n")
+    readme = _readme(tmp_path, "../old.yaml", H1)
+    main([str(tmp_path), "--write"])
+    capsys.readouterr()
+    assert f"[it](../inv/h.yaml#/hosts/my%20host%20%28a%29) <!-- uuid: {H1} -->" in readme.read_text(encoding="utf-8")
+    out = _check(tmp_path, capsys)
+    assert out["exit_code"] == 0 and out["integrity"]["findings"] == []
+
+
+def test_a_hostile_json_file_is_reported_and_does_not_abort_the_run(tmp_path, capsys):
+    _w(tmp_path / "nul.json", json.dumps({"$schema": "\u0000x", "a": 1}))
+    _w(tmp_path / "deep.json", '{"$schema": "s.json", "a": ' + "[" * 200000 + "]" * 200000 + "}")
+    _tool(tmp_path)
+    found = collect(tmp_path)
+    assert found.count == 1
+    assert sorted(f.file for f in found.findings if f.kind == "unreadable-yaml") == ["deep.json", "nul.json"]
+    _readme(tmp_path, "../tools/deploy.sh", C1)
+    assert _check(tmp_path, capsys)["exit_code"] == 0
+
+
+def test_only_real_line_ends_split_the_leading_comments(tmp_path):
+    """A U+2028, U+0085 or form feed inside a comment line no longer cuts the block. YAML itself then refuses the
+    block (it reads all three as line breaks or forbids them): that is reported, never a silent loss of the anchor."""
+    for sep in ("\u2028", "\u0085", "\x0c"):
+        _w(tmp_path / "t.sh", f"#!/bin/sh\n#---\n# note: a{sep}b\n# uuid: {C1}\n#---\n")
+        found = collect(tmp_path)
+        assert found.anchors or [f.detail for f in found.findings] == ["the #--- block is not YAML"], repr(sep)
+
+
+def test_crlf_a_bom_and_trailing_spaces_on_the_fence_are_accepted(tmp_path):
+    (tmp_path / "w.py").write_bytes(f"﻿# x\r\n#---  \r\n# uuid: {C1}\r\n#---\r\nimport os\r\n".encode("utf-8"))
+    assert [(e, u) for items in collect(tmp_path).anchors.values() for e, u in items] == [("", C1)]
+
+
+def test_a_yaml_file_with_a_typed_uuid_and_the_same_block_counts_once(tmp_path, capsys):
+    _w(tmp_path / "schemas" / "one.schema.json", json.dumps({"type": "object", "properties": {
+        "uuid": {"$ref": f"{ID}#/$defs/DarnlinkAnchor"}}}))
+    _w(tmp_path / "b.yaml", f"# yaml-language-server: $schema=schemas/one.schema.json\n#---\n# uuid: {C1}\n#---\nuuid: {C1}\n")
+    assert collect(tmp_path).count == 1
+    _readme(tmp_path, "../b.yaml", C1)
+    assert _check(tmp_path, capsys)["typed_anchors"] == 1
+    assert _refs(tmp_path, capsys)["stats"]["anchors"] == 1
+
+
+def test_a_yaml_file_with_an_invalid_typed_uuid_and_block_reports_two_distinct_findings(tmp_path, capsys):
+    _w(tmp_path / "schemas" / "one.schema.json", json.dumps({"type": "object", "properties": {
+        "uuid": {"$ref": f"{ID}#/$defs/DarnlinkAnchor"}}}))
+    bad = C1.upper()
+    _w(tmp_path / "b.yaml", f"# yaml-language-server: $schema=schemas/one.schema.json\n#---\n# uuid: {bad}\n#---\nuuid: {bad}\n")
+    got = sorted(f["pointer"] for f in _refs(tmp_path, capsys)["findings"])
+    assert got == ["#---/uuid", "/uuid"]
+
+
+def test_a_symlink_out_of_the_root_is_not_a_target(tmp_path):
+    outside = tmp_path / "outside"
+    _tool(outside)
+    root = tmp_path / "root"
+    root.mkdir()
+    try:
+        (root / "linked.sh").symlink_to(outside / "tools" / "deploy.sh")
+    except OSError:
+        import pytest
+        pytest.skip("symlinks are not available here")
+    found = collect(root)
+    assert found.anchors == {} and [p.name for p in found.out_of_root] == ["linked.sh"]

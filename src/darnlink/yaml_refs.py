@@ -592,10 +592,12 @@ def _plan(root: Path, excludes: set[str]) -> Tuple[List[RefFinding], Dict[str, i
     # JSON files and code `#---` blocks are targets too (step 2). YAML was read above, with its untyped top-level `uuid`.
     from .typed_anchors import collect
     extra = collect(root, excludes, kinds=("json", "code"))
-    stats["anchors"] += extra.count
     findings += extra.findings
     for path, items in extra.anchors.items():
-        anchors.setdefault(path, []).extend(items)
+        have = anchors.setdefault(path, [])
+        added = [item for item in items if item not in have]   # a YAML file's block may repeat its typed `uuid`
+        have += added
+        stats["anchors"] += len(added)
     # Anchors first, references after: a reference may point to an anchor in a file read later.
     index = build_target_index(root, excludes, {p: d for p, d in docs.items() if p not in not_targets}, anchors)
     for path, rel, schema, recognizer in checked:
