@@ -131,3 +131,14 @@ def test_a_new_link_that_needs_quotes_gets_them(tmp_path):
     (root / "docs" / "target.md").rename(root / "docs" / "a #b.md")
     assert main(["yaml-refs", str(root), "--write"]) == 0
     assert '  link: "../docs/a #b.md"\n' in (root / "data" / "card.yaml").read_text(encoding="utf-8")
+
+
+def test_write_does_not_trade_a_flow_mapping_repair_for_an_undeclared_line(tmp_path):
+    root = _repo(tmp_path, "../docs/target.md")
+    card = root / "data" / "card.yaml"
+    card.write_text("# yaml-language-server: $schema=../schemas/card.schema.json\n"
+                    f"home: {{uuid: {U}, link: ../old/target.md}}\n"
+                    f"notes:\n  uuid: {V}\n  link: ../old/target.md\n", encoding="utf-8")
+    before = card.read_text(encoding="utf-8")
+    assert main(["yaml-refs", str(root), "--write"]) == 2
+    assert card.read_text(encoding="utf-8") == before

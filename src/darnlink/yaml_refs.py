@@ -260,9 +260,11 @@ def apply_repairs(path: Path, repairs: List[RefFinding]) -> List[RefFinding]:
         new = next(iter(news))
         mine = [f for f in repairs if f.link == old]
         pattern = re.compile(_LINK_LINE.format(old=re.escape(old)), re.MULTILINE)
-        if len(pattern.findall(text)) != len(mine):
-            # 0: not on a `link:` line of its own (a flow mapping, a multi-line scalar); more: the same text at
-            # a position that is not one of these repairs. Either way, left to the reader
+        if len(pattern.findall(text)) != len(mine) or text.count(old) != len(mine):
+            # Lines and positions are matched by COUNT, so both counts must equal the repairs: every `link:` line
+            # with this text, and every appearance of the text anywhere in the file (a flow mapping, another key,
+            # a comment). Anything else -- a repair in a flow mapping while an undeclared `link:` line has the
+            # same text, say -- is left to the reader, never guessed
             left += mine
             continue
 
