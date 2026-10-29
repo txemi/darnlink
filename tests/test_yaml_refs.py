@@ -279,3 +279,20 @@ def test_write_never_rewrites_an_undeclared_twin_of_an_escaped_link(tmp_path):
     before = card.read_text(encoding="utf-8")
     assert main(["yaml-refs", str(root), "--write"]) == 2
     assert card.read_text(encoding="utf-8") == before
+
+
+def test_a_deep_reference_is_still_found():
+    from darnlink.yaml_refs import mentions_ref_type
+    node = {"$ref": "#/$defs/DarnlinkRef"}
+    for _ in range(40):
+        node = {"properties": {"p": node}}
+    assert mentions_ref_type(node)
+    assert not mentions_ref_type({"properties": {"p": {"type": "string"}}})
+
+
+def test_pointers_resolve_escapes_and_indexes():
+    from darnlink.yaml_refs import _at
+    doc = {"a/b": [{"x~y": 1}]}
+    assert _at(doc, "/a~1b/0/x~0y") == 1
+    assert _at(doc, "") is doc
+    assert _at(doc, "/a~1b/5") is None

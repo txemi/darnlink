@@ -201,15 +201,19 @@ def _may_take_mapping(branch: object) -> bool:
     return not (isinstance(types, list) and types and set(types) <= _NOT_MAPPING_TYPES)
 
 
-def mentions_ref_type(schema: object, depth: int = 0) -> bool:
+def mentions_ref_type(schema: object) -> bool:
     """True if some `$ref` anywhere in the schema names the reference type. A schema without one declares no
-    reference, so its YAML files need not even load."""
-    if depth > MAX_DEPTH:
-        return False
-    if isinstance(schema, dict):
-        return is_ref_type(schema.get("$ref")) or any(mentions_ref_type(v, depth + 1) for v in schema.values())
-    if isinstance(schema, list):
-        return any(mentions_ref_type(v, depth + 1) for v in schema)
+    reference, so its YAML files need not even load. No depth limit: a parsed JSON file is a finite tree, and a
+    limit here shorter than the one of `ref_positions` would skip a deep reference in silence."""
+    stack = [schema]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            if is_ref_type(node.get("$ref")):
+                return True
+            stack += node.values()
+        elif isinstance(node, list):
+            stack += node
     return False
 
 
