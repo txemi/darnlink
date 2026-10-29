@@ -200,3 +200,24 @@ def test_a_new_link_with_a_comma_is_quoted_inside_a_flow_mapping(tmp_path):
     assert main(["yaml-refs", str(root), "--write"]) == 0
     assert '  link: "../docs/x,y.md"\n' in card.read_text(encoding="utf-8")
     assert main(["yaml-refs", str(root)]) == 0
+
+
+def test_an_optional_reference_with_a_misspelt_key_is_malformed(tmp_path):
+    schema = {"properties": {"opt": {"anyOf": [{"$ref": "#/$defs/DarnlinkRef"}, {"type": "null"}]}}}
+    assert ref_positions({"opt": {"uuid": U, "lnk": "a.md"}}, schema) == [("/opt", {"uuid": U, "lnk": "a.md"})]
+
+
+def test_an_empty_link_is_malformed(tmp_path, capsys):
+    root = _repo(tmp_path, "''")
+    (root / "data" / "README.md").write_text(f"---\nuuid: {U}\n---\n", encoding="utf-8")
+    assert main(["yaml-refs", str(root), "--json"]) == 2
+    assert json.loads(capsys.readouterr().out)["findings"][0]["kind"] == "malformed"
+
+
+def test_write_never_rewrites_a_literal_twin_of_an_escaped_link(tmp_path):
+    root = _repo(tmp_path, '"../old/targe\\x74.md"')
+    card = root / "data" / "card.yaml"
+    card.write_text(card.read_text(encoding="utf-8") + "text: |\n  link: ../old/target.md\n", encoding="utf-8")
+    before = card.read_text(encoding="utf-8")
+    assert main(["yaml-refs", str(root), "--write"]) == 2          # the repair is left to the reader
+    assert card.read_text(encoding="utf-8") == before

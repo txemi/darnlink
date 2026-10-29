@@ -141,7 +141,8 @@ def ref_positions(instance: object, schema: dict) -> List[Tuple[str, object]]:
     Follows same-document `$ref`s, `properties`, `patternProperties`, `additionalProperties`, `items` and
     the `allOf`/`anyOf`/`oneOf` branches; a position reached twice is reported once. Inside an `anyOf`/`oneOf`
     the reference type is only one alternative (LinkML writes an optional slot as `anyOf: [<type>, null]`), so
-    there a value counts only if it has the reference's shape: a mapping with a `link`."""
+    there a value counts only if it looks like a reference: a mapping with a `link` or a `uuid` (one with only
+    one of them, or a misspelt key next to it, is then reported as malformed instead of passing)."""
     found: Dict[str, object] = {}
 
     def walk(value: object, node: object, ptr: str, depth: int, alternative: bool = False) -> None:
@@ -149,7 +150,7 @@ def ref_positions(instance: object, schema: dict) -> List[Tuple[str, object]]:
             return
         ref = node.get("$ref")
         if is_ref_type(ref):
-            if not alternative or (isinstance(value, dict) and "link" in value):
+            if not alternative or (isinstance(value, dict) and ("link" in value or "uuid" in value)):
                 found.setdefault(ptr, value)
             return
         if isinstance(ref, str):
@@ -226,6 +227,8 @@ def judge(value: object, yaml_file: Path, index: TargetIndex, root: Path) -> Tup
     if not isinstance(value, dict) or not isinstance(value.get("uuid"), str) or not isinstance(value.get("link"), str):
         return MALFORMED, str(value.get("link", "")) if isinstance(value, dict) else "", "", \
             "not a {uuid, link} mapping of strings", ""
+    if not value["link"].strip() or not value["uuid"].strip():
+        return MALFORMED, value["link"], value["uuid"], "empty link or uuid", ""
     link, uuid = value["link"], value["uuid"].strip()
     if is_web_href(link):
         return OK, link, uuid, "web link: not checked here", ""
