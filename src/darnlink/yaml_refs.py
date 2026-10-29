@@ -141,24 +141,32 @@ def ref_positions(instance: object, schema: dict) -> List[Tuple[str, object]]:
     Follows same-document `$ref`s, `properties`, `patternProperties`, `additionalProperties`, `items` and
     the `allOf`/`anyOf`/`oneOf` branches; a position reached twice is reported once. Inside an `anyOf`/`oneOf`
     the reference type is only one alternative (LinkML writes an optional slot as `anyOf: [<type>, null]`), so
-    there a value counts only if it looks like a reference: a mapping with a `link` or a `uuid` (one with only
-    one of them, or a misspelt key next to it, is then reported as malformed instead of passing)."""
+    there a value counts only if it looks like a reference: a mapping with a `link`, or with a `uuid` when no
+    other alternative could take a mapping (so `{uuid, lnk}` in an optional slot is reported as malformed, while
+    an entity with a `uuid` that another object alternative describes is left alone)."""
     found: Dict[str, object] = {}
 
-    def walk(value: object, node: object, ptr: str, depth: int, alternative: bool = False) -> None:
+    def walk(value: object, node: object, ptr: str, depth: int, alternative: str = "") -> None:
+        # alternative: "" (not inside anyOf/oneOf), "lone" (no other branch takes a mapping) or "shared"
         if depth > MAX_DEPTH or not isinstance(node, dict):
             return
         ref = node.get("$ref")
         if is_ref_type(ref):
-            if not alternative or (isinstance(value, dict) and ("link" in value or "uuid" in value)):
+            if not alternative or (isinstance(value, dict) and (
+                    "link" in value or ("uuid" in value and alternative == "lone"))):
                 found.setdefault(ptr, value)
             return
         if isinstance(ref, str):
             walk(value, _local_def(schema, ref), ptr, depth + 1, alternative)
         for key in ("allOf", "anyOf", "oneOf"):
             branches = node.get(key)
-            for sub in branches if isinstance(branches, list) else ():
-                walk(value, sub, ptr, depth + 1, alternative or key != "allOf")
+            branches = branches if isinstance(branches, list) else []
+            for i, sub in enumerate(branches):
+                if key == "allOf":
+                    walk(value, sub, ptr, depth + 1, alternative)
+                    continue
+                shared = alternative == "shared" or any(_may_take_mapping(o) for j, o in enumerate(branches) if j != i)
+                walk(value, sub, ptr, depth + 1, "shared" if shared else "lone")
         if isinstance(value, dict):
             props = node.get("properties") if isinstance(node.get("properties"), dict) else {}
             patterns = node.get("patternProperties") if isinstance(node.get("patternProperties"), dict) else {}
@@ -178,6 +186,18 @@ def ref_positions(instance: object, schema: dict) -> List[Tuple[str, object]]:
 
     walk(instance, schema, "", 0)
     return sorted(found.items())
+
+
+_NOT_MAPPING_TYPES = {"null", "string", "integer", "number", "boolean", "array"}
+
+
+def _may_take_mapping(branch: object) -> bool:
+    """False only for a branch that certainly rejects a mapping: one whose `type` names no `object`."""
+    if not isinstance(branch, dict) or is_ref_type(branch.get("$ref")):
+        return not isinstance(branch, dict)
+    types = branch.get("type")
+    types = [types] if isinstance(types, str) else types
+    return not (isinstance(types, list) and types and set(types) <= _NOT_MAPPING_TYPES)
 
 
 @dataclass

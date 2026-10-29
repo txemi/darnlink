@@ -202,9 +202,32 @@ def test_a_new_link_with_a_comma_is_quoted_inside_a_flow_mapping(tmp_path):
     assert main(["yaml-refs", str(root)]) == 0
 
 
-def test_an_optional_reference_with_a_misspelt_key_is_malformed(tmp_path):
-    schema = {"properties": {"opt": {"anyOf": [{"$ref": "#/$defs/DarnlinkRef"}, {"type": "null"}]}}}
-    assert ref_positions({"opt": {"uuid": U, "lnk": "a.md"}}, schema) == [("/opt", {"uuid": U, "lnk": "a.md"})]
+def test_an_optional_reference_with_a_misspelt_key_is_malformed(tmp_path, capsys):
+    root = _repo(tmp_path, "../docs/target.md")
+    schema = {"$defs": SCHEMA["$defs"], "properties": {"opt": {"anyOf": [{"$ref": "#/$defs/DarnlinkRef"},
+                                                                          {"type": "null"}]}}}
+    _w(root / "schemas" / "opt.schema.json", json.dumps(schema))
+    _w(root / "data" / "opt.yaml", f"# yaml-language-server: $schema=../schemas/opt.schema.json\n"
+                                   f"opt:\n  uuid: {U}\n  lnk: ../docs/target.md\n")
+    assert main(["yaml-refs", str(root), "--json"]) == 2
+    assert json.loads(capsys.readouterr().out)["findings"][0]["kind"] == "malformed"
+
+
+def test_an_entity_with_a_uuid_in_another_object_alternative_is_not_a_reference():
+    schema = {"properties": {"o": {"anyOf": [{"$ref": "#/$defs/DarnlinkRef"},
+                                             {"type": "object", "properties": {"uuid": {}, "name": {}}}]}}}
+    assert ref_positions({"o": {"uuid": U, "name": "x"}}, schema) == []
+    assert [p for p, _ in ref_positions({"o": {"uuid": U, "link": "a.md"}}, schema)] == ["/o"]
+
+
+def test_write_leaves_the_file_alone_when_the_result_would_not_load(tmp_path, monkeypatch):
+    import darnlink.yaml_refs as yr
+    root = _repo(tmp_path, "../old/target.md")
+    card = root / "data" / "card.yaml"
+    before = card.read_text(encoding="utf-8")
+    monkeypatch.setattr(yr, "_loads_with", lambda text, written: False)
+    assert main(["yaml-refs", str(root), "--write"]) == 2
+    assert card.read_text(encoding="utf-8") == before
 
 
 def test_an_empty_link_is_malformed(tmp_path, capsys):
