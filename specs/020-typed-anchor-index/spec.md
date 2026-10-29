@@ -60,8 +60,9 @@ so every uuid field would become an anchor.
 - **FR-003** The index holds, per anchor: the file, the JSON Pointer of the element that carries it
   (empty for a file-level anchor: Markdown frontmatter, a top-level YAML `uuid`, a code `#---`
   block), and the value.
-- **FR-004** An anchor value that is not a lowercase canonical uuid is reported `invalid` and is not
-  a target, as for Markdown frontmatter today.
+- **FR-004** An anchor value that is not a lowercase canonical uuid, or an anchor that is an item of
+  a list instead of a key of the element it identifies, is reported `invalid-anchor` and is not a
+  target (not even through the plain top-level `uuid`), as for Markdown frontmatter today.
 - **FR-005** A reference to an element's anchor carries that element's pointer as the fragment of
   its `link`; with the `uuid` present, a missing or stale fragment is repaired like a stale path.
   Without a `uuid` (step 3), a link to a file with several anchors and no fragment is `ambiguous`.
@@ -69,6 +70,13 @@ so every uuid field would become an anchor.
   web link, and re-reads the file to check that only that line was added.
 - **FR-007** Excludes, the ignore-file marker and the out-of-root rules apply to the new target
   files exactly as to Markdown.
+
+## Known limits (step 1)
+
+- `--write` rewrites a `link:` line only when every occurrence of its text in the file is being
+  repaired to the same new text (the rule `yaml-refs` already had). Several bare `link: hosts.yaml`
+  lines that need different fragments are reported and left to the reader.
+- A draft-07 `#/definitions/DarnlinkAnchor` is not recognised: the published schema uses `$defs`.
 
 ## Out of scope (later features)
 

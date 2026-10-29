@@ -140,3 +140,38 @@ def test_a_schema_with_anchors_and_no_reference_is_still_read(tmp_path, capsys):
     (root / "svc" / "card.yaml").unlink()
     out = _json(root, capsys)
     assert out["stats"]["with_schema"] == 1 and out["stats"]["anchors"] == 2
+
+
+def _single(tmp_path: Path, schema: dict, doc: str, link: str, uuid: str) -> Path:
+    """One typed file `a.yaml` under its own schema, and a card that references it."""
+    (tmp_path / "schemas").mkdir(parents=True, exist_ok=True)
+    shutil.copy(PINNED, tmp_path / "schemas" / "darnlink_types.schema.json")
+    _w(tmp_path / "schemas" / "a.schema.json", json.dumps(schema))
+    _w(tmp_path / "schemas" / "card.schema.json", json.dumps(CARD_SCHEMA))
+    _w(tmp_path / "a.yaml", f"# yaml-language-server: $schema=schemas/a.schema.json\n{doc}")
+    _w(tmp_path / "card.yaml", f"# yaml-language-server: $schema=schemas/card.schema.json\n"
+                               f"runs_on:\n  uuid: {uuid}\n  link: {link}\n")
+    return tmp_path
+
+
+ANCHOR_REF = {"$ref": "darnlink_types.schema.json#/$defs/DarnlinkAnchor"}
+
+
+def test_an_invalid_top_level_anchor_is_not_indexed_through_the_plain_uuid_either(tmp_path, capsys):
+    schema = {"type": "object", "properties": {"uuid": ANCHOR_REF}}
+    root = _single(tmp_path, schema, f"uuid: {H1.upper()}\n", "a.yaml", H1)
+    kinds = sorted(f["kind"] for f in _json(root, capsys)["findings"])
+    assert kinds == ["invalid-anchor", "unresolvable"]
+
+
+def test_an_anchor_that_is_a_list_item_is_invalid(tmp_path, capsys):
+    schema = {"type": "object", "properties": {"ids": {"type": "array", "items": ANCHOR_REF}}}
+    root = _single(tmp_path, schema, f"ids:\n  - {H1}\n  - {H2}\n", "a.yaml", H1)
+    findings = _json(root, capsys)["findings"]
+    assert sorted(f["kind"] for f in findings) == ["invalid-anchor", "invalid-anchor", "unresolvable"]
+
+
+def test_a_percent_encoded_pointer_fragment_is_correct(tmp_path, capsys):
+    schema = {"type": "object", "additionalProperties": {"type": "object", "properties": {"uuid": ANCHOR_REF}}}
+    root = _single(tmp_path, schema, f"a b:\n  uuid: {H1}\n", "a.yaml#/a%20b", H1)
+    assert _json(root, capsys)["findings"] == []

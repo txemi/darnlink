@@ -42,6 +42,7 @@ import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional, Tuple
+from urllib.parse import unquote
 
 from .frontmatter_index import DEFAULT_EXCLUDES, build_index, dir_excluded
 from .paths import is_web_href, relative_link, resolve_href, resolved, split_fragment
@@ -195,6 +196,20 @@ def _local_def(root_schema: dict, ref: str) -> Optional[dict]:
 
 def _ptr(base: str, key: object) -> str:
     return f"{base}/{str(key).replace('~', '~0').replace('/', '~1')}"
+
+
+def _at(doc: object, pointer: str) -> object:
+    """The value at a JSON Pointer that `_ptr` built, or None."""
+    node = doc
+    for part in pointer.split("/")[1:] if pointer else []:
+        part = part.replace("~1", "/").replace("~0", "~")
+        if isinstance(node, dict):
+            node = next((v for k, v in node.items() if str(k) == part), None)
+        elif isinstance(node, list) and part.isdigit() and int(part) < len(node):
+            node = node[int(part)]
+        else:
+            return None
+    return node
 
 
 def _matches(pattern: object, key: str) -> bool:
@@ -395,7 +410,7 @@ def judge(value: object, yaml_file: Path, index: TargetIndex, root: Path) -> Tup
     # repaired like the path. A whole-file anchor leaves the fragment alone (a Markdown heading, say).
     want = element or fragment
     if _same(points, target):
-        if fragment == want:
+        if fragment == want or (element and unquote(fragment) == element):   # `%20` in a link is a space
             return OK, link, uuid, "", ""
         return REPAIR, link, uuid, f"the element moved to #{element} in {shown}", f"{path_part}#{want}"
     if points.is_file():
@@ -514,6 +529,7 @@ def _plan(root: Path, excludes: set[str]) -> Tuple[List[RefFinding], Dict[str, i
     stats = {"yaml_files": len(files), "with_schema": 0, "references": 0, "ok": 0, "anchors": 0}
     findings: List[RefFinding] = []
     anchors: Dict[Path, List[Tuple[str, str]]] = {}
+    not_targets: set = set()
     checked: List[Tuple[Path, str, dict, TypeRecognizer]] = []
     for path in files:
         decl = modeline_schema(path)
@@ -544,14 +560,22 @@ def _plan(root: Path, excludes: set[str]) -> Tuple[List[RefFinding], Dict[str, i
         stats["with_schema"] += 1
         for pointer, value in anchor_positions(docs[path], schema, recognizer):
             stats["anchors"] += 1
-            if isinstance(value, str) and CANONICAL_UUID.fullmatch(value):
-                anchors.setdefault(path, []).append((pointer.rsplit("/", 1)[0], value))
-            else:
+            element = pointer.rsplit("/", 1)[0]
+            problem = ""
+            if not (isinstance(value, str) and CANONICAL_UUID.fullmatch(value)):
+                problem = "an anchor must be a lowercase canonical uuid"
+            elif not isinstance(_at(docs[path], element), dict):
+                problem = "an anchor must be a key of the element it identifies, not an item of a list"
+            if problem:
                 findings.append(RefFinding(INVALID_ANCHOR, rel, pointer or "/", "", str(value),
-                                           "an anchor must be a lowercase canonical uuid: not a link target"))
+                                           f"{problem}: not a link target"))
+                if not element:
+                    not_targets.add(path)   # its top-level `uuid` is this same invalid anchor
+            else:
+                anchors.setdefault(path, []).append((element, value))
         checked.append((path, rel, schema, recognizer))
     # Anchors first, references after: a reference may point to an anchor in a file read later.
-    index = build_target_index(root, excludes, docs, anchors)
+    index = build_target_index(root, excludes, {p: d for p, d in docs.items() if p not in not_targets}, anchors)
     for path, rel, schema, recognizer in checked:
         for pointer, value in ref_positions(docs[path], schema, recognizer):
             stats["references"] += 1

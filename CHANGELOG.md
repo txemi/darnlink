@@ -15,8 +15,9 @@ All notable changes to darnlink are documented here. The format is based on
   pattern is not an anchor. The anchors of every YAML file with a local schema, at any depth, join
   the targets of `yaml-refs`. An anchor that identifies one element of its file is linked with that
   element's JSON Pointer as fragment (`hosts.yaml#/hosts/3`), and the fragment is repaired like the
-  path when the element moves. A non-canonical anchor is reported `invalid-anchor`; the same anchor
-  on two elements is `ambiguous`. `DarnlinkRef` keeps its name match. The JSON output gains
+  path when the element moves. An anchor that is not a lowercase canonical uuid, or that is an item
+  of a list instead of a key of its element, is reported `invalid-anchor`, is not a link target, and
+  makes the run exit 2 like any broken reference; the same anchor on two elements is `ambiguous`. `DarnlinkRef` keeps its name match. The JSON output gains
   `stats.anchors`. Design and the two later steps: `specs/020-typed-anchor-index/spec.md`.
 - **Published types `DarnlinkAnchor` and `DarnlinkRef`, v1, LinkML first** (feature 019). The
   package now ships `darnlink/schemas/v1/darnlink_types.linkml.yaml`, the single source of truth,
