@@ -20,6 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Tuple
+from urllib.parse import unquote
 
 from .frontmatter_index import DEFAULT_EXCLUDES, FrontmatterIndex, iter_markdown_files
 from .links import (code_spans, emit_robust_link, file_ignores_links, file_is_ignored,
@@ -114,11 +115,17 @@ def plan_repairs(
                 )
                 continue
             current = resolve_href(link.href, f)
-            _, frag = split_fragment(link.href)
+            path_part, frag = split_fragment(link.href)
+            # Feature 020: a uuid that lives outside Markdown is a typed anchor (a YAML or JSON element, a
+            # code `#---` block). Its link names that file, never a directory, and when the anchor
+            # identifies one element of the file, the fragment is that element's JSON Pointer and is
+            # repaired like the path. A Markdown target leaves the fragment alone (a heading, say).
+            typed = target.suffix.lower() != ".md"
+            element = index.element(link.uuid)
             # Feature 011: a link whose path does not name a `.md` file is a *directory* link — the
             # uuid identifies the directory via its README.md, and the link points at the directory
             # (the README's parent), not at the README file itself.
-            dir_link = not names_md(link.href)
+            dir_link = not typed and not names_md(link.href)
             if dir_link and target.name.lower() != DIR_ANCHOR.lower():
                 # The path names a directory but the uuid lives in a non-README file: the two halves
                 # disagree. Don't guess — flag like any other path/uuid conflict.
@@ -133,7 +140,15 @@ def plan_repairs(
                 continue
             intended = target.parent if dir_link else target
             if current == resolved(intended):
-                continue  # already correct (cosmetic ./ or trailing-slash differences are fine)
+                if not element or frag == element or unquote(frag) == element:  # `%20` in a link is a space
+                    continue  # already correct (cosmetic ./ or trailing-slash differences are fine)
+                new_href = f"{path_part}#{element}"
+                local.append(Finding(Kind.REPAIR, f, f"{link.href} -> {new_href} (the element moved)"))
+                pieces.append(content[cursor:link.start])
+                pieces.append(emit_robust_link(link.text, new_href, link.uuid, link.attrs))
+                cursor = link.end
+                changed = True
+                continue
             # Defensive: the written path still resolves to a real target while the uuid lives
             # elsewhere — the two halves disagree (typically a mis-pasted uuid). It is NOT a move, so
             # flag, don't hijack. A file link keys on a real *file* (its existing behavior); a
@@ -154,7 +169,8 @@ def plan_repairs(
             base = relative_link(intended, f)  # path only; fragment re-appended below
             if dir_link and not base.endswith("/"):
                 base += "/"  # keep directory links visibly directories (and re-recognisable as such)
-            new_href = f"{base}#{frag}" if frag else base
+            want = element or frag
+            new_href = f"{base}#{want}" if want else base
             local.append(Finding(Kind.REPAIR, f, f"{link.href} -> {new_href}"))
             # splice the rewritten robust link in place of the old span
             pieces.append(content[cursor:link.start])

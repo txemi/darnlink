@@ -8,6 +8,17 @@ All notable changes to darnlink are documented here. The format is based on
 
 ### Added
 
+- **Typed anchors in JSON and in code, and Markdown links to typed anchors** (feature 020, step 2).
+  A JSON file whose `$schema` key names a local schema contributes its `DarnlinkAnchor` positions, as
+  a YAML file with a modeline already did; any other file contributes the `uuid` of a YAML block
+  between two `#---` lines among its leading `#` comments (the anchor of the whole file). Robust
+  Markdown links now resolve against these typed anchors as well as frontmatter: `check` and the
+  default repair treat such a target as a file (never a directory link), and repair the JSON
+  Pointer fragment of an element anchor like the path. The untyped top-level `uuid` of a YAML file
+  is not a Markdown target, so a YAML file that repeats its README's uuid does not make links to
+  that README `ambiguous`. A file is read only if its schema declares a type; on a repository with
+  ~15.000 non-Markdown files the scan takes ~4 s. `check --json` gains `typed_anchors`; `yaml-refs`
+  reaches JSON and code anchors too. New module `darnlink.typed_anchors`.
 - **`yaml-refs`: typed anchors in YAML as link targets, and the types recognised by `$id`** (feature
   020, step 1). A `$ref` to `DarnlinkAnchor` marks an anchor position when it names the published
   `$id` (`…/schemas/v<N>/darnlink_types#/$defs/DarnlinkAnchor`), a pinned copy whose own `$id` is

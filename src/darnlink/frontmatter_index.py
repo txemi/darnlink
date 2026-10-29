@@ -29,9 +29,17 @@ class FrontmatterIndex:
     duplicates: Dict[str, List[Path]] = field(default_factory=dict)
     invalid: List[Path] = field(default_factory=list)  # files whose frontmatter is not valid YAML
     out_of_root: List[Path] = field(default_factory=list)  # symlinks skipped because their target lives outside the scanned root
+    # Feature 020: typed anchors outside Markdown (`typed_anchors.with_typed_anchors`). `pointers` holds, for an anchor
+    # that identifies one element of a file, that element's JSON Pointer; `typed_anchors` counts them all.
+    pointers: Dict[str, str] = field(default_factory=dict)
+    typed_anchors: int = 0
 
     def get(self, uuid: str) -> Path | None:
         return self.by_uuid.get(uuid.lower())
+
+    def element(self, uuid: str) -> str:
+        """JSON Pointer of the element the uuid identifies, or '' when it identifies the whole file."""
+        return self.pointers.get(uuid.lower(), "")
 
     def is_ambiguous(self, uuid: str) -> bool:
         return uuid.lower() in self.duplicates

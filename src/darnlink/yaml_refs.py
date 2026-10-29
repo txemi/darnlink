@@ -19,7 +19,8 @@ is one of the first kind. The anchor type, `DarnlinkAnchor`, is recognised only 
 `$id`, a local file whose own `$id` is that one (a pinned copy), or `#/$defs/DarnlinkAnchor` in the same document.
 
 The targets are the frontmatter `uuid` of every `.md` file (the same index as the Markdown links), the
-top-level `uuid` of every YAML file, and every typed anchor of a YAML file with a local schema, at any depth.
+top-level `uuid` of every YAML file, every typed anchor of a YAML file with a local schema, at any depth, and
+(step 2, `darnlink.typed_anchors`) the typed anchors of JSON files and the `#---` blocks of code files.
 An anchor that identifies one element of a file (`/hosts/3/uuid` identifies `/hosts/3`) is reached with that
 element's JSON Pointer as the fragment of the link (`hosts.yaml#/hosts/3`), and the fragment is repaired like
 the path. An anchor that is not a lowercase canonical uuid is reported `invalid-anchor`.
@@ -232,6 +233,28 @@ def anchor_positions(instance: object, schema: dict,
     Inside an `anyOf`/`oneOf` only a string counts (LinkML writes an optional slot as `anyOf: [<type>, null]`)."""
     return _typed_positions(instance, schema, ANCHOR, recognizer or TypeRecognizer())
 
+
+
+def file_anchors(doc: object, schema: dict, recognizer: TypeRecognizer,
+                 rel: str) -> Tuple[List[Tuple[str, str]], List[RefFinding], bool]:
+    """The typed anchors of one parsed file: (good ones as (element pointer, uuid), an `invalid-anchor` finding per bad
+    one, whether the bad ones include the file-level anchor). '' as the element pointer is the whole file."""
+    good: List[Tuple[str, str]] = []
+    bad: List[RefFinding] = []
+    whole_file_bad = False
+    for pointer, value in anchor_positions(doc, schema, recognizer):
+        element = pointer.rsplit("/", 1)[0]
+        problem = ""
+        if not (isinstance(value, str) and CANONICAL_UUID.fullmatch(value)):
+            problem = "an anchor must be a lowercase canonical uuid"
+        elif not isinstance(_at(doc, element), dict):
+            problem = "an anchor must be a key of the element it identifies, not an item of a list"
+        if problem:
+            bad.append(RefFinding(INVALID_ANCHOR, rel, pointer or "/", "", str(value), f"{problem}: not a link target"))
+            whole_file_bad = whole_file_bad or not element
+        else:
+            good.append((element, value))
+    return good, bad, whole_file_bad
 
 def _typed_positions(instance: object, schema: dict, want: str,
                      recognizer: TypeRecognizer) -> List[Tuple[str, object]]:
@@ -558,22 +581,21 @@ def _plan(root: Path, excludes: set[str]) -> Tuple[List[RefFinding], Dict[str, i
                                                                          "load as one YAML document"))
             continue
         stats["with_schema"] += 1
-        for pointer, value in anchor_positions(docs[path], schema, recognizer):
-            stats["anchors"] += 1
-            element = pointer.rsplit("/", 1)[0]
-            problem = ""
-            if not (isinstance(value, str) and CANONICAL_UUID.fullmatch(value)):
-                problem = "an anchor must be a lowercase canonical uuid"
-            elif not isinstance(_at(docs[path], element), dict):
-                problem = "an anchor must be a key of the element it identifies, not an item of a list"
-            if problem:
-                findings.append(RefFinding(INVALID_ANCHOR, rel, pointer or "/", "", str(value),
-                                           f"{problem}: not a link target"))
-                if not element:
-                    not_targets.add(path)   # its top-level `uuid` is this same invalid anchor
-            else:
-                anchors.setdefault(path, []).append((element, value))
+        good, bad, whole_file_bad = file_anchors(docs[path], schema, recognizer, rel)
+        stats["anchors"] += len(good) + len(bad)
+        findings += bad
+        if whole_file_bad:
+            not_targets.add(path)   # its top-level `uuid` is this same invalid anchor
+        if good:
+            anchors[path] = good
         checked.append((path, rel, schema, recognizer))
+    # JSON files and code `#---` blocks are targets too (step 2). YAML was read above, with its untyped top-level `uuid`.
+    from .typed_anchors import collect
+    extra = collect(root, excludes, kinds=("json", "code"))
+    stats["anchors"] += extra.count
+    findings += extra.findings
+    for path, items in extra.anchors.items():
+        anchors.setdefault(path, []).extend(items)
     # Anchors first, references after: a reference may point to an anchor in a file read later.
     index = build_target_index(root, excludes, {p: d for p, d in docs.items() if p not in not_targets}, anchors)
     for path, rel, schema, recognizer in checked:
