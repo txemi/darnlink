@@ -244,3 +244,28 @@ def test_write_never_rewrites_a_literal_twin_of_an_escaped_link(tmp_path):
     before = card.read_text(encoding="utf-8")
     assert main(["yaml-refs", str(root), "--write"]) == 2          # the repair is left to the reader
     assert card.read_text(encoding="utf-8") == before
+
+
+def test_write_checks_the_new_link_at_its_own_position(tmp_path):
+    root = _repo(tmp_path, '"../old/targe\\x74.md"')
+    card = root / "data" / "card.yaml"
+    card.write_text(card.read_text(encoding="utf-8").replace("not/a/reference.md", "../old/target.md"),
+                    encoding="utf-8")
+    before = card.read_text(encoding="utf-8")
+    assert main(["yaml-refs", str(root), "--write"]) == 2          # the undeclared twin would be the one rewritten
+    assert card.read_text(encoding="utf-8") == before
+
+
+def test_a_yaml_that_is_not_utf8_is_reported(tmp_path, capsys):
+    root = _repo(tmp_path, "../old/target.md")
+    card = root / "data" / "card.yaml"
+    card.write_bytes(card.read_bytes() + "name: Jos\u00e9\n".encode("latin-1"))
+    assert main(["yaml-refs", str(root), "--json"]) == 2
+    assert json.loads(capsys.readouterr().out)["findings"][0]["kind"] == "unreadable-yaml"
+
+
+def test_a_yaml_whose_schema_declares_no_reference_need_not_load(tmp_path):
+    _w(tmp_path / "schemas" / "plain.schema.json", json.dumps({"type": "object"}))
+    _w(tmp_path / "data" / "multi.yaml", "# yaml-language-server: $schema=../schemas/plain.schema.json\n"
+                                         "a: !Ref x\n---\nb: 2\n")
+    assert main(["yaml-refs", str(tmp_path)]) == 0

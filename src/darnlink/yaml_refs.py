@@ -89,7 +89,8 @@ def modeline_schema(path: Path) -> Optional[str]:
     """The `$schema=` of the yaml-language-server modeline in the leading comment lines, if any. A `---`
     document marker on the first line is allowed before them."""
     try:
-        with path.open(encoding="utf-8-sig") as fh:
+        # errors="replace": a file that is not UTF-8 still shows its modeline, and is then reported as unreadable
+        with path.open(encoding="utf-8-sig", errors="replace") as fh:
             for n, line in enumerate(fh):
                 if n == 0 and line.rstrip("\r\n") == "---":
                     continue
@@ -198,6 +199,18 @@ def _may_take_mapping(branch: object) -> bool:
     types = branch.get("type")
     types = [types] if isinstance(types, str) else types
     return not (isinstance(types, list) and types and set(types) <= _NOT_MAPPING_TYPES)
+
+
+def mentions_ref_type(schema: object, depth: int = 0) -> bool:
+    """True if some `$ref` anywhere in the schema names the reference type. A schema without one declares no
+    reference, so its YAML files need not even load."""
+    if depth > MAX_DEPTH:
+        return False
+    if isinstance(schema, dict):
+        return is_ref_type(schema.get("$ref")) or any(mentions_ref_type(v, depth + 1) for v in schema.values())
+    if isinstance(schema, list):
+        return any(mentions_ref_type(v, depth + 1) for v in schema)
+    return False
 
 
 @dataclass
@@ -324,25 +337,36 @@ def apply_repairs(path: Path, repairs: List[RefFinding]) -> List[RefFinding]:
     return left
 
 
+def _at(doc: object, pointer: str) -> object:
+    """The value at a JSON Pointer of `ref_positions`, or None if the path is not there."""
+    node = doc
+    for part in [s.replace("~1", "/").replace("~0", "~") for s in pointer.split("/")[1:]]:
+        if isinstance(node, list) and part.isdigit() and int(part) < len(node):
+            node = node[int(part)]
+        elif isinstance(node, dict):
+            keys = [k for k in node if str(k) == part]
+            if len(keys) != 1:
+                return None
+            node = node[keys[0]]
+        else:
+            return None
+    return node
+
+
 def _loads_with(text: str, written: List[RefFinding]) -> bool:
-    """True if `text` still loads as YAML and every link just written is there as a `link` string value."""
+    """True if `text` still loads as YAML and every reference just written holds its new link, at its own
+    position: a same text written somewhere else does not count."""
     import yaml
     loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
     try:
         doc = yaml.load(text.lstrip("\ufeff"), Loader=loader)
     except Exception:
         return False
-    found: set = set()
-    stack = [doc]
-    while stack:
-        node = stack.pop()
-        if isinstance(node, dict):
-            if isinstance(node.get("link"), str):
-                found.add(node["link"])
-            stack += list(node.values())
-        elif isinstance(node, list):
-            stack += node
-    return all(f.new_link in found for f in written)
+    for f in written:
+        value = _at(doc, "" if f.pointer == "/" else f.pointer)
+        if not isinstance(value, dict) or value.get("link") != f.new_link:
+            return False
+    return True
 
 
 def plan(root: Path, excludes: set[str] = DEFAULT_EXCLUDES) -> Tuple[List[RefFinding], Dict[str, int]]:
@@ -359,6 +383,7 @@ def _plan(root: Path, excludes: set[str]) -> Tuple[List[RefFinding], Dict[str, i
     docs = {p: _load_yaml(p) for p in files}
     index = build_target_index(root, excludes, docs)
     schemas: Dict[Path, Optional[dict]] = {}
+    typed: Dict[Path, bool] = {}
     stats = {"yaml_files": len(files), "with_schema": 0, "references": 0, "ok": 0}
     findings: List[RefFinding] = []
     for path in files:
@@ -377,6 +402,10 @@ def _plan(root: Path, excludes: set[str]) -> Tuple[List[RefFinding], Dict[str, i
         if schema is None:
             findings.append(RefFinding(NO_SCHEMA, rel, "/", "", "", f"the modeline names {decl}, which is not a "
                                                                         "readable JSON object"))
+            continue
+        if spath not in typed:
+            typed[spath] = mentions_ref_type(schema)
+        if not typed[spath]:
             continue
         if docs[path] is UNREADABLE_DOC:
             findings.append(RefFinding(UNREADABLE, rel, "/", "", "", "the file has a schema modeline but does not "
