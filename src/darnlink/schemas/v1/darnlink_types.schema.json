@@ -1,0 +1,37 @@
+{
+  "$defs": {
+    "DarnlinkAnchor": {
+      "description": "A typed UUID meaning \"this element is identified here\". Canonical RFC 4122 text form, lowercase only, any version. Exactly one element in a repository should carry a given anchor; a duplicate is the copier's responsibility, and darnlink reports links to it as ambiguous.",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?!\\n)$",
+      "title": "DarnlinkAnchor",
+      "type": "string"
+    },
+    "DarnlinkRef": {
+      "additionalProperties": false,
+      "description": "A link to another element, with both halves of a robust Markdown link: the path or URL a reader follows, and the anchor of the target, the part that survives a move.",
+      "properties": {
+        "link": {
+          "description": "Where the target is: a path relative to the file that carries the reference, or an http(s) URL. Not an absolute path, not a bare #fragment, no other scheme, no line break, no whitespace at either end, not blank.",
+          "pattern": "^(?![\\s\\S]*[\\r\\n\\u2028\\u2029])(?!\\s)(?![\\s\\S]*\\s$)(?:(?![A-Za-z][A-Za-z0-9+.-]*:)(?!/)(?!#).+|https?://.+)$",
+          "type": "string"
+        },
+        "uuid": {
+          "$ref": "#/$defs/DarnlinkAnchor",
+          "description": "The anchor of the target."
+        }
+      },
+      "required": [
+        "link",
+        "uuid"
+      ],
+      "title": "DarnlinkRef",
+      "type": "object"
+    }
+  },
+  "$id": "https://github.com/txemi/darnlink/schemas/v1/darnlink_types",
+  "$schema": "https://json-schema.org/draft/2019-09/schema",
+  "additionalProperties": true,
+  "title": "darnlink_types",
+  "type": "object",
+  "version": "1.0.0"
+}
