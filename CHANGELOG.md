@@ -8,6 +8,14 @@ All notable changes to darnlink are documented here. The format is based on
 
 ### Added
 
+- **`yaml-refs` fills a missing `uuid` from the `link`** (feature 020, step 3). A reference with a
+  `link` and no `uuid` key is reported `fillable` (it was `malformed`) when the link names a file
+  with exactly one candidate anchor: the element its JSON Pointer fragment names or, without a
+  fragment, the file's own anchor (and, when it has none, its only element anchor). `--write`
+  inserts `uuid: <value>` under the `link:` line, byte-preserving (CRLF, a last line without
+  newline) and re-reading the file to check that only those keys were added. Several candidates are
+  `ambiguous`, none stays `malformed`, a web link is never filled, and a link text that also appears
+  elsewhere in the file, or sits in a flow mapping, is left to the reader. `--json` gains `filled`.
 - **Typed anchors in JSON and in code, and Markdown links to typed anchors** (feature 020, step 2).
   A JSON file whose `$schema` key names a local schema contributes its `DarnlinkAnchor` positions, as
   a YAML file with a modeline already did; any other file contributes the `uuid` of a YAML block

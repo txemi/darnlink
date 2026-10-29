@@ -174,6 +174,13 @@ element moves. The plain top-level `uuid` of a YAML file without a typed schema 
 The problems of the anchors themselves (an invalid value, an unreadable schema) are reported by
 `yaml-refs`; `check` only counts them (`typed_anchors` in its JSON).
 
+**A reference with a `link` and no `uuid` is filled from its target** (feature 020, step 3). When the
+link names a file with exactly one candidate anchor (the element its `#/pointer` fragment names or,
+without one, the file's own anchor), `yaml-refs` reports it `fillable` and `--write` inserts the
+`uuid:` line under the `link:` line, keeping every other byte. With several candidates it is
+`ambiguous`, with none it stays `malformed`, and a web link is never filled: darnlink copies the uuid
+the target already declares, it never mints one.
+
 ### `--json` output
 
 Stable shape, meant for gates and scripts:
