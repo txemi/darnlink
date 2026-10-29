@@ -763,6 +763,33 @@ def test_default_branch_falls_back_to_the_remote_when_origin_HEAD_is_absent(tmp_
         "value here means the rung is inert exactly where it is needed")
 
 
+def test_the_remote_fallback_can_never_ask_for_credentials(tmp_path, monkeypatch):
+    """A credential prompt that nobody answers hung the Windows CI run until it was aborted: the
+    `timeout` does not fire there, because the killed git leaves its credential helper holding the
+    pipes. So every git `_own_repo` runs carries the two switches that turn the prompts off."""
+    import subprocess
+    from darnlink.cli import _own_repo
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, env=_GIT_ENV)
+    subprocess.run(["git", "-C", str(tmp_path), "remote", "add", "origin",
+                    "https://github.com/example-org/handbook.git"], check=True, env=_GIT_ENV)
+    monkeypatch.setenv("GIT_TERMINAL_PROMPT", "1")
+    monkeypatch.setenv("GCM_INTERACTIVE", "always")
+    seen = []
+    real_run = subprocess.run
+
+    def spy(cmd, *a, **k):
+        if "ls-remote" in cmd:
+            seen.append(k.get("env") or {})
+            return subprocess.CompletedProcess(cmd, 128, "", "")   # never touch the network
+        return real_run(cmd, *a, **k)
+
+    monkeypatch.setattr(subprocess, "run", spy)
+    own = _own_repo(tmp_path)
+    assert own is not None and own.default_ref == ""
+    assert len(seen) == 1
+    assert seen[0].get("GIT_TERMINAL_PROMPT") == "0" and seen[0].get("GCM_INTERACTIVE") == "never"
+
+
 def test_default_branch_flag_wins_over_the_automatic_sources(tmp_path):
     """The explicit value is the only source that cannot fail, and in CI it is often the only one
     that CAN answer: the checkout has no `origin/HEAD`, and the credentials for `ls-remote` are

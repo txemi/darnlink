@@ -713,6 +713,12 @@ def _own_repo(root: Path, default_branch: Optional[str] = None,
     from darnlink.weblinks import OwnRepo, forgejo_identity_of_remote
     env = {k: v for k, v in _os.environ.items()
            if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR")}
+    # ⚠️ `ls-remote` below must never ASK for credentials. Measured on the Windows CI agent: over an
+    # https origin it waited for a login nobody could give, and `timeout=10` did not save it -- on
+    # Windows, killing git leaves its credential helper holding the output pipes, so `run` never
+    # returns and the build hung until Jenkins aborted it at 90 minutes. Stored credentials still
+    # work; only the prompts are switched off (git's own, and Git Credential Manager's).
+    env.update(GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="never")
 
     def _git(*args: str) -> Optional[str]:
         try:

@@ -30,6 +30,15 @@ All notable changes to darnlink are documented here. The format is based on
   its sha256 instead of resolving it over the network. A `$ref` into a pinned copy's `DarnlinkRef`
   is already recognised by `yaml-refs`. `linkml` and `jsonschema` join the `dev` extra only.
 
+### Fixed
+
+- **`--online` no longer hangs on a credential prompt.** When the default branch is not known locally,
+  the own-repo rung asks the remote with `git ls-remote`; over an https origin, git (or Git Credential
+  Manager on Windows) could wait for a login nobody would give, and on Windows the 10-second timeout
+  does not fire because the killed git leaves its credential helper holding the pipes. That `git` now
+  runs with `GIT_TERMINAL_PROMPT=0` and `GCM_INTERACTIVE=never`: stored credentials still work, prompts
+  do not. Found as a Windows CI run that hung until it was aborted at 90 minutes.
+
 ## [0.29.0] — 2026-10-29
 
 ### Added
