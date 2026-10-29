@@ -14,8 +14,16 @@ the reference type are checked. The type is recognised by name, so both ways of 
   when a schema imports the type;
 - a `$ref` to the published schema of the type (a path or URL ending in `ref.schema.json`).
 
-The targets are the frontmatter `uuid` of every `.md` file (the same index as the Markdown links) and
-the top-level `uuid` of every YAML file. Each reference is then judged like a robust Markdown link:
+A `$ref` to the published `$id` (`https://github.com/txemi/darnlink/schemas/v1/darnlink_types#/$defs/DarnlinkRef`)
+is one of the first kind. The anchor type, `DarnlinkAnchor`, is recognised only by that identity (feature 020): the
+`$id`, a local file whose own `$id` is that one (a pinned copy), or `#/$defs/DarnlinkAnchor` in the same document.
+
+The targets are the frontmatter `uuid` of every `.md` file (the same index as the Markdown links), the
+top-level `uuid` of every YAML file, and every typed anchor of a YAML file with a local schema, at any depth.
+An anchor that identifies one element of a file (`/hosts/3/uuid` identifies `/hosts/3`) is reached with that
+element's JSON Pointer as the fragment of the link (`hosts.yaml#/hosts/3`), and the fragment is repaired like
+the path. An anchor that is not a lowercase canonical uuid is reported `invalid-anchor`.
+Each reference is then judged like a robust Markdown link:
 correct, repairable (the uuid lives elsewhere: the new relative path is proposed, and written with
 `--write`), conflicting (the path still names an existing file that is not the uuid's), unresolvable
 or ambiguous. A `link` that is a web URL is not checked here (a `DarnlinkWebRef` may point to
@@ -31,7 +39,7 @@ import json
 import os
 import re
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional, Tuple
 
@@ -39,14 +47,23 @@ from .frontmatter_index import DEFAULT_EXCLUDES, build_index, dir_excluded
 from .paths import is_web_href, relative_link, resolve_href, resolved, split_fragment
 
 REF_DEF_NAME = "DarnlinkRef"
+ANCHOR_DEF_NAME = "DarnlinkAnchor"
 REF_SCHEMA_FILE = "ref.schema.json"
 YAML_SUFFIXES = (".yaml", ".yml")
 MAX_DEPTH = 64
 
+#: The `$id` of the published types (feature 019), any major version. An identifier, never fetched.
+TYPES_ID = re.compile(r"https://github\.com/txemi/darnlink/schemas/v[0-9]+/darnlink_types")
+#: An anchor value: canonical RFC 4122 text, lowercase only (the `DarnlinkAnchor` type), used with `fullmatch`.
+CANONICAL_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+REF, ANCHOR = "ref", "anchor"
+
 _MODELINE = re.compile(r"^#\s*yaml-language-server:\s*\$schema=(\S+)")
 
-OK, REPAIR, CONFLICT, UNRESOLVABLE, AMBIGUOUS, MALFORMED, NO_SCHEMA, UNREADABLE = (
-    "ok", "repair", "conflict", "unresolvable", "ambiguous", "malformed", "unreadable-schema", "unreadable-yaml")
+OK, REPAIR, CONFLICT, UNRESOLVABLE, AMBIGUOUS, MALFORMED, NO_SCHEMA, UNREADABLE, INVALID_ANCHOR = (
+    "ok", "repair", "conflict", "unresolvable", "ambiguous", "malformed", "unreadable-schema", "unreadable-yaml",
+    "invalid-anchor")
 
 #: What `_load_yaml` returns for a file it cannot read. Not None: an empty file loads as None and is readable.
 UNREADABLE_DOC = object()
@@ -112,6 +129,57 @@ def is_ref_type(ref: object) -> bool:
     return tail == REF_DEF_NAME or tail.split("#", 1)[0] == REF_SCHEMA_FILE
 
 
+class TypeRecognizer:
+    """Which published type a `$ref` in one schema names: REF, ANCHOR or None (feature 020).
+
+    `DarnlinkRef` keeps the name match of `is_ref_type`. `DarnlinkAnchor` is recognised only by identity: a `$ref`
+    whose fragment is `/$defs/DarnlinkAnchor` and whose base is the published `$id`, a local file whose own `$id` is
+    that one (a pinned copy), or empty (the same document). Its name alone is not enough, and neither is its
+    pattern: every lowercase uuid has the same pattern, and most uuids in data are foreign keys, not identities."""
+
+    def __init__(self, schema_path: Optional[Path] = None):
+        self._dir = schema_path.parent if schema_path is not None else None
+        self._ids: Dict[Path, bool] = {}
+
+    def kind(self, ref: object) -> Optional[str]:
+        if not isinstance(ref, str):
+            return None
+        if is_ref_type(ref):
+            return REF
+        base, _, frag = ref.partition("#")
+        if frag == f"/$defs/{ANCHOR_DEF_NAME}" and (not base or self._names_the_types(base)):
+            return ANCHOR
+        return None
+
+    def _names_the_types(self, base: str) -> bool:
+        if TYPES_ID.fullmatch(base):
+            return True
+        if self._dir is None or base.startswith(("http://", "https://")):
+            return False
+        path = (self._dir / base).resolve()
+        if path not in self._ids:
+            try:
+                loaded = json.loads(path.read_text(encoding="utf-8-sig"))
+            except (OSError, ValueError):
+                loaded = None
+            self._ids[path] = isinstance(loaded, dict) and isinstance(loaded.get("$id"), str) \
+                and TYPES_ID.fullmatch(loaded["$id"]) is not None
+        return self._ids[path]
+
+    def mentions(self, schema: object) -> bool:
+        """True if some `$ref` anywhere in the schema names either type (see `mentions_ref_type`)."""
+        stack = [schema]
+        while stack:
+            node = stack.pop()
+            if isinstance(node, dict):
+                if self.kind(node.get("$ref")):
+                    return True
+                stack += node.values()
+            elif isinstance(node, list):
+                stack += node
+        return False
+
+
 def _local_def(root_schema: dict, ref: str) -> Optional[dict]:
     """Resolve a same-document `$ref` (`#/a/b`), or None."""
     if not ref.startswith("#/"):
@@ -137,8 +205,22 @@ def _matches(pattern: object, key: str) -> bool:
         return False
 
 
-def ref_positions(instance: object, schema: dict) -> List[Tuple[str, object]]:
-    """[(JSON Pointer, value)] of every position of `instance` whose schema node is the reference type.
+def ref_positions(instance: object, schema: dict,
+                  recognizer: Optional[TypeRecognizer] = None) -> List[Tuple[str, object]]:
+    """[(JSON Pointer, value)] of every position of `instance` whose schema node is the reference type."""
+    return _typed_positions(instance, schema, REF, recognizer or TypeRecognizer())
+
+
+def anchor_positions(instance: object, schema: dict,
+                     recognizer: Optional[TypeRecognizer] = None) -> List[Tuple[str, object]]:
+    """[(JSON Pointer, value)] of every position of `instance` whose schema node is `DarnlinkAnchor`, at any depth.
+    Inside an `anyOf`/`oneOf` only a string counts (LinkML writes an optional slot as `anyOf: [<type>, null]`)."""
+    return _typed_positions(instance, schema, ANCHOR, recognizer or TypeRecognizer())
+
+
+def _typed_positions(instance: object, schema: dict, want: str,
+                     recognizer: TypeRecognizer) -> List[Tuple[str, object]]:
+    """[(JSON Pointer, value)] of every position of `instance` whose schema node is the type `want`.
     Follows same-document `$ref`s, `properties`, `patternProperties`, `additionalProperties`, `items` and
     the `allOf`/`anyOf`/`oneOf` branches; a position reached twice is reported once. Inside an `anyOf`/`oneOf`
     the reference type is only one alternative (LinkML writes an optional slot as `anyOf: [<type>, null]`), so
@@ -152,9 +234,16 @@ def ref_positions(instance: object, schema: dict) -> List[Tuple[str, object]]:
         if depth > MAX_DEPTH or not isinstance(node, dict):
             return
         ref = node.get("$ref")
-        if is_ref_type(ref):
-            if not alternative or (isinstance(value, dict) and (
-                    "link" in value or ("uuid" in value and alternative == "lone"))):
+        kind = recognizer.kind(ref)
+        if kind:
+            if kind != want:
+                return
+            if not alternative:
+                found.setdefault(ptr, value)
+            elif want == ANCHOR:
+                if isinstance(value, str):
+                    found.setdefault(ptr, value)
+            elif isinstance(value, dict) and ("link" in value or ("uuid" in value and alternative == "lone")):
                 found.setdefault(ptr, value)
             return
         if isinstance(ref, str):
@@ -219,33 +308,55 @@ def mentions_ref_type(schema: object) -> bool:
 
 @dataclass
 class TargetIndex:
-    """uuid -> file, over `.md` frontmatter and YAML top-level `uuid`. A uuid in two files is ambiguous."""
+    """uuid -> file, over `.md` frontmatter, YAML top-level `uuid` and typed anchors in YAML. A uuid declared twice
+    (two files, or two elements of one file) is ambiguous. `pointers` holds, for an anchor that identifies an element
+    inside a file rather than the whole file, the JSON Pointer of that element."""
     by_uuid: Dict[str, Path]
     duplicates: Dict[str, List[Path]]
+    pointers: Dict[str, str] = field(default_factory=dict)
 
     def get(self, uuid: str) -> Optional[Path]:
         return self.by_uuid.get(uuid.lower())
+
+    def element(self, uuid: str) -> str:
+        """JSON Pointer of the element the uuid identifies, or '' when it identifies the whole file."""
+        return self.pointers.get(uuid.lower(), "")
 
     def is_ambiguous(self, uuid: str) -> bool:
         return uuid.lower() in self.duplicates
 
 
-def build_target_index(root: Path, excludes: set[str], yaml_docs: Dict[Path, object]) -> TargetIndex:
+def build_target_index(root: Path, excludes: set[str], yaml_docs: Dict[Path, object],
+                       anchors: Optional[Dict[Path, List[Tuple[str, str]]]] = None) -> TargetIndex:
+    """`anchors` maps a YAML file to its typed anchors, as (element pointer, uuid); '' is the whole file."""
     md = build_index(root, excludes)
     by_uuid = dict(md.by_uuid)
     duplicates = {u: list(ps) for u, ps in md.duplicates.items()}
-    for path, doc in yaml_docs.items():
-        u = doc.get("uuid") if isinstance(doc, dict) else None
-        if not isinstance(u, str) or not u.strip():
-            continue
-        u = u.strip().lower()
+    pointers: Dict[str, str] = {}
+    seen: set = set()
+
+    def add(path: Path, element: str, u: str) -> None:
+        if (path, element, u) in seen:   # a top-level `uuid` that the schema also types as an anchor
+            return
+        seen.add((path, element, u))
         if u in duplicates:
             duplicates[u].append(path)
         elif u in by_uuid:
             duplicates[u] = [by_uuid.pop(u), path]
+            pointers.pop(u, None)
         else:
             by_uuid[u] = path
-    return TargetIndex(by_uuid, duplicates)
+            if element:
+                pointers[u] = element
+
+    for path, doc in yaml_docs.items():
+        u = doc.get("uuid") if isinstance(doc, dict) else None
+        if isinstance(u, str) and u.strip():
+            add(path, "", u.strip().lower())
+    for path, items in (anchors or {}).items():
+        for element, u in items:
+            add(path, element, u)
+    return TargetIndex(by_uuid, duplicates, pointers)
 
 
 def _shown(path: Path, root: Path) -> str:
@@ -278,11 +389,19 @@ def judge(value: object, yaml_file: Path, index: TargetIndex, root: Path) -> Tup
     if points.is_dir():
         points = points / "README.md"   # a directory link: its target is the README.md inside
     shown = _shown(target, root)
+    path_part, fragment = split_fragment(link)
+    element = index.element(uuid)
+    # An anchor of one element of a file (feature 020): the fragment is the JSON Pointer of that element, and it is
+    # repaired like the path. A whole-file anchor leaves the fragment alone (a Markdown heading, say).
+    want = element or fragment
     if _same(points, target):
-        return OK, link, uuid, "", ""
+        if fragment == want:
+            return OK, link, uuid, "", ""
+        return REPAIR, link, uuid, f"the element moved to #{element} in {shown}", f"{path_part}#{want}"
     if points.is_file():
         return CONFLICT, link, uuid, f"path names an existing file, but the uuid lives in {shown}", ""
-    return REPAIR, link, uuid, f"target moved to {shown}", relative_link(target, yaml_file, split_fragment(link)[1])
+    where = f"{shown}#{element}" if element else shown
+    return REPAIR, link, uuid, f"target moved to {where}", relative_link(target, yaml_file, want)
 
 
 _LINK_LINE = r"^(\s*(?:-\s+)?link:\s*)(['\"]?){old}\2(\s*(?:#.*)?)$"
@@ -389,11 +508,13 @@ def plan(root: Path, excludes: set[str] = DEFAULT_EXCLUDES) -> Tuple[List[RefFin
 def _plan(root: Path, excludes: set[str]) -> Tuple[List[RefFinding], Dict[str, int]]:
     files = list(iter_yaml_files(root, excludes))
     docs = {p: _load_yaml(p) for p in files}
-    index = build_target_index(root, excludes, docs)
     schemas: Dict[Path, Optional[dict]] = {}
+    recognizers: Dict[Path, TypeRecognizer] = {}
     typed: Dict[Path, bool] = {}
-    stats = {"yaml_files": len(files), "with_schema": 0, "references": 0, "ok": 0}
+    stats = {"yaml_files": len(files), "with_schema": 0, "references": 0, "ok": 0, "anchors": 0}
     findings: List[RefFinding] = []
+    anchors: Dict[Path, List[Tuple[str, str]]] = {}
+    checked: List[Tuple[Path, str, dict, TypeRecognizer]] = []
     for path in files:
         decl = modeline_schema(path)
         if not decl or decl.startswith(("http://", "https://")):
@@ -411,8 +532,9 @@ def _plan(root: Path, excludes: set[str]) -> Tuple[List[RefFinding], Dict[str, i
             findings.append(RefFinding(NO_SCHEMA, rel, "/", "", "", f"the modeline names {decl}, which is not a "
                                                                         "readable JSON object"))
             continue
+        recognizer = recognizers.setdefault(spath, TypeRecognizer(spath))
         if spath not in typed:
-            typed[spath] = mentions_ref_type(schema)
+            typed[spath] = recognizer.mentions(schema)
         if not typed[spath]:
             continue
         if docs[path] is UNREADABLE_DOC:
@@ -420,7 +542,18 @@ def _plan(root: Path, excludes: set[str]) -> Tuple[List[RefFinding], Dict[str, i
                                                                          "load as one YAML document"))
             continue
         stats["with_schema"] += 1
-        for pointer, value in ref_positions(docs[path], schema):
+        for pointer, value in anchor_positions(docs[path], schema, recognizer):
+            stats["anchors"] += 1
+            if isinstance(value, str) and CANONICAL_UUID.fullmatch(value):
+                anchors.setdefault(path, []).append((pointer.rsplit("/", 1)[0], value))
+            else:
+                findings.append(RefFinding(INVALID_ANCHOR, rel, pointer or "/", "", str(value),
+                                           "an anchor must be a lowercase canonical uuid: not a link target"))
+        checked.append((path, rel, schema, recognizer))
+    # Anchors first, references after: a reference may point to an anchor in a file read later.
+    index = build_target_index(root, excludes, docs, anchors)
+    for path, rel, schema, recognizer in checked:
+        for pointer, value in ref_positions(docs[path], schema, recognizer):
             stats["references"] += 1
             kind, link, uuid, detail, new = judge(value, path, index, root)
             if kind == OK:

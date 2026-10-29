@@ -8,6 +8,16 @@ All notable changes to darnlink are documented here. The format is based on
 
 ### Added
 
+- **`yaml-refs`: typed anchors in YAML as link targets, and the types recognised by `$id`** (feature
+  020, step 1). A `$ref` to `DarnlinkAnchor` marks an anchor position when it names the published
+  `$id` (`…/schemas/v<N>/darnlink_types#/$defs/DarnlinkAnchor`), a pinned copy whose own `$id` is
+  that one, or `#/$defs/DarnlinkAnchor` in the same schema; a property that only repeats the uuid
+  pattern is not an anchor. The anchors of every YAML file with a local schema, at any depth, join
+  the targets of `yaml-refs`. An anchor that identifies one element of its file is linked with that
+  element's JSON Pointer as fragment (`hosts.yaml#/hosts/3`), and the fragment is repaired like the
+  path when the element moves. A non-canonical anchor is reported `invalid-anchor`; the same anchor
+  on two elements is `ambiguous`. `DarnlinkRef` keeps its name match. The JSON output gains
+  `stats.anchors`. Design and the two later steps: `specs/020-typed-anchor-index/spec.md`.
 - **Published types `DarnlinkAnchor` and `DarnlinkRef`, v1, LinkML first** (feature 019). The
   package now ships `darnlink/schemas/v1/darnlink_types.linkml.yaml`, the single source of truth,
   and `darnlink_types.schema.json`, generated from it by `tools/gen_schemas.py` and committed so a
