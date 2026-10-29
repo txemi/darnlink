@@ -225,7 +225,7 @@ def test_write_leaves_the_file_alone_when_the_result_would_not_load(tmp_path, mo
     root = _repo(tmp_path, "../old/target.md")
     card = root / "data" / "card.yaml"
     before = card.read_text(encoding="utf-8")
-    monkeypatch.setattr(yr, "_loads_with", lambda text, written: False)
+    monkeypatch.setattr(yr, "_rewrite_is_exact", lambda original, text, written: False)
     assert main(["yaml-refs", str(root), "--write"]) == 2
     assert card.read_text(encoding="utf-8") == before
 
@@ -269,3 +269,13 @@ def test_a_yaml_whose_schema_declares_no_reference_need_not_load(tmp_path):
     _w(tmp_path / "data" / "multi.yaml", "# yaml-language-server: $schema=../schemas/plain.schema.json\n"
                                          "a: !Ref x\n---\nb: 2\n")
     assert main(["yaml-refs", str(tmp_path)]) == 0
+
+
+def test_write_never_rewrites_an_undeclared_twin_of_an_escaped_link(tmp_path):
+    root = _repo(tmp_path, '"../old/targe\\x74.md"')
+    card = root / "data" / "card.yaml"
+    card.write_text(card.read_text(encoding="utf-8").replace("not/a/reference.md", "../old/target.md")
+                    .replace(f"  uuid: {V}\n", ""), encoding="utf-8")      # notes: a bare `link:` mapping, not declared
+    before = card.read_text(encoding="utf-8")
+    assert main(["yaml-refs", str(root), "--write"]) == 2
+    assert card.read_text(encoding="utf-8") == before

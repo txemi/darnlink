@@ -331,7 +331,7 @@ def apply_repairs(path: Path, repairs: List[RefFinding]) -> List[RefFinding]:
             return f"{m.group(1)}{_quoted(new, quote)}{m.group(3)}"
 
         text = pattern.sub(sub, text)
-    if text != original and not _loads_with(text, [f for f in repairs if f not in left]):
+    if text != original and not _rewrite_is_exact(original, text, [f for f in repairs if f not in left]):
         return list(repairs)
     write_text_keep_newlines(path, text)
     return left
@@ -353,20 +353,24 @@ def _at(doc: object, pointer: str) -> object:
     return node
 
 
-def _loads_with(text: str, written: List[RefFinding]) -> bool:
-    """True if `text` still loads as YAML and every reference just written holds its new link, at its own
-    position: a same text written somewhere else does not count."""
+def _rewrite_is_exact(original: str, text: str, written: List[RefFinding]) -> bool:
+    """True if `text` loads as YAML and equals the original document with exactly the written changes: each
+    repaired reference holds its new link at its own position, and no other value moved. A same text
+    rewritten somewhere else (a link written escaped at the declared position and plain at an undeclared
+    one, say) fails here."""
     import yaml
     loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
     try:
-        doc = yaml.load(text.lstrip("\ufeff"), Loader=loader)
+        before = yaml.load(original.lstrip("\ufeff"), Loader=loader)
+        after = yaml.load(text.lstrip("\ufeff"), Loader=loader)
     except Exception:
         return False
     for f in written:
-        value = _at(doc, "" if f.pointer == "/" else f.pointer)
-        if not isinstance(value, dict) or value.get("link") != f.new_link:
+        value = _at(before, "" if f.pointer == "/" else f.pointer)
+        if not isinstance(value, dict):
             return False
-    return True
+        value["link"] = f.new_link
+    return before == after
 
 
 def plan(root: Path, excludes: set[str] = DEFAULT_EXCLUDES) -> Tuple[List[RefFinding], Dict[str, int]]:
