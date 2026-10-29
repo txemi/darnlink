@@ -43,7 +43,14 @@ def _gen_schemas():
 def test_the_shipped_json_schema_is_a_fresh_generation_of_the_linkml_source():
     pytest.importorskip("linkml")
     gen = _gen_schemas()
-    assert gen.JSON_OUTPUT.read_text(encoding="utf-8") == gen.generate(), (
+    try:
+        expected = gen.generate()
+    except ImportError as e:
+        # `linkml` imports, but its generator loads native wheels later. On the Windows CI agent
+        # pyoxigraph's DLL does not load. The drift this test guards is the same on every platform
+        # and the Linux runs still check it, so a machine that cannot run the generator says why.
+        pytest.skip(f"the LinkML generator cannot load on this machine: {e}")
+    assert gen.JSON_OUTPUT.read_text(encoding="utf-8") == expected, (
         "darnlink_types.schema.json drifted from its LinkML source: run tools/gen_schemas.py")
 
 
