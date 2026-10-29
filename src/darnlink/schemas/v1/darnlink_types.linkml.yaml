@@ -1,0 +1,49 @@
+# The darnlink reusable types, v1. SINGLE SOURCE OF TRUTH: the JSON Schema next to this file is
+# generated from it (tools/gen_schemas.py) and must never be edited by hand.
+# v1 never breaks: a change that would reject data v1 accepted goes to a new v2 directory.
+id: https://github.com/txemi/darnlink/schemas/v1/darnlink_types
+name: darnlink_types
+title: darnlink reusable types (v1)
+description: >-
+  Two types any repository can import (LinkML) or pin (JSON Schema) to make its structured data
+  link-safe. DarnlinkAnchor is a typed UUID that identifies the element carrying it.
+  DarnlinkRef is a link to another element: where to find it (link) and who it is (uuid).
+version: "1.0.0"
+license: GPL-3.0-or-later
+prefixes:
+  darnlink: https://github.com/txemi/darnlink/schemas/v1/darnlink_types/
+  linkml: https://w3id.org/linkml/
+default_prefix: darnlink
+default_range: string
+imports:
+  - linkml:types
+
+types:
+  DarnlinkAnchor:
+    typeof: string
+    pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    description: >-
+      A typed UUID meaning "this element is identified here". Canonical RFC 4122 text form,
+      lowercase only, any version. Exactly one element in a repository should carry a given
+      anchor; a duplicate is the copier's responsibility, and darnlink reports links to it as
+      ambiguous.
+
+classes:
+  DarnlinkRef:
+    description: >-
+      A link to another element, with both halves of a robust Markdown link: the path or URL a
+      reader follows, and the anchor of the target, the part that survives a move.
+    # Attributes, not global slots: they stay scoped to this class, so a schema that imports
+    # these types keeps its own `link` and `uuid` slots free.
+    attributes:
+      link:
+        range: string
+        required: true
+        pattern: "^(?![A-Za-z][A-Za-z0-9+.-]*:)(?!/)(?!#).+|^https?://.+"
+        description: >-
+          Where the target is: a path relative to the file that carries the reference, or an
+          http(s) URL. Not an absolute path, not a bare #fragment, no other scheme.
+      uuid:
+        range: DarnlinkAnchor
+        required: true
+        description: The anchor of the target.

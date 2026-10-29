@@ -35,7 +35,7 @@ Changelog = "https://github.com/txemi/darnlink/blob/main/CHANGELOG.md"
 darnlink = "darnlink.cli:main"
 
 [project.optional-dependencies]
-dev = ["pytest>=7"]
+dev = ["pytest>=7", "jsonschema>=4.18", "linkml>=1.8"]
 
 [build-system]
 requires = ["hatchling"]
