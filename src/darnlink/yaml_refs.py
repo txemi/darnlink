@@ -3,7 +3,7 @@
 A reference from structured data to another document of the repository has the same two halves as a
 robust Markdown link: `{uuid, link}`. `link` is the path a reader follows, relative to the YAML file
 that carries it; `uuid` is the identity of the target, the part that survives a move. That shape is
-the `DarnlinkRef` type (spec 019).
+the `DarnlinkRef` type.
 
 darnlink does not guess which values are references from their shape: a mapping that happens to have
 a `uuid` and a `link` key is not enough. A YAML file declares its JSON Schema with the usual modeline
@@ -20,6 +20,9 @@ correct, repairable (the uuid lives elsewhere: the new relative path is proposed
 `--write`), conflicting (the path still names an existing file that is not the uuid's), unresolvable
 or ambiguous. A `link` that is a web URL is not checked here (a `DarnlinkWebRef` may point to
 another repository).
+
+Known limits: a `$ref` to another file (other than the reference type itself), `prefixItems`, `if` and
+`not` are not followed, and a repeated `link` key is not reported (the YAML loader keeps the last one).
 """
 from __future__ import annotations
 
@@ -33,7 +36,7 @@ from pathlib import Path
 from typing import Dict, Iterator, List, Optional, Tuple
 
 from .frontmatter_index import DEFAULT_EXCLUDES, build_index, dir_excluded
-from .paths import is_web_href, relative_link, resolve_href, resolved
+from .paths import is_web_href, relative_link, resolve_href, resolved, split_fragment
 
 REF_DEF_NAME = "DarnlinkRef"
 REF_SCHEMA_FILE = "ref.schema.json"
@@ -42,8 +45,11 @@ MAX_DEPTH = 64
 
 _MODELINE = re.compile(r"^#\s*yaml-language-server:\s*\$schema=(\S+)")
 
-OK, REPAIR, CONFLICT, UNRESOLVABLE, AMBIGUOUS, MALFORMED, NO_SCHEMA = (
-    "ok", "repair", "conflict", "unresolvable", "ambiguous", "malformed", "unreadable-schema")
+OK, REPAIR, CONFLICT, UNRESOLVABLE, AMBIGUOUS, MALFORMED, NO_SCHEMA, UNREADABLE = (
+    "ok", "repair", "conflict", "unresolvable", "ambiguous", "malformed", "unreadable-schema", "unreadable-yaml")
+
+#: What `_load_yaml` returns for a file it cannot read. Not None: an empty file loads as None and is readable.
+UNREADABLE_DOC = object()
 
 
 @dataclass(frozen=True)
@@ -68,7 +74,7 @@ def iter_yaml_files(root: Path, excludes: set[str] = DEFAULT_EXCLUDES) -> Iterat
 
 
 def _load_yaml(path: Path):
-    """The parsed document, or None if it cannot be read. Any error counts as unreadable: PyYAML raises more
+    """The parsed document, or UNREADABLE_DOC if it cannot be read. Any error counts as unreadable: PyYAML raises more
     than YAMLError on valid syntax with an impossible value (a date such as 2023-13-45 is a ValueError), and
     one such file anywhere in the tree must not abort the whole run."""
     import yaml
@@ -76,14 +82,17 @@ def _load_yaml(path: Path):
     try:
         return yaml.load(path.read_text(encoding="utf-8-sig"), Loader=loader)
     except Exception:
-        return None
+        return UNREADABLE_DOC
 
 
 def modeline_schema(path: Path) -> Optional[str]:
-    """The `$schema=` of the yaml-language-server modeline in the leading comment lines, if any."""
+    """The `$schema=` of the yaml-language-server modeline in the leading comment lines, if any. A `---`
+    document marker on the first line is allowed before them."""
     try:
         with path.open(encoding="utf-8-sig") as fh:
-            for line in fh:
+            for n, line in enumerate(fh):
+                if n == 0 and line.rstrip("\r\n") == "---":
+                    continue
                 if not line.startswith("#"):
                     break
                 m = _MODELINE.match(line)
@@ -233,11 +242,21 @@ def judge(value: object, yaml_file: Path, index: TargetIndex, root: Path) -> Tup
         return OK, link, uuid, "", ""
     if points.is_file():
         return CONFLICT, link, uuid, f"path names an existing file, but the uuid lives in {shown}", ""
-    return REPAIR, link, uuid, f"target moved to {shown}", relative_link(target, yaml_file)
+    return REPAIR, link, uuid, f"target moved to {shown}", relative_link(target, yaml_file, split_fragment(link)[1])
 
 
 _LINK_LINE = r"^(\s*(?:-\s+)?link:\s*)(['\"]?){old}\2(\s*(?:#.*)?)$"
-_NEEDS_QUOTES = re.compile(r"(^[-?:,\[\]{}#&*!|>'\"%@`\s])|(:\s)|(\s#)|(\s$)")
+# A comma or a bracket anywhere is quoted too: harmless in block style, and it would end the value inside {}.
+_NEEDS_QUOTES = re.compile(r"(^[-?:\[\]{}#&*!|>'\"%@`\s])|(:\s)|(\s#)|(\s$)|[,\[\]{}]")
+
+
+def _quoted(new: str, quote: str) -> str:
+    """`new` written inside `quote` (none, `'` or `"`), escaped the way YAML reads that style."""
+    if quote == "'":
+        return "'" + new.replace("'", "''") + "'"
+    if quote == '"':
+        return '"' + new.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    return new
 
 
 def apply_repairs(path: Path, repairs: List[RefFinding]) -> List[RefFinding]:
@@ -245,13 +264,16 @@ def apply_repairs(path: Path, repairs: List[RefFinding]) -> List[RefFinding]:
     The rewrite works on lines, not on positions, so a link text is only rewritten when EVERY `link:` line
     carrying it in this file is one of these repairs, all with the same new path. If the same text also
     appears at a position the schema does not declare, or at a reference that is not being repaired, it is
-    left as is and returned, to be fixed by hand."""
+    left as is and returned, to be fixed by hand. The text is also counted as a plain substring, so a file that
+    mentions it anywhere else (`../README.md` holds `README.md`) is left to the reader too.
+    The new text must load as YAML again and hold every new link; if not, nothing is written and every repair
+    is returned."""
     from .frontmatter_edit import read_text_keep_newlines, write_text_keep_newlines
 
     by_old: Dict[str, set] = {}
     for f in repairs:
         by_old.setdefault(f.link, set()).add(f.new_link)
-    text = read_text_keep_newlines(path)
+    text = original = read_text_keep_newlines(path)
     left = []
     for old, news in by_old.items():
         if len(news) != 1:
@@ -270,11 +292,34 @@ def apply_repairs(path: Path, repairs: List[RefFinding]) -> List[RefFinding]:
 
         def sub(m: re.Match) -> str:
             quote = m.group(2) or ('"' if _NEEDS_QUOTES.search(new) else "")
-            return f"{m.group(1)}{quote}{new}{quote}{m.group(3)}"
+            return f"{m.group(1)}{_quoted(new, quote)}{m.group(3)}"
 
         text = pattern.sub(sub, text)
+    if text != original and not _loads_with(text, [f for f in repairs if f not in left]):
+        return list(repairs)
     write_text_keep_newlines(path, text)
     return left
+
+
+def _loads_with(text: str, written: List[RefFinding]) -> bool:
+    """True if `text` still loads as YAML and every link just written is there as a `link` string value."""
+    import yaml
+    loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+    try:
+        doc = yaml.load(text.lstrip("\ufeff"), Loader=loader)
+    except Exception:
+        return False
+    found: set = set()
+    stack = [doc]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            if isinstance(node.get("link"), str):
+                found.add(node["link"])
+            stack += list(node.values())
+        elif isinstance(node, list):
+            stack += node
+    return all(f.new_link in found for f in written)
 
 
 def plan(root: Path, excludes: set[str] = DEFAULT_EXCLUDES) -> Tuple[List[RefFinding], Dict[str, int]]:
@@ -300,7 +345,7 @@ def _plan(root: Path, excludes: set[str]) -> Tuple[List[RefFinding], Dict[str, i
         spath = (path.parent / decl).resolve()
         if spath not in schemas:
             try:
-                loaded = json.loads(spath.read_text(encoding="utf-8"))
+                loaded = json.loads(spath.read_text(encoding="utf-8-sig"))
             except (OSError, ValueError):
                 loaded = None
             schemas[spath] = loaded if isinstance(loaded, dict) else None
@@ -310,7 +355,9 @@ def _plan(root: Path, excludes: set[str]) -> Tuple[List[RefFinding], Dict[str, i
             findings.append(RefFinding(NO_SCHEMA, rel, "/", "", "", f"the modeline names {decl}, which is not a "
                                                                         "readable JSON object"))
             continue
-        if docs[path] is None:
+        if docs[path] is UNREADABLE_DOC:
+            findings.append(RefFinding(UNREADABLE, rel, "/", "", "", "the file has a schema modeline but does not "
+                                                                         "load as one YAML document"))
             continue
         stats["with_schema"] += 1
         for pointer, value in ref_positions(docs[path], schema):

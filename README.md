@@ -146,6 +146,15 @@ Files can also opt themselves out from the inside, with no CLI flag: see
 [FORMAT.md §5](FORMAT.md#5-opting-a-file-out) <!-- uuid: 9052d864-2a45-4ed4-8725-d8a394e7a7ef --> for `<!-- darnlink-ignore-links -->` (leave *my* links
 alone, but keep anchoring to me) and `<!-- darnlink-ignore-file -->` (drop me from the graph).
 
+### Experimental: references in YAML files (`darnlink yaml-refs`)
+
+`darnlink yaml-refs [path] [--exclude NAME]... [--write] [--json]` does the same for structured data:
+a `{uuid, link}` mapping in a YAML file, at a position its JSON Schema (named by the
+`# yaml-language-server: $schema=…` modeline) declares as a `$ref` to `DarnlinkRef` or to a
+`ref.schema.json`. Only those positions are checked; a mapping that merely looks like a reference is
+never touched. Exit code 0 when every reference is correct, 2 when one is broken or a file cannot be
+read. The module docstring of `darnlink.yaml_refs` lists its known limits.
+
 ### `--json` output
 
 Stable shape, meant for gates and scripts:

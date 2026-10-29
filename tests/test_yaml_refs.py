@@ -142,3 +142,61 @@ def test_write_does_not_trade_a_flow_mapping_repair_for_an_undeclared_line(tmp_p
     before = card.read_text(encoding="utf-8")
     assert main(["yaml-refs", str(root), "--write"]) == 2
     assert card.read_text(encoding="utf-8") == before
+
+
+def test_a_kept_quote_is_escaped_in_the_new_link(tmp_path):
+    root = _repo(tmp_path, "'../old/target.md'")
+    (root / "docs" / "target.md").rename(root / "docs" / "it's.md")
+    assert main(["yaml-refs", str(root), "--write"]) == 0
+    assert "  link: '../docs/it''s.md'\n" in (root / "data" / "card.yaml").read_text(encoding="utf-8")
+    assert main(["yaml-refs", str(root)]) == 0
+
+
+def test_a_backslash_inside_double_quotes_is_escaped(tmp_path):
+    root = _repo(tmp_path, '"../old/target.md"')
+    (root / "docs" / "target.md").rename(root / "docs" / "a\\b.md")
+    assert main(["yaml-refs", str(root), "--write"]) == 0
+    assert '  link: "../docs/a\\\\b.md"\n' in (root / "data" / "card.yaml").read_text(encoding="utf-8")
+    assert main(["yaml-refs", str(root)]) == 0
+
+
+def test_an_unreadable_yaml_with_a_schema_is_reported(tmp_path, capsys):
+    root = _repo(tmp_path, "../docs/target.md")
+    card = root / "data" / "card.yaml"
+    card.write_text(card.read_text(encoding="utf-8") + "when: 2023-02-30\n", encoding="utf-8")
+    assert main(["yaml-refs", str(root), "--json"]) == 2
+    assert json.loads(capsys.readouterr().out)["findings"][0]["kind"] == "unreadable-yaml"
+
+
+def test_an_empty_yaml_with_a_schema_is_not_unreadable(tmp_path):
+    _w(tmp_path / "schemas" / "card.schema.json", json.dumps(SCHEMA))
+    _w(tmp_path / "data" / "empty.yaml", "# yaml-language-server: $schema=../schemas/card.schema.json\n")
+    assert main(["yaml-refs", str(tmp_path)]) == 0
+
+
+def test_the_fragment_survives_a_repair(tmp_path):
+    root = _repo(tmp_path, "../old/target.md#section")
+    assert main(["yaml-refs", str(root), "--write"]) == 0
+    assert "  link: ../docs/target.md#section\n" in (root / "data" / "card.yaml").read_text(encoding="utf-8")
+
+
+def test_a_schema_with_a_bom_and_a_modeline_after_the_document_marker(tmp_path):
+    root = _repo(tmp_path, "../old/target.md")
+    schema = root / "schemas" / "card.schema.json"
+    schema.write_text("﻿" + schema.read_text(encoding="utf-8"), encoding="utf-8")
+    card = root / "data" / "card.yaml"
+    card.write_text("---\n" + card.read_text(encoding="utf-8"), encoding="utf-8")
+    assert main(["yaml-refs", str(root)]) == 2                    # found, and reported as a repair
+    assert main(["yaml-refs", str(root), "--write"]) == 0
+    assert "  link: ../docs/target.md\n" in card.read_text(encoding="utf-8")
+
+
+def test_a_new_link_with_a_comma_is_quoted_inside_a_flow_mapping(tmp_path):
+    root = _repo(tmp_path, "../docs/target.md")
+    (root / "docs" / "target.md").rename(root / "docs" / "x,y.md")
+    card = root / "data" / "card.yaml"
+    card.write_text("# yaml-language-server: $schema=../schemas/card.schema.json\n"
+                    f"home: {{\n  uuid: {U},\n  link: ../old/target.md\n}}\n", encoding="utf-8")
+    assert main(["yaml-refs", str(root), "--write"]) == 0
+    assert '  link: "../docs/x,y.md"\n' in card.read_text(encoding="utf-8")
+    assert main(["yaml-refs", str(root)]) == 0
