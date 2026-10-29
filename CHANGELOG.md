@@ -35,9 +35,10 @@ All notable changes to darnlink are documented here. The format is based on
 - **`--online` no longer hangs on a credential prompt.** When the default branch is not known locally,
   the own-repo rung asks the remote with `git ls-remote`; over an https origin, git (or Git Credential
   Manager on Windows) could wait for a login nobody would give, and on Windows the 10-second timeout
-  does not fire because the killed git leaves its credential helper holding the pipes. That `git` now
-  runs with `GIT_TERMINAL_PROMPT=0` and `GCM_INTERACTIVE=never`: stored credentials still work, prompts
-  do not. Found as a Windows CI run that hung until it was aborted at 90 minutes.
+  did not end it. That `git` now runs with `GIT_TERMINAL_PROMPT=0`, `GCM_INTERACTIVE=never` and stdin
+  closed: stored credentials still work, prompts do not. Found as a Windows CI run that hung until it
+  was aborted at 90 minutes. Not covered: an askpass program set by the caller, or an ssh origin
+  whose host key is unknown.
 
 ## [0.29.0] — 2026-10-29
 

@@ -766,7 +766,8 @@ def test_default_branch_falls_back_to_the_remote_when_origin_HEAD_is_absent(tmp_
 def test_the_remote_fallback_can_never_ask_for_credentials(tmp_path, monkeypatch):
     """A credential prompt that nobody answers hung the Windows CI run until it was aborted: the
     `timeout` does not fire there, because the killed git leaves its credential helper holding the
-    pipes. So every git `_own_repo` runs carries the two switches that turn the prompts off."""
+    pipes. So every git `_own_repo` runs carries the two switches that turn the prompts off, and
+    has no stdin to wait on."""
     import subprocess
     from darnlink.cli import _own_repo
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, env=_GIT_ENV)
@@ -779,7 +780,7 @@ def test_the_remote_fallback_can_never_ask_for_credentials(tmp_path, monkeypatch
 
     def spy(cmd, *a, **k):
         if "ls-remote" in cmd:
-            seen.append(k.get("env") or {})
+            seen.append(k)
             return subprocess.CompletedProcess(cmd, 128, "", "")   # never touch the network
         return real_run(cmd, *a, **k)
 
@@ -787,7 +788,9 @@ def test_the_remote_fallback_can_never_ask_for_credentials(tmp_path, monkeypatch
     own = _own_repo(tmp_path)
     assert own is not None and own.default_ref == ""
     assert len(seen) == 1
-    assert seen[0].get("GIT_TERMINAL_PROMPT") == "0" and seen[0].get("GCM_INTERACTIVE") == "never"
+    env = seen[0].get("env") or {}
+    assert env.get("GIT_TERMINAL_PROMPT") == "0" and env.get("GCM_INTERACTIVE") == "never"
+    assert seen[0].get("stdin") is subprocess.DEVNULL
 
 
 def test_default_branch_flag_wins_over_the_automatic_sources(tmp_path):
