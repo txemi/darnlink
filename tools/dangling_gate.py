@@ -26,6 +26,7 @@ because a reader who clicks it gets a 404 from our own documentation.
 Usage:
     python3 tools/dangling_gate.py            # scan the repo root
     python3 tools/dangling_gate.py <path>     # scan somewhere else
+    python3 tools/dangling_gate.py . --exclude '.venv-*'   # anything after <path> goes to darnlink check
 """
 
 from __future__ import annotations
@@ -54,11 +55,12 @@ def _echo(stream_name: str, text: str, limit: int = 2000) -> None:
 
 def main() -> int:
     root = sys.argv[1] if len(sys.argv) > 1 else "."
+    extra = sys.argv[2:]
     # `uv run` so this uses the checked-out source, not an installed release: the gate must judge the
     # tree it is being run on, otherwise a bug in the current branch could hide behind an older wheel.
     try:
         proc = subprocess.run(
-            ["uv", "run", "darnlink", "check", root, "--json"],
+            ["uv", "run", "darnlink", "check", root, "--json", *extra],
             capture_output=True,
             text=True,
         )
