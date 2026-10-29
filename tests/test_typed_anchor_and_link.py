@@ -22,7 +22,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 V1_ID = "https://github.com/txemi/darnlink/schemas/v1/darnlink_types"
 FILES = ("darnlink_types.linkml.yaml", "darnlink_types.schema.json")
-GOOD_UUID = "0ef3169a-bce1-4a6b-8bc4-7850ceade107"
+GOOD_UUID = "6798c9d3-e47e-4050-9643-54bea6dc02e7"
 
 
 def _published() -> dict:
@@ -98,11 +98,19 @@ def test_a_valid_ref_validates(instance):
     {"link": "../docs/target.md", "uuid": GOOD_UUID + "\n"},
     {"link": "HTTPS://example.test/x.md", "uuid": GOOD_UUID},
     {"link": "notes:1.md", "uuid": GOOD_UUID},
+    {"link": " /etc/target.md", "uuid": GOOD_UUID},
+    {"link": " #only-a-fragment", "uuid": GOOD_UUID},
+    {"link": "\tjavascript:alert(1)", "uuid": GOOD_UUID},
+    {"link": "a.md ", "uuid": GOOD_UUID},
+    {"link": "https:// ", "uuid": GOOD_UUID},
+    {"link": "a\u2028b.md", "uuid": GOOD_UUID},
     GOOD_UUID,
 ], ids=["missing-uuid", "missing-link", "uppercase-uuid", "short-uuid", "extra-property",
         "absolute-path", "bare-fragment", "other-scheme", "empty-link", "blank-link",
         "link-trailing-newline", "link-inner-newline", "link-inner-cr", "uuid-trailing-newline",
-        "uppercase-scheme", "colon-in-name-without-dot-slash", "not-an-object"])
+        "uppercase-scheme", "colon-in-name-without-dot-slash", "leading-space-absolute",
+        "leading-space-fragment", "leading-tab-scheme", "trailing-space", "url-trailing-space",
+        "line-separator", "not-an-object"])
 def test_an_invalid_ref_is_rejected(instance):
     assert list(_validator("DarnlinkRef").iter_errors(instance)) != []
 

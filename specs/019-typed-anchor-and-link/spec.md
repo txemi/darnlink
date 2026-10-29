@@ -1,6 +1,6 @@
 # Feature Specification: typed anchor and link, published in LinkML
 
-**Feature Branch**: `wt/typed-anchor-link`
+**Feature Branch**: `019-typed-anchor-and-link`
 
 **Created**: 2026-10-29
 
@@ -13,7 +13,7 @@ A typed reference needs two published types, from one source, that any repositor
 pin: the **anchor** (an element says "I am identified here") and the **link** (an element says
 "that one, over there").
 
-Supersedes the unmerged `wt/ref-schema` branch, which hand-wrote a `ref.schema.json` with a
+Supersedes the unmerged pull request #11, which hand-wrote a `ref.schema.json` with a
 relative-only `link` and a case-insensitive `uuid`.
 
 ---
@@ -59,8 +59,11 @@ unchanged (Markdown frontmatter, and the top-level `uuid` of a YAML file for `ya
 is out of scope below.
 
 Both patterns are written to mean the same in ECMA-262 and in Python, which is what `jsonschema`
-runs: Python's `$` also matches before a trailing newline, so the anchor ends in `(?!\n)$` and the
-link forbids CR and LF with a leading lookahead.
+runs. Python's `$` also matches before a trailing newline, so the anchor ends in `(?!\n)$`. The
+link forbids CR, LF, U+2028 and U+2029 with a leading lookahead, because ECMA-262's `.` stops at the
+last two and Python's does not. One difference is left: the two disagree on whether a few rare
+characters are whitespace (U+001C to U+001F and U+0085 are for Python, U+FEFF is for ECMA-262), so a
+link that starts or ends with one of them is judged differently. No real link does.
 
 ## Versioning
 
