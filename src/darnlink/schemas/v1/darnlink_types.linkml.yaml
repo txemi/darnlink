@@ -21,7 +21,9 @@ imports:
 types:
   DarnlinkAnchor:
     typeof: string
-    pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    # `(?!\n)` before `$`: Python's `$` (what jsonschema runs) also matches before a trailing
+    # newline; ECMA-262's does not. The lookahead makes both reject it.
+    pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?!\n)$'
     description: >-
       A typed UUID meaning "this element is identified here". Canonical RFC 4122 text form,
       lowercase only, any version. Exactly one element in a repository should carry a given
@@ -39,10 +41,14 @@ classes:
       link:
         range: string
         required: true
-        pattern: "^(?![A-Za-z][A-Za-z0-9+.-]*:)(?!/)(?!#).+|^https?://.+"
+        # No CR/LF anywhere, at least one non-space character, then either a relative path (no
+        # scheme, not absolute, not a bare fragment) or a lowercase http(s) URL. Valid in both
+        # ECMA-262 and Python regular expressions.
+        pattern: '^(?![\s\S]*[\r\n])(?=[\s\S]*\S)(?:(?![A-Za-z][A-Za-z0-9+.-]*:)(?!/)(?!#).+|https?://.+)$'
         description: >-
           Where the target is: a path relative to the file that carries the reference, or an
-          http(s) URL. Not an absolute path, not a bare #fragment, no other scheme.
+          http(s) URL. Not an absolute path, not a bare #fragment, no other scheme, no line
+          break, not blank.
       uuid:
         range: DarnlinkAnchor
         required: true

@@ -12,8 +12,8 @@ All notable changes to darnlink are documented here. The format is based on
   package now ships `darnlink/schemas/v1/darnlink_types.linkml.yaml`, the single source of truth,
   and `darnlink_types.schema.json`, generated from it by `tools/gen_schemas.py` and committed so a
   repository can pin it without LinkML. `DarnlinkAnchor` is a typed UUID in canonical lowercase
-  RFC 4122 form; `DarnlinkRef` is `{link, uuid}`, both required and nothing else, where `link` is a
-  relative path or an `http(s)` URL and `uuid` is the target's anchor. Both are reachable under
+  RFC 4122 form (no trailing newline); `DarnlinkRef` is `{link, uuid}`, both required and nothing else, where `link` is a
+  relative path or a lowercase `http(s)` URL, on one line and not blank, and `uuid` is the target's anchor. Both are reachable under
   `$defs` (the generator inlines LinkML types, so the script adds `$defs/DarnlinkAnchor` and points
   `DarnlinkRef.uuid` at it). The `$id` carries `/v1/` and v1 never breaks; consumers pin a copy with
   its sha256 instead of resolving it over the network. A `$ref` into a pinned copy's `DarnlinkRef`

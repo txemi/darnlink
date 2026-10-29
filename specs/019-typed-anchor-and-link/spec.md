@@ -22,15 +22,17 @@ relative-only `link` and a case-insensitive `uuid`.
 
 | Type | Kind | Shape |
 |---|---|---|
-| `DarnlinkAnchor` | LinkML `type` (`typeof: string`) | canonical RFC 4122 text form, **lowercase only**: `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`. Any version |
+| `DarnlinkAnchor` | LinkML `type` (`typeof: string`) | canonical RFC 4122 text form, **lowercase only**: `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?!\n)$`. Any version |
 | `DarnlinkRef` | LinkML `class` | object `{link, uuid}`, both required, **no other property** |
 
 `DarnlinkRef` fields:
 
 - `link`: where the target is. A path relative to the file that carries the reference (a
   `#fragment` after it is allowed, a directory path means its `README.md`), or an `http(s)` URL. Not
-  an absolute path, not a bare `#fragment`, not another scheme, not empty. The name stays `link`:
-  it is what `yaml-refs` already reads.
+  an absolute path, not a bare `#fragment`, not another scheme, not empty or blank, no line break
+  (CR or LF) anywhere. The name stays `link`: it is what `yaml-refs` already reads.
+  - A relative file whose name contains a colon reads as a scheme: write it `./notes:1.md`.
+  - The URL scheme is lowercase only: `HTTPS://…` is rejected.
 - `uuid`: the target's anchor, range `DarnlinkAnchor`.
 
 ## Decisions
@@ -55,6 +57,10 @@ relative-only `link` and a case-insensitive `uuid`.
 This table defines where anchors **are**. Which of those places darnlink **indexes** today is
 unchanged (Markdown frontmatter, and the top-level `uuid` of a YAML file for `yaml-refs`); the rest
 is out of scope below.
+
+Both patterns are written to mean the same in ECMA-262 and in Python, which is what `jsonschema`
+runs: Python's `$` also matches before a trailing newline, so the anchor ends in `(?!\n)$` and the
+link forbids CR and LF with a leading lookahead.
 
 ## Versioning
 
@@ -81,10 +87,11 @@ today for Markdown.
   LinkML file. `tools/gen_schemas.py --check` exits 1 when it is not.
 - **FR-003** `$defs/DarnlinkAnchor` and `$defs/DarnlinkRef` both exist; `DarnlinkRef.uuid` is a
   `$ref` to `#/$defs/DarnlinkAnchor`.
-- **FR-004** `DarnlinkRef` rejects: a missing `link` or `uuid`, an uppercase or malformed `uuid`, an
-  extra property, an absolute path, a bare fragment, a non-http(s) scheme, an empty `link`.
+- **FR-004** `DarnlinkRef` rejects: a missing `link` or `uuid`, an uppercase or malformed `uuid`, a
+  `uuid` with a trailing newline, an extra property, an absolute path, a bare fragment, a
+  non-http(s) or uppercase scheme, an empty or blank `link`, a `link` with a CR or LF anywhere.
 - **FR-005** `DarnlinkRef` accepts a relative path (with or without a fragment, file or directory)
-  and an `http(s)` URL.
+  — a colon in a file name only behind `./` — and an `http(s)` URL.
 - **FR-006** A `$ref` into a pinned copy (`…/darnlink_types.schema.json#/$defs/DarnlinkRef`) is
   recognised by `yaml-refs` as a reference position, by definition name, with no code change.
 
@@ -111,5 +118,6 @@ only: the runtime package does not need it.
 `tests/test_typed_anchor_and_link.py`: the committed JSON equals a fresh generation (skipped
 without `linkml`); valid and invalid instances against a copy registered under its `$id`, never
 fetched; the anchor alone; the `yaml-refs` recognition of FR-006; the files are present under the
-package and inside a wheel built with `uv build`. The drift test and the extra-property case were
-checked by mutation (flipping `additionalProperties` in the committed JSON fails both).
+package and inside the wheel and sdist built with `uv build`. The drift test and the
+extra-property case were checked by mutation (flipping `additionalProperties` in the committed JSON
+fails both), and the line-break and blank cases by running them against the first, looser patterns.

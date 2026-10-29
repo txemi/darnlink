@@ -6,12 +6,13 @@ Three promises are checked here:
    (skipped when `linkml` is not installed; it is in the `dev` extra);
 2. the JSON Schema accepts and rejects what the spec says, validated the way a consumer would use
    a pinned copy: registered under its `$id`, never fetched;
-3. both schema files ship inside the built wheel, not only in the source tree.
+3. both schema files ship inside the built wheel and sdist, not only in the source tree.
 """
 import importlib.util
 import json
 import shutil
 import subprocess
+import tarfile
 import zipfile
 from importlib import resources
 from pathlib import Path
@@ -74,7 +75,8 @@ def _validator(definition: str):
     {"link": "assets/diagram/", "uuid": GOOD_UUID},
     {"link": "https://example.test/owner/repo/src/branch/main/README.md", "uuid": GOOD_UUID},
     {"link": "http://example.test/page", "uuid": GOOD_UUID},
-], ids=["relative", "fragment", "directory", "https-url", "http-url"])
+    {"link": "./notes:1.md", "uuid": GOOD_UUID},
+], ids=["relative", "fragment", "directory", "https-url", "http-url", "colon-in-name-with-dot-slash"])
 def test_a_valid_ref_validates(instance):
     assert list(_validator("DarnlinkRef").iter_errors(instance)) == []
 
@@ -89,9 +91,18 @@ def test_a_valid_ref_validates(instance):
     {"link": "#only-a-fragment", "uuid": GOOD_UUID},
     {"link": "ftp://example.test/x.md", "uuid": GOOD_UUID},
     {"link": "", "uuid": GOOD_UUID},
+    {"link": " ", "uuid": GOOD_UUID},
+    {"link": "a.md\n", "uuid": GOOD_UUID},
+    {"link": "a\nb.md", "uuid": GOOD_UUID},
+    {"link": "a\rb.md", "uuid": GOOD_UUID},
+    {"link": "../docs/target.md", "uuid": GOOD_UUID + "\n"},
+    {"link": "HTTPS://example.test/x.md", "uuid": GOOD_UUID},
+    {"link": "notes:1.md", "uuid": GOOD_UUID},
     GOOD_UUID,
 ], ids=["missing-uuid", "missing-link", "uppercase-uuid", "short-uuid", "extra-property",
-        "absolute-path", "bare-fragment", "other-scheme", "empty-link", "not-an-object"])
+        "absolute-path", "bare-fragment", "other-scheme", "empty-link", "blank-link",
+        "link-trailing-newline", "link-inner-newline", "link-inner-cr", "uuid-trailing-newline",
+        "uppercase-scheme", "colon-in-name-without-dot-slash", "not-an-object"])
 def test_an_invalid_ref_is_rejected(instance):
     assert list(_validator("DarnlinkRef").iter_errors(instance)) != []
 
@@ -99,7 +110,8 @@ def test_an_invalid_ref_is_rejected(instance):
 def test_the_anchor_is_lowercase_canonical_only():
     anchor = _validator("DarnlinkAnchor")
     assert anchor.is_valid(GOOD_UUID)
-    for bad in (GOOD_UUID.upper(), "{" + GOOD_UUID + "}", GOOD_UUID.replace("-", ""), 42):
+    for bad in (GOOD_UUID.upper(), "{" + GOOD_UUID + "}", GOOD_UUID.replace("-", ""),
+                GOOD_UUID + "\n", GOOD_UUID + "\r", 42):
         assert not anchor.is_valid(bad), bad
 
 
@@ -119,15 +131,19 @@ def test_the_schema_files_are_present_under_the_package():
         assert base.joinpath(name).is_file(), name
 
 
-def test_the_schema_files_ship_in_the_built_wheel(tmp_path):
+def test_the_schema_files_ship_in_the_built_wheel_and_sdist(tmp_path):
     """`importlib.resources` resolves to the source tree in a development install, so it cannot
-    prove the wheel carries the files. Building one does."""
+    prove the distributions carry the files. Building them does."""
     uv = shutil.which("uv")
     if uv is None:
-        pytest.skip("uv is not installed: cannot build the wheel")
-    subprocess.run([uv, "build", "--wheel", "--out-dir", str(tmp_path), str(ROOT)],
+        pytest.skip("uv is not installed: cannot build the distributions")
+    subprocess.run([uv, "build", "--sdist", "--wheel", "--out-dir", str(tmp_path), str(ROOT)],
                    check=True, capture_output=True, text=True)
     (wheel,) = tmp_path.glob("darnlink-*.whl")
-    names = set(zipfile.ZipFile(wheel).namelist())
+    (sdist,) = tmp_path.glob("darnlink-*.tar.gz")
+    wheel_names = set(zipfile.ZipFile(wheel).namelist())
+    with tarfile.open(sdist) as tar:
+        sdist_names = {name.split("/", 1)[1] for name in tar.getnames() if "/" in name}
     for name in FILES:
-        assert f"darnlink/schemas/v1/{name}" in names, name
+        assert f"darnlink/schemas/v1/{name}" in wheel_names, name
+        assert f"src/darnlink/schemas/v1/{name}" in sdist_names, name
