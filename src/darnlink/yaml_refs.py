@@ -42,8 +42,8 @@ MAX_DEPTH = 64
 
 _MODELINE = re.compile(r"^#\s*yaml-language-server:\s*\$schema=(\S+)")
 
-OK, REPAIR, CONFLICT, UNRESOLVABLE, AMBIGUOUS, MALFORMED = (
-    "ok", "repair", "conflict", "unresolvable", "ambiguous", "malformed")
+OK, REPAIR, CONFLICT, UNRESOLVABLE, AMBIGUOUS, MALFORMED, NO_SCHEMA = (
+    "ok", "repair", "conflict", "unresolvable", "ambiguous", "malformed", "unreadable-schema")
 
 
 @dataclass(frozen=True)
@@ -68,10 +68,14 @@ def iter_yaml_files(root: Path, excludes: set[str] = DEFAULT_EXCLUDES) -> Iterat
 
 
 def _load_yaml(path: Path):
+    """The parsed document, or None if it cannot be read. Any error counts as unreadable: PyYAML raises more
+    than YAMLError on valid syntax with an impossible value (a date such as 2023-13-45 is a ValueError), and
+    one such file anywhere in the tree must not abort the whole run."""
     import yaml
+    loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
     try:
-        return yaml.safe_load(path.read_text(encoding="utf-8-sig"))
-    except (OSError, UnicodeDecodeError, yaml.YAMLError):
+        return yaml.load(path.read_text(encoding="utf-8-sig"), Loader=loader)
+    except Exception:
         return None
 
 
@@ -115,25 +119,36 @@ def _ptr(base: str, key: object) -> str:
     return f"{base}/{str(key).replace('~', '~0').replace('/', '~1')}"
 
 
+def _matches(pattern: object, key: str) -> bool:
+    """`re.search`, tolerant of a pattern Python cannot compile (JSON Schema regexes are ECMA-262)."""
+    try:
+        return isinstance(pattern, str) and re.search(pattern, key) is not None
+    except re.error:
+        return False
+
+
 def ref_positions(instance: object, schema: dict) -> List[Tuple[str, object]]:
     """[(JSON Pointer, value)] of every position of `instance` whose schema node is the reference type.
     Follows same-document `$ref`s, `properties`, `patternProperties`, `additionalProperties`, `items` and
-    the `allOf`/`anyOf`/`oneOf` branches; a position reached twice is reported once."""
+    the `allOf`/`anyOf`/`oneOf` branches; a position reached twice is reported once. Inside an `anyOf`/`oneOf`
+    the reference type is only one alternative (LinkML writes an optional slot as `anyOf: [<type>, null]`), so
+    there a value counts only if it has the reference's shape: a mapping with a `link`."""
     found: Dict[str, object] = {}
 
-    def walk(value: object, node: object, ptr: str, depth: int) -> None:
+    def walk(value: object, node: object, ptr: str, depth: int, alternative: bool = False) -> None:
         if depth > MAX_DEPTH or not isinstance(node, dict):
             return
         ref = node.get("$ref")
         if is_ref_type(ref):
-            found.setdefault(ptr, value)
+            if not alternative or (isinstance(value, dict) and "link" in value):
+                found.setdefault(ptr, value)
             return
         if isinstance(ref, str):
-            walk(value, _local_def(schema, ref), ptr, depth + 1)
+            walk(value, _local_def(schema, ref), ptr, depth + 1, alternative)
         for key in ("allOf", "anyOf", "oneOf"):
             branches = node.get(key)
             for sub in branches if isinstance(branches, list) else ():
-                walk(value, sub, ptr, depth + 1)
+                walk(value, sub, ptr, depth + 1, alternative or key != "allOf")
         if isinstance(value, dict):
             props = node.get("properties") if isinstance(node.get("properties"), dict) else {}
             patterns = node.get("patternProperties") if isinstance(node.get("patternProperties"), dict) else {}
@@ -142,7 +157,7 @@ def ref_positions(instance: object, schema: dict) -> List[Tuple[str, object]]:
                 if k in props:
                     walk(v, props[k], _ptr(ptr, k), depth + 1)
                     continue
-                matched = [s for p, s in patterns.items() if isinstance(k, str) and re.search(p, k)]
+                matched = [s for p, s in patterns.items() if isinstance(k, str) and _matches(p, k)]
                 for sub in matched:
                     walk(v, sub, _ptr(ptr, k), depth + 1)
                 if not matched and isinstance(extra, dict):
@@ -222,12 +237,15 @@ def judge(value: object, yaml_file: Path, index: TargetIndex, root: Path) -> Tup
 
 
 _LINK_LINE = r"^(\s*(?:-\s+)?link:\s*)(['\"]?){old}\2(\s*(?:#.*)?)$"
+_NEEDS_QUOTES = re.compile(r"(^[-?:,\[\]{}#&*!|>'\"%@`\s])|(:\s)|(\s#)|(\s$)")
 
 
 def apply_repairs(path: Path, repairs: List[RefFinding]) -> List[RefFinding]:
     """Rewrite each repaired `link:` line of `path`, keeping the rest of the file byte for byte.
-    A link text is only rewritten when every reference that uses it in this file gets the same new path:
-    otherwise it is left as is and returned, to be fixed by hand."""
+    The rewrite works on lines, not on positions, so a link text is only rewritten when EVERY `link:` line
+    carrying it in this file is one of these repairs, all with the same new path. If the same text also
+    appears at a position the schema does not declare, or at a reference that is not being repaired, it is
+    left as is and returned, to be fixed by hand."""
     from .frontmatter_edit import read_text_keep_newlines, write_text_keep_newlines
 
     by_old: Dict[str, set] = {}
@@ -240,17 +258,33 @@ def apply_repairs(path: Path, repairs: List[RefFinding]) -> List[RefFinding]:
             left += [f for f in repairs if f.link == old]
             continue
         new = next(iter(news))
+        mine = [f for f in repairs if f.link == old]
         pattern = re.compile(_LINK_LINE.format(old=re.escape(old)), re.MULTILINE)
-        text, n = pattern.subn(lambda m: f"{m.group(1)}{m.group(2)}{new}{m.group(2)}{m.group(3)}", text)
-        if n == 0:   # not on a `link:` line of its own (a flow mapping, a multi-line scalar): left to the reader
-            left += [f for f in repairs if f.link == old]
+        if len(pattern.findall(text)) != len(mine):
+            # 0: not on a `link:` line of its own (a flow mapping, a multi-line scalar); more: the same text at
+            # a position that is not one of these repairs. Either way, left to the reader
+            left += mine
+            continue
+
+        def sub(m: re.Match) -> str:
+            quote = m.group(2) or ('"' if _NEEDS_QUOTES.search(new) else "")
+            return f"{m.group(1)}{quote}{new}{quote}{m.group(3)}"
+
+        text = pattern.sub(sub, text)
     write_text_keep_newlines(path, text)
     return left
 
 
 def plan(root: Path, excludes: set[str] = DEFAULT_EXCLUDES) -> Tuple[List[RefFinding], Dict[str, int]]:
-    """Check every typed reference under `root`. Returns (findings that are not `ok`, counters)."""
-    root = root.resolve()
+    """Check every typed reference under `root`. Returns (findings that are not `ok`, counters).
+    A modeline that names a local schema which cannot be read is a finding too: otherwise a gate would pass
+    green having checked nothing."""
+    from .paths import resolve_cache
+    with resolve_cache():
+        return _plan(root.resolve(), excludes)
+
+
+def _plan(root: Path, excludes: set[str]) -> Tuple[List[RefFinding], Dict[str, int]]:
     files = list(iter_yaml_files(root, excludes))
     docs = {p: _load_yaml(p) for p in files}
     index = build_target_index(root, excludes, docs)
@@ -269,10 +303,14 @@ def plan(root: Path, excludes: set[str] = DEFAULT_EXCLUDES) -> Tuple[List[RefFin
                 loaded = None
             schemas[spath] = loaded if isinstance(loaded, dict) else None
         schema = schemas[spath]
-        if schema is None or docs[path] is None:
+        rel = path.relative_to(root).as_posix()
+        if schema is None:
+            findings.append(RefFinding(NO_SCHEMA, rel, "/", "", "", f"the modeline names {decl}, which is not a "
+                                                                        "readable JSON object"))
+            continue
+        if docs[path] is None:
             continue
         stats["with_schema"] += 1
-        rel = path.relative_to(root).as_posix()
         for pointer, value in ref_positions(docs[path], schema):
             stats["references"] += 1
             kind, link, uuid, detail, new = judge(value, path, index, root)

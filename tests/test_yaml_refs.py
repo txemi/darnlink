@@ -96,3 +96,38 @@ def test_files_without_a_local_schema_are_skipped(tmp_path, capsys):
     _w(tmp_path / "b.yaml", "# yaml-language-server: $schema=https://example.org/s.json\nhome: {}\n")
     assert main(["yaml-refs", str(tmp_path)]) == 0
     assert "0 references in 0 YAML files with a local schema (2 scanned)" in capsys.readouterr().out
+
+
+def test_write_never_touches_the_same_link_text_at_an_undeclared_position(tmp_path):
+    root = _repo(tmp_path, "../old/target.md")
+    card = root / "data" / "card.yaml"
+    card.write_text(card.read_text(encoding="utf-8").replace("not/a/reference.md", "../old/target.md"),
+                    encoding="utf-8")
+    assert main(["yaml-refs", str(root), "--write"]) == 2          # left to the reader, and still reported
+    assert card.read_text(encoding="utf-8").count("link: ../old/target.md") == 2
+
+
+def test_a_broken_unrelated_yaml_does_not_abort_the_run(tmp_path):
+    root = _repo(tmp_path, "../docs/target.md")
+    _w(root / "other" / "dates.yaml", "d: 2023-13-45\n")             # PyYAML raises ValueError, not YAMLError
+    assert main(["yaml-refs", str(root)]) == 0
+
+
+def test_an_optional_reference_left_empty_is_not_malformed():
+    schema = {"properties": {"opt": {"anyOf": [{"$ref": "#/$defs/DarnlinkRef"}, {"type": "null"}]},
+                             "either": {"oneOf": [{"$ref": "#/$defs/DarnlinkRef"}, {"type": "string"}]}}}
+    assert ref_positions({"opt": None, "either": "plain"}, schema) == []
+    assert [p for p, _ in ref_positions({"opt": {"uuid": U, "link": "a.md"}}, schema)] == ["/opt"]
+
+
+def test_an_unreadable_schema_is_reported_not_skipped(tmp_path, capsys):
+    _w(tmp_path / "a.yaml", "# yaml-language-server: $schema=missing.schema.json\nx: 1\n")
+    assert main(["yaml-refs", str(tmp_path), "--json"]) == 2
+    assert json.loads(capsys.readouterr().out)["findings"][0]["kind"] == "unreadable-schema"
+
+
+def test_a_new_link_that_needs_quotes_gets_them(tmp_path):
+    root = _repo(tmp_path, "../old/target.md")
+    (root / "docs" / "target.md").rename(root / "docs" / "a #b.md")
+    assert main(["yaml-refs", str(root), "--write"]) == 0
+    assert '  link: "../docs/a #b.md"\n' in (root / "data" / "card.yaml").read_text(encoding="utf-8")
