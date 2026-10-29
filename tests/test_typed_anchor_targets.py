@@ -145,13 +145,27 @@ def test_a_readme_uuid_repeated_by_an_untyped_yaml_beside_it_stays_unambiguous(t
     assert _check(tmp_path, capsys)["exit_code"] == 0
 
 
-def test_a_markdown_uuid_that_is_also_a_typed_anchor_is_ambiguous(tmp_path, capsys):
-    _tool(tmp_path)
-    _w(tmp_path / "other" / "README.md", f"---\nuuid: {C1}\n---\n# Other\n")
-    _readme(tmp_path, "../tools/deploy.sh", C1)
+def test_a_markdown_uuid_that_is_also_a_schema_typed_anchor_is_ambiguous(tmp_path, capsys):
+    _schemas(tmp_path)
+    _hosts_json(tmp_path)
+    _w(tmp_path / "other" / "README.md", f"---\nuuid: {H1}\n---\n# Other\n")
+    _readme(tmp_path, "../inv/hosts.json#/hosts/0", H1)
     out = _check(tmp_path, capsys)
     assert out["exit_code"] == 2
     assert [f["kind"] for f in out["integrity"]["findings"]] == ["ambiguous"]
+
+
+def test_a_code_block_that_repeats_a_markdown_uuid_gives_way_to_the_markdown(tmp_path, capsys):
+    """Review of #19: a script whose block repeats its README's uuid adopted nothing, so the gate stays green."""
+    _w(tmp_path / "a.md", f"---\nuuid: {C1}\n---\n# A\n")
+    _w(tmp_path / "b.md", f"see [a](a.md) <!-- uuid: {C1} -->\n")
+    _tool(tmp_path)
+    assert _check(tmp_path, capsys)["exit_code"] == 0
+    _schemas(tmp_path)
+    _w(tmp_path / "data" / "card.yaml", f"# yaml-language-server: $schema=../schemas/card.schema.json\n"
+                                         f"runs_on:\n  uuid: {C1}\n  link: ../a.md\n")
+    out = _refs(tmp_path, capsys)
+    assert out["findings"] == [] and out["stats"]["ok"] == 1
 
 
 def test_an_invalid_code_anchor_does_not_resolve_a_markdown_link(tmp_path, capsys):
@@ -251,3 +265,55 @@ def test_a_symlink_out_of_the_root_is_not_a_target(tmp_path):
         pytest.skip("symlinks are not available here")
     found = collect(root)
     assert found.anchors == {} and [p.name for p in found.out_of_root] == ["linked.sh"]
+
+
+def test_files_that_declare_no_anchor_give_no_finding(tmp_path, capsys):
+    """Review of #19: a JSON config naming a missing schema, a decorative banner between two fences and a file that
+    cannot be opened declare nothing, so `yaml-refs` stays at exit 0."""
+    _w(tmp_path / "cfg.json", '{"$schema": "./missing.schema.json", "a": 1}')
+    _w(tmp_path / "d.sh", "#!/bin/sh\n#---\n# Deploys: the thing: carefully\n#---\necho hi\n")
+    _w(tmp_path / "e.json", '{"$schema": "file:///etc/x.json", "b": 2}')
+    locked = tmp_path / "locked.sh"
+    _w(locked, f"#---\n# uuid: {C1}\n#---\n")
+    locked.chmod(0)
+    try:
+        assert main(["yaml-refs", str(tmp_path)]) == 0
+        assert collect(tmp_path).findings == []
+    finally:
+        locked.chmod(0o644)
+
+
+def test_a_block_that_tries_to_declare_a_uuid_and_is_not_yaml_is_reported(tmp_path):
+    _w(tmp_path / "d.sh", f"#!/bin/sh\n#---\n# uuid: {C1}: oops: here\n#---\n")
+    assert [f.detail for f in collect(tmp_path).findings] == ["the #--- block is not YAML"]
+
+
+def test_a_yaml_file_that_does_not_load_keeps_the_anchor_of_its_block(tmp_path):
+    _schemas(tmp_path)
+    _w(tmp_path / "x.yaml", f"# yaml-language-server: $schema=schemas/inventory.schema.json\n#---\n# uuid: {C1}\n#---\n"
+                            "hosts: [unclosed\n")
+    found = collect(tmp_path)
+    assert found.anchors == {(tmp_path / "x.yaml").resolve(): [("", C1)]}
+
+
+def test_a_schema_that_is_not_a_regular_file_is_not_read(tmp_path):
+    from darnlink.typed_anchors import _Schemas
+    assert _Schemas().get(Path("/dev/null")) == ({}, None)
+
+
+def test_yaml_refs_writes_the_pointer_fragment_encoded(tmp_path, capsys):
+    _schemas(tmp_path)
+    _hosts_json(tmp_path, hosts=(("my host", H1),))
+    data = json.loads((tmp_path / "inv" / "hosts.json").read_text(encoding="utf-8"))
+    data["by name"] = {"my host": {"uuid": H1}}
+    del data["hosts"]
+    schema = {"type": "object", "properties": {"by name": {"type": "object", "additionalProperties": {
+        "type": "object", "properties": {"uuid": {"$ref": "darnlink_types.schema.json#/$defs/DarnlinkAnchor"}}}}}}
+    _w(tmp_path / "schemas" / "inventory.schema.json", json.dumps(schema))
+    _w(tmp_path / "inv" / "hosts.json", json.dumps(data))
+    card = tmp_path / "data" / "card.yaml"
+    _w(card, f"# yaml-language-server: $schema=../schemas/card.schema.json\nruns_on:\n  uuid: {H1}\n  link: ../inv/hosts.json\n")
+    main(["yaml-refs", str(tmp_path), "--write"])
+    capsys.readouterr()
+    assert "link: ../inv/hosts.json#/by%20name/my%20host\n" in card.read_text(encoding="utf-8")
+    assert main(["yaml-refs", str(tmp_path)]) == 0

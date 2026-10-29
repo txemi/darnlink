@@ -63,7 +63,7 @@ def _findings_json(
 
 def _run_repair(root: Path, write: bool, excludes: set, as_json: bool, block_markers: tuple,
                 only: Optional[set] = None) -> int:
-    index = with_typed_anchors(build_index(root, excludes), collect_typed_anchors(root, excludes).anchors)
+    index = with_typed_anchors(build_index(root, excludes), collect_typed_anchors(root, excludes))
     result = plan_repairs(root, index, excludes, block_markers, only=only)
     repairs = [f for f in result.findings if f.kind is Kind.REPAIR]
     conflicts = [f for f in result.findings if f.kind is Kind.CONFLICT]
@@ -188,7 +188,7 @@ def _run_check(root: Path, excludes: set, as_json: bool, block_markers: tuple,
     # Feature 020: robust links also resolve to typed anchors outside Markdown (YAML and JSON elements,
     # code `#---` blocks). Their own problems are `yaml-refs`'s to report; they never move this exit code.
     index = with_typed_anchors(index_from_contents(files, contents, out_of_root),
-                               collect_typed_anchors(root, excludes).anchors)
+                               collect_typed_anchors(root, excludes))
     rep = plan_repairs(root, index, excludes, block_markers, only=only, prescanned=(files, contents))
     repairs = [f for f in rep.findings if f.kind is Kind.REPAIR]
     conflicts = [f for f in rep.findings if f.kind is Kind.CONFLICT]

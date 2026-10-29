@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Dict, Iterator, Optional, Tuple
+from urllib.parse import quote
 
 
 # Feature 011: a link to a directory is anchored to the uuid of this file inside it. A folder has no
@@ -107,6 +108,12 @@ def relative_link(target: Path, linking_file: Path, fragment: str = "") -> str:
     rel = os.path.relpath(resolved(target), start=resolved(linking_file.parent))
     rel_posix = Path(rel).as_posix()
     return f"{rel_posix}#{fragment}" if fragment else rel_posix
+
+
+def pointer_fragment(pointer: str) -> str:
+    """A JSON Pointer written as the fragment of a link: percent-encoded, so a key with a space, a parenthesis or a
+    `#` cannot end a Markdown link destination (reading compares the decoded fragment)."""
+    return quote(pointer, safe="/~-._!$&'*+,;=:@")
 
 
 def is_web_href(href: str) -> bool:
