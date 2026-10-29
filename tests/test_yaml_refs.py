@@ -1,6 +1,9 @@
 """`darnlink yaml-refs`: typed {uuid, link} references in YAML files, at the positions the schema declares."""
 import json
+import sys
 from pathlib import Path
+
+import pytest
 
 from darnlink.cli import main
 from darnlink.yaml_refs import ref_positions
@@ -152,6 +155,15 @@ def test_a_kept_quote_is_escaped_in_the_new_link(tmp_path):
     assert main(["yaml-refs", str(root)]) == 0
 
 
+def test_quoting_escapes_for_each_style():
+    import yaml
+    from darnlink.yaml_refs import _quoted
+    for new in ["it's.md", 'a"b.md', "a\\b.md", "x,y.md"]:
+        for quote in ("'", '"'):
+            assert yaml.safe_load(f"link: {_quoted(new, quote)}\n") == {"link": new}
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="a backslash cannot be part of a file name on Windows")
 def test_a_backslash_inside_double_quotes_is_escaped(tmp_path):
     root = _repo(tmp_path, '"../old/target.md"')
     (root / "docs" / "target.md").rename(root / "docs" / "a\\b.md")
