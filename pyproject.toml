@@ -7,7 +7,7 @@ requires-python = ">=3.10"
 license = { text = "GPL-3.0-or-later" }
 authors = [{ name = "txemi" }]
 keywords = ["markdown", "links", "uuid", "robust-links", "self-healing", "documentation"]
-dependencies = ["python-frontmatter>=1.0"]
+dependencies = ["python-frontmatter>=1.0", "pyyaml>=5.1"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
