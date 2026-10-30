@@ -713,10 +713,18 @@ def _own_repo(root: Path, default_branch: Optional[str] = None,
     from darnlink.weblinks import OwnRepo, forgejo_identity_of_remote
     env = {k: v for k, v in _os.environ.items()
            if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR")}
+    # ⚠️ `ls-remote` below must never ASK for credentials. Measured on the Windows CI agent: over an
+    # https origin the run hung at this call until Jenkins aborted it at 90 minutes, so `timeout=10`
+    # did not save it (most likely the killed git leaves its credential helper holding the output
+    # pipes; that part is inferred, not measured). Stored credentials still work; only the prompts
+    # are switched off (git's own, and Git Credential Manager's), and stdin is closed so nothing can
+    # wait for an answer on it. Not covered: an askpass program the caller sets, or an ssh origin
+    # whose host key is unknown.
+    env.update(GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="never")
 
     def _git(*args: str) -> Optional[str]:
         try:
-            out = subprocess.run(["git", "-C", str(root), *args],
+            out = subprocess.run(["git", "-C", str(root), *args], stdin=subprocess.DEVNULL,
                                  capture_output=True, text=True, timeout=10, env=env)
         except (OSError, subprocess.SubprocessError):
             return None
