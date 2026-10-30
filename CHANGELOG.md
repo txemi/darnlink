@@ -8,6 +8,17 @@ All notable changes to darnlink are documented here. The format is based on
 
 ### Added
 
+- **`yaml-refs`: typed anchors in YAML as link targets, and the types recognised by `$id`** (feature
+  020, step 1). A `$ref` to `DarnlinkAnchor` marks an anchor position when it names the published
+  `$id` (`…/schemas/v<N>/darnlink_types#/$defs/DarnlinkAnchor`), a pinned copy whose own `$id` is
+  that one, or `#/$defs/DarnlinkAnchor` in the same schema; a property that only repeats the uuid
+  pattern is not an anchor. The anchors of every YAML file with a local schema, at any depth, join
+  the targets of `yaml-refs`. An anchor that identifies one element of its file is linked with that
+  element's JSON Pointer as fragment (`hosts.yaml#/hosts/3`), and the fragment is repaired like the
+  path when the element moves. An anchor that is not a lowercase canonical uuid, or that is an item
+  of a list instead of a key of its element, is reported `invalid-anchor`, is not a link target, and
+  makes the run exit 2 like any broken reference; the same anchor on two elements is `ambiguous`. `DarnlinkRef` keeps its name match. The JSON output gains
+  `stats.anchors`. Design and the two later steps: `specs/020-typed-anchor-index/spec.md`.
 - **Published types `DarnlinkAnchor` and `DarnlinkRef`, v1, LinkML first** (feature 019). The
   package now ships `darnlink/schemas/v1/darnlink_types.linkml.yaml`, the single source of truth,
   and `darnlink_types.schema.json`, generated from it by `tools/gen_schemas.py` and committed so a
@@ -21,6 +32,13 @@ All notable changes to darnlink are documented here. The format is based on
 
 ### Fixed
 
+- **`--online` no longer hangs on a credential prompt.** When the default branch is not known locally,
+  the own-repo rung asks the remote with `git ls-remote`; over an https origin, git (or Git Credential
+  Manager on Windows) could wait for a login nobody would give, and on Windows the 10-second timeout
+  did not end it. That `git` now runs with `GIT_TERMINAL_PROMPT=0`, `GCM_INTERACTIVE=never` and stdin
+  closed: stored credentials still work, prompts do not. Found as a Windows CI run that hung until it
+  was aborted at 90 minutes. Not covered: an askpass program set by the caller, or an ssh origin
+  whose host key is unknown.
 - `web-check --online` no longer reports a false `web_not_found` for a link to a declared Forgejo
   whose **branch or tag name contains a slash** (`…/raw/branch/reports/data/out/index.html`). The
   URL alone cannot say where the ref ends, and the parse always took the first segment, so every
