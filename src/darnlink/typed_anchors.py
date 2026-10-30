@@ -36,19 +36,26 @@ from .yaml_refs import (CANONICAL_UUID, INVALID_ANCHOR, NO_SCHEMA, UNREADABLE, U
 CODE_FENCE = "#---"
 #: How much of a file is read to find its leading comment lines. A block further down is not an anchor.
 HEAD_BYTES = 64 * 1024
-#: A larger JSON file is not read: data that size is not a document anyone links to by hand.
-JSON_MAX_BYTES = 8 * 1024 * 1024
+#: A larger JSON, YAML or schema file is not read: data that size is not a document anyone links to by hand.
+DATA_MAX_BYTES = 8 * 1024 * 1024
 KINDS = ("yaml", "json", "code")
 _LINE_END = re.compile(r"\r\n|\r|\n")
+#: A block line that tries to declare the anchor: only then is a block that is not YAML reported.
+_UUID_LINE = re.compile(r"^\s*['\"]?uuid['\"]?\s*:", re.MULTILINE)
+#: A URI scheme (`file:`, `urn:`): two letters at least, so a Windows drive (`C:`) is still a path.
+_URI_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]+:")
 
 
 @dataclass
 class TypedAnchors:
     """What `collect` found. `anchors` maps a file to its good anchors as (element pointer, uuid); '' is the whole
-    file. `findings` are the anchors that are not targets, and why (`yaml-refs` reports them)."""
+    file. `findings` are the anchors that are not targets, and why (`yaml-refs` reports them). `code` holds the
+    (file, uuid) of each `#---` block anchor: a file declares it without adopting a schema, so it gives way to a
+    Markdown frontmatter with the same uuid instead of making the links to that Markdown file ambiguous."""
     anchors: Dict[Path, List[Tuple[str, str]]] = field(default_factory=dict)
     findings: List[RefFinding] = field(default_factory=list)
     out_of_root: List[Path] = field(default_factory=list)
+    code: set = field(default_factory=set)
 
     @property
     def count(self) -> int:
@@ -112,13 +119,15 @@ def _code_anchor(path: Path, head: str, rel: str, found: TypedAnchors) -> None:
     try:
         data = yaml.safe_load(block)
     except Exception:
-        found.findings.append(RefFinding(UNREADABLE, rel, "/", "", "", f"the {CODE_FENCE} block is not YAML"))
+        if _UUID_LINE.search(block):   # a decorative banner between two fences declares nothing: not a finding
+            found.findings.append(RefFinding(UNREADABLE, rel, "/", "", "", f"the {CODE_FENCE} block is not YAML"))
         return
     value = data.get("uuid") if isinstance(data, dict) else None
     if value is None:
         return   # a block without a `uuid` (other metadata) declares no anchor
     if isinstance(value, str) and CANONICAL_UUID.fullmatch(value):
         _add(found, path, [("", value)])
+        found.code.add((path, value))
     else:
         found.findings.append(RefFinding(INVALID_ANCHOR, rel, f"{CODE_FENCE}/uuid", "", str(value),
                                          f"the uuid of the {CODE_FENCE} block must be a lowercase canonical uuid: "
@@ -137,8 +146,9 @@ class _Schemas:
         """(schema, recognizer) for a schema that declares an anchor or reference type; (None, None) for one that
         declares neither; ({}, None) for one that cannot be read."""
         if path not in self._loaded:
-            try:
-                loaded = json.loads(path.read_text(encoding="utf-8-sig"))
+            try:   # a regular file of a sane size only: `$schema` may name `/dev/zero` or a fifo
+                loaded = json.loads(path.read_text(encoding="utf-8-sig")) \
+                    if path.is_file() and path.stat().st_size <= DATA_MAX_BYTES else None
             except (OSError, ValueError):
                 loaded = None
             self._loaded[path] = loaded if isinstance(loaded, dict) else None
@@ -151,14 +161,17 @@ class _Schemas:
         return (schema, recognizer) if self._typed[path] else (None, None)
 
 
-def _typed_schema(path: Path, decl: str, rel: str, schemas: _Schemas,
-                  found: TypedAnchors) -> Tuple[Optional[dict], Optional[TypeRecognizer]]:
+def _typed_schema(path: Path, decl: str, rel: str, schemas: _Schemas, found: TypedAnchors,
+                  report: bool = True) -> Tuple[Optional[dict], Optional[TypeRecognizer]]:
     """The schema a file names, if it declares a type; asked BEFORE the file is parsed, so the many data files whose
-    schema declares no anchor are never loaded (measured on a fleet repository: 1,556 YAML files, 8 s)."""
-    schema, recognizer = schemas.get((path.parent / decl).resolve())
+    schema declares no anchor are never loaded (measured on a fleet repository: 1,556 YAML files, 8 s).
+    An unreadable schema is a finding only with `report`: a YAML modeline names a schema for darnlink's kind of tools,
+    while the `$schema` of any JSON configuration may name a file that is simply not there."""
+    schema, recognizer = schemas.get((path.parent / decl.split("#", 1)[0]).resolve())
     if schema == {}:
-        found.findings.append(RefFinding(NO_SCHEMA, rel, "/", "", "", f"the file names the schema {decl}, which is "
-                                                                         "not a readable JSON object"))
+        if report:
+            found.findings.append(RefFinding(NO_SCHEMA, rel, "/", "", "", f"the file names the schema {decl}, which "
+                                                                             "is not a readable JSON object"))
         return None, None
     return schema, recognizer
 
@@ -171,6 +184,8 @@ def _schema_anchors(doc: object, schema: dict, recognizer: TypeRecognizer, path:
     good, bad, _ = file_anchors(doc, schema, recognizer, rel)
     found.findings += bad
     _add(found, path, good)
+    for _, u in good:   # the block repeats a typed anchor: the schema adopted it, so it no longer gives way
+        found.code.discard((path, u))
 
 
 def _add(found: TypedAnchors, path: Path, items: List[Tuple[str, str]]) -> None:
@@ -182,7 +197,8 @@ def _add(found: TypedAnchors, path: Path, items: List[Tuple[str, str]]) -> None:
 
 
 def _is_local(decl: object) -> bool:
-    return isinstance(decl, str) and bool(decl.strip()) and not decl.startswith(("http://", "https://"))
+    """A `$schema` that names a local file: not a URI (`https:`, `file:`, `urn:`), not only a fragment."""
+    return isinstance(decl, str) and bool(decl.split("#", 1)[0].strip()) and not _URI_SCHEME.match(decl)
 
 
 def collect(root: Path, excludes: set = DEFAULT_EXCLUDES, kinds: Tuple[str, ...] = KINDS) -> TypedAnchors:
@@ -194,6 +210,8 @@ def collect(root: Path, excludes: set = DEFAULT_EXCLUDES, kinds: Tuple[str, ...]
         rel = path.relative_to(root).as_posix()
         try:
             _one_file(path, rel, kinds, schemas, found)
+        except OSError:
+            continue   # a file that cannot be opened (mode 000, gone meanwhile) declares nothing anyone can see
         except Exception as e:   # one hostile file (a NUL in `$schema`, JSON nested past the recursion limit) never
             found.findings.append(RefFinding(UNREADABLE, rel, "/", "", "",   # aborts check, repair or yaml-refs
                                              f"could not be read for anchors: {type(e).__name__}"))
@@ -202,21 +220,28 @@ def collect(root: Path, excludes: set = DEFAULT_EXCLUDES, kinds: Tuple[str, ...]
 
 def _one_file(path: Path, rel: str, kinds: Tuple[str, ...], schemas: _Schemas, found: TypedAnchors) -> None:
     name = path.name.lower()
-    if name.endswith(".json"):
-        if "json" in kinds and path.stat().st_size <= JSON_MAX_BYTES:
-            _json_file(path, rel, schemas, found)
-        return
     with path.open("rb") as fh:
+        if name.endswith(".json"):
+            # `$schema` is looked for in the head first: most JSON files name none, and need not be read whole
+            if "json" in kinds and b'"$schema"' in fh.read(HEAD_BYTES) and path.stat().st_size <= DATA_MAX_BYTES:
+                _json_file(path, rel, schemas, found)
+            return
+        first = fh.read(4)   # one look at the start skips binaries and most code without reading 64 KiB of each
+        if first.startswith(b"\xef\xbb\xbf"):
+            first = first[3:]
+        if not first.startswith(b"#") and not (name.endswith(YAML_SUFFIXES) and first.startswith(b"-")):
+            return   # no leading comment: neither a modeline nor a code block
+        fh.seek(0)
         raw = fh.read(HEAD_BYTES)
     if raw.startswith(b"\xef\xbb\xbf"):
         raw = raw[3:]
     if not raw.startswith(b"#") and not (name.endswith(YAML_SUFFIXES) and raw.startswith(b"---")):
-        return   # no leading comment: neither a modeline nor a code block
+        return
     head = raw.decode("utf-8", errors="replace")
-    if name.endswith(YAML_SUFFIXES) and "yaml" in kinds:
-        _yaml_file(path, rel, schemas, found)
-    if "code" in kinds:
+    if "code" in kinds:   # first: a YAML file that does not load must not hide the anchor of its block
         _code_anchor(path, head, rel, found)
+    if name.endswith(YAML_SUFFIXES) and "yaml" in kinds and path.stat().st_size <= DATA_MAX_BYTES:
+        _yaml_file(path, rel, schemas, found)
 
 
 def _yaml_file(path: Path, rel: str, schemas: _Schemas, found: TypedAnchors) -> None:
@@ -248,14 +273,19 @@ def _json_file(path: Path, rel: str, schemas: _Schemas, found: TypedAnchors) -> 
         return   # without a parsed `$schema` the file declares nothing; JSON syntax is another gate's job
     decl = doc.get("$schema") if isinstance(doc, dict) else None
     if _is_local(decl):
-        schema, recognizer = _typed_schema(path, decl, rel, schemas, found)
+        schema, recognizer = _typed_schema(path, decl, rel, schemas, found, report=False)
         if schema is not None:
             _schema_anchors(doc, schema, recognizer, path, rel, found)
 
 
-def with_typed_anchors(index: FrontmatterIndex, anchors: Dict[Path, List[Tuple[str, str]]]) -> FrontmatterIndex:
+def with_typed_anchors(index: FrontmatterIndex, found: TypedAnchors) -> FrontmatterIndex:
     """A copy of a Markdown index with the typed anchors added as targets. A uuid declared twice, by any two files
-    or two elements, is ambiguous, as between two Markdown files."""
+    or two elements, is ambiguous, as between two Markdown files; except that a `#---` block anchor gives way to a
+    Markdown frontmatter with its uuid (a script and its README, a copied file): it is skipped, so a tree that was
+    green before typed anchors existed stays green."""
+    anchors = {p: [(e, u) for e, u in items
+                   if (p, u) not in found.code or (u not in index.by_uuid and u not in index.duplicates)]
+               for p, items in found.anchors.items()}
     merged = FrontmatterIndex(by_uuid=dict(index.by_uuid),
                               duplicates={u: list(ps) for u, ps in index.duplicates.items()},
                               invalid=list(index.invalid), out_of_root=list(index.out_of_root),

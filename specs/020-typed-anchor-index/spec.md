@@ -89,9 +89,20 @@ so every uuid field would become an anchor.
   Indexing them would make every Markdown link to those READMEs `ambiguous` and turn the gate red.
   When that repository types those `uuid` fields as `DarnlinkAnchor`, the pairs become real
   duplicates; it must decide which file carries the anchor before typing them.
+- **A `#---` block anchor gives way to a Markdown frontmatter with the same uuid** (review of #19): a
+  script that repeats its README's uuid, or a copied file, adopted no schema, so it is skipped as a
+  target instead of making the links to the README `ambiguous`. A typed anchor (YAML or JSON with a
+  schema) does not give way: the schema is the adoption, and the pair is a real duplicate.
+- **A file that declares no anchor gives no finding.** A JSON file whose `$schema` names a missing or
+  unreadable file, a decorative banner between two `#---` lines (a block is reported as "not YAML"
+  only if a line of it starts with `uuid:`), and a file that cannot be opened are skipped silently.
+  A YAML modeline that names an unreadable schema is still reported by `yaml-refs`, as before.
 - A file is parsed only when its schema declares a type, so the scan stays cheap (~4 s on ~15.000
-  non-Markdown files, against 36 s to load every YAML file). A JSON file over 8 MiB is not read, and a
-  code block is looked for only in the first 64 KiB.
+  non-Markdown files, against 36 s to load every YAML file). A JSON file's `$schema` key is looked for
+  in its first 64 KiB, and only then is the file read whole; a JSON, YAML or schema file over 8 MiB is
+  not read; a code block is looked for only in the first 64 KiB, and only in a file that starts with
+  `#`. A schema is read only if it is a regular file. A `$schema` with a URI scheme (`file:`, `urn:`)
+  is not local.
 - The `<!-- darnlink-ignore-file -->` marker counts in a YAML or JSON file anywhere, and in a code file
   only among its leading comment lines (where the block is).
 - A non-Markdown symlink out of the root is not a target; `check` does not list it (it lists only the

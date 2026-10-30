@@ -52,7 +52,7 @@ from typing import Dict, Iterator, List, Optional, Tuple
 from urllib.parse import unquote
 
 from .frontmatter_index import DEFAULT_EXCLUDES, build_index, dir_excluded
-from .paths import is_web_href, relative_link, resolve_href, resolved, split_fragment
+from .paths import is_web_href, pointer_fragment, relative_link, resolve_href, resolved, split_fragment
 
 REF_DEF_NAME = "DarnlinkRef"
 ANCHOR_DEF_NAME = "DarnlinkAnchor"
@@ -385,8 +385,10 @@ class TargetIndex:
 
 
 def build_target_index(root: Path, excludes: set[str], yaml_docs: Dict[Path, object],
-                       anchors: Optional[Dict[Path, List[Tuple[str, str]]]] = None) -> TargetIndex:
-    """`anchors` maps a YAML file to its typed anchors, as (element pointer, uuid); '' is the whole file."""
+                       anchors: Optional[Dict[Path, List[Tuple[str, str]]]] = None,
+                       code: Optional[set] = None) -> TargetIndex:
+    """`anchors` maps a YAML file to its typed anchors, as (element pointer, uuid); '' is the whole file. `code`
+    holds the (file, uuid) of `#---` block anchors, which give way to a Markdown frontmatter with their uuid."""
     md = build_index(root, excludes)
     by_uuid = dict(md.by_uuid)
     duplicates = {u: list(ps) for u, ps in md.duplicates.items()}
@@ -420,6 +422,8 @@ def build_target_index(root: Path, excludes: set[str], yaml_docs: Dict[Path, obj
             add(path, "", u.strip().lower())
     for path, items in (anchors or {}).items():
         for element, u in items:
+            if (path, u) in (code or ()) and (u in md.by_uuid or u in md.duplicates):
+                continue   # a script that repeats its README's uuid did not adopt anything: the README stays the target
             add(path, element, u)
     return TargetIndex(by_uuid, duplicates, pointers, files)
 
@@ -465,11 +469,14 @@ def judge(value: object, yaml_file: Path, index: TargetIndex, root: Path) -> Tup
     if _same(points, target):
         if fragment == want or (element and unquote(fragment) == element):   # `%20` in a link is a space
             return OK, link, uuid, "", ""
-        return REPAIR, link, uuid, f"the element moved to #{element} in {shown}", f"{path_part}#{want}"
+        return REPAIR, link, uuid, f"the element moved to #{element} in {shown}", \
+            f"{path_part}#{pointer_fragment(want)}"
     if points.is_file():
         return CONFLICT, link, uuid, f"path names an existing file, but the uuid lives in {shown}", ""
     where = f"{shown}#{element}" if element else shown
-    return REPAIR, link, uuid, f"target moved to {where}", relative_link(target, yaml_file, want)
+    # an element's pointer is written percent-encoded, as the Markdown repair writes it; a heading fragment as it was
+    return REPAIR, link, uuid, f"target moved to {where}", \
+        relative_link(target, yaml_file, pointer_fragment(want) if element else want)
 
 
 def _judge_missing_uuid(link: str, yaml_file: Path, index: TargetIndex, root: Path) -> Tuple[str, str, str, str, str]:
@@ -716,7 +723,8 @@ def _plan(root: Path, excludes: set[str]) -> Tuple[List[RefFinding], Dict[str, i
         have += added
         stats["anchors"] += len(added)
     # Anchors first, references after: a reference may point to an anchor in a file read later.
-    index = build_target_index(root, excludes, {p: d for p, d in docs.items() if p not in not_targets}, anchors)
+    index = build_target_index(root, excludes, {p: d for p, d in docs.items() if p not in not_targets}, anchors,
+                               extra.code)
     for path, rel, schema, recognizer in checked:
         for pointer, value in ref_positions(docs[path], schema, recognizer):
             stats["references"] += 1

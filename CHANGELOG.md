@@ -26,7 +26,11 @@ All notable changes to darnlink are documented here. The format is based on
   is not a Markdown target, so a YAML file that repeats its README's uuid does not make links to
   that README `ambiguous`. A file is read only if its schema declares a type; on a repository with
   ~15.000 non-Markdown files the scan takes ~4 s. `check --json` gains `typed_anchors`; `yaml-refs`
-  reaches JSON and code anchors too. New module `darnlink.typed_anchors`.
+  reaches JSON and code anchors too. New module `darnlink.typed_anchors`. A `#---` block anchor gives
+  way to a Markdown frontmatter with the same uuid, and a file that declares no anchor (a JSON config
+  naming a missing schema, a decorative banner between two `#---`, an unreadable file) gives no
+  finding, so a tree that was green stays green. `yaml-refs` now writes an element's pointer fragment
+  percent-encoded, as the Markdown repair does.
 - **`yaml-refs`: typed anchors in YAML as link targets, and the types recognised by `$id`** (feature
   020, step 1). A `$ref` to `DarnlinkAnchor` marks an anchor position when it names the published
   `$id` (`…/schemas/v<N>/darnlink_types#/$defs/DarnlinkAnchor`), a pinned copy whose own `$id` is

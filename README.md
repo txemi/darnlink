@@ -171,6 +171,7 @@ to them, and are repaired when the file moves. An anchor that identifies one ele
 linked with the element's JSON Pointer as fragment (`hosts.yaml#/hosts/3`), repaired too when the
 element moves. The plain top-level `uuid` of a YAML file without a typed schema is a target for
 `yaml-refs` only, never for Markdown links: such a file often repeats the uuid of the README beside it.
+For the same reason a `#---` block whose uuid is also a Markdown file's gives way to that file.
 The problems of the anchors themselves (an invalid value, an unreadable schema) are reported by
 `yaml-refs`; `check` only counts them (`typed_anchors` in its JSON).
 
