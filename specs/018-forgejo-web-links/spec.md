@@ -50,7 +50,9 @@ rewrites, at exactly the moment links are being rewritten in bulk.
 
 ## Out of scope
 
-- Branch names containing `/` (same limitation as the GitHub parser: the first segment is the ref).
+- Branch names containing `/` **on GitHub** (the parser takes the first segment as the ref). On a
+  declared Forgejo this was lifted after 0.28.0: a 404 is asked again with the ref lengthened one
+  path segment at a time, up to four (CHANGELOG, Unreleased).
 - Forgejo's legacy ref-kind-less form `/<owner>/<repo>/src/<ref>/<path>`.
 - Per-instance tokens.
 

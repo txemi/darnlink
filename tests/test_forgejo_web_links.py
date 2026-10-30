@@ -278,7 +278,92 @@ def test_an_http_answer_is_final_and_does_not_try_another_name(monkeypatch):
     monkeypatch.setattr(wl, "_fetch_once", lambda gu, t, base=None: tried.append(base) or (404, None))
     gu = parse_github_url(FILE, SERVER)
     assert wl.default_fetcher(gu, None, attempts=1, sleep=lambda _s: None) == (404, None)
-    assert tried == [TS]
+    assert tried == [TS, TS]                   # the slashed-ref reading `main/docs` + `a.md`, same name
+
+
+# --- a branch or tag whose name holds a slash ---------------------------------------------------
+
+SLASHED = f"{TS}/acme/handbook/raw/branch/reports/data/out/index.html"
+
+
+def _only(ref, path, answer=None):
+    """A `_fetch_once` that answers only for one (ref, path) reading and 404s every other."""
+    tried = []
+
+    def once(gu, token, base=None):
+        tried.append((gu.ref, gu.path))
+        return (answer or _with_uuid()) if (gu.ref, gu.path) == (ref, path) else (404, None)
+    return once, tried
+
+
+def test_a_branch_with_a_slash_is_found_by_lengthening_the_ref(monkeypatch):
+    once, tried = _only("reports/data", "out/index.html")
+    monkeypatch.setattr(wl, "_fetch_once", once)
+    gu = parse_github_url(SLASHED, SERVER)
+    assert (gu.ref, gu.path) == ("reports", "data/out/index.html")   # the parse alone cannot know
+    assert wl.default_fetcher(gu, "fj", attempts=3, sleep=lambda _s: None) == _with_uuid()
+    assert tried[-2:] == [("reports", "data/out/index.html"), ("reports/data", "out/index.html")]
+
+
+def test_a_tag_with_a_slash_is_found_too(monkeypatch):
+    once, _ = _only("v1/rc", "docs/a.md")
+    monkeypatch.setattr(wl, "_fetch_once", once)
+    gu = parse_github_url(f"{TS}/acme/handbook/src/tag/v1/rc/docs/a.md", SERVER)
+    assert wl.default_fetcher(gu, None, attempts=1, sleep=lambda _s: None) == _with_uuid()
+
+
+def test_a_commit_link_is_never_re_split(monkeypatch):
+    tried = []
+    monkeypatch.setattr(wl, "_fetch_once", lambda gu, t, base=None: tried.append(gu.ref) or (404, None))
+    gu = parse_github_url(f"{TS}/acme/handbook/raw/commit/0123abcd/docs/a.md", SERVER)
+    assert wl.default_fetcher(gu, None, attempts=1, sleep=lambda _s: None) == (404, None)
+    assert tried == ["0123abcd"]
+
+
+def test_the_extra_readings_are_bounded_and_not_retried(monkeypatch):
+    tried = []
+    monkeypatch.setattr(wl, "_fetch_once", lambda gu, t, base=None: tried.append(gu.ref) or (404, None))
+    gu = parse_github_url(f"{TS}/acme/handbook/raw/branch/b/1/2/3/4/5/6/7/x.md", SERVER)
+    assert wl.default_fetcher(gu, None, attempts=3, sleep=lambda _s: None) == (404, None)
+    # 3 tries of the parsed reading (404 is transient for the retry loop), then ONE per longer ref
+    assert tried == ["b"] * 3 + ["b/1", "b/1/2", "b/1/2/3", "b/1/2/3/4"]
+
+
+def test_a_real_404_with_a_slashed_reading_still_reaches_the_repo_probe(monkeypatch):
+    monkeypatch.setattr(wl, "_fetch_once", lambda gu, t, base=None: (404, None))
+    monkeypatch.setattr(wl, "_forgejo_repo_accessible", lambda s, b, o, r, t: False)
+    gu = parse_github_url(SLASHED, SERVER)
+    assert wl.default_fetcher(gu, "fj", attempts=1, sleep=lambda _s: None) == (-2, None)
+
+
+def test_a_flaky_answer_on_the_right_reading_is_retried(monkeypatch):
+    answers = iter([(502, None), (-1, None), _with_uuid()])
+    tried = []
+
+    def once(gu, token, base=None):
+        tried.append(gu.ref)
+        return next(answers) if gu.ref == "reports/data" else (404, None)
+
+    monkeypatch.setattr(wl, "_fetch_once", once)
+    gu = parse_github_url(SLASHED, SERVER)
+    assert wl.default_fetcher(gu, "fj", attempts=3, sleep=lambda _s: None) == _with_uuid()
+    assert tried == ["reports"] * 3 + ["reports/data"] * 3
+    assert TS not in wl._forgejo_unreachable    # the name answered: one blip does not bury it
+
+
+def test_a_one_segment_path_has_no_other_reading(monkeypatch):
+    tried = []
+    monkeypatch.setattr(wl, "_fetch_once", lambda gu, t, base=None: tried.append(gu.ref) or (404, None))
+    gu = parse_github_url(f"{TS}/acme/handbook/raw/branch/main/a.md", SERVER)
+    assert wl.default_fetcher(gu, None, attempts=1, sleep=lambda _s: None) == (404, None)
+    assert tried == ["main"]
+
+
+def test_a_non_404_on_a_longer_reading_is_that_readings_answer(monkeypatch):
+    once, _ = _only("reports/data", "out/index.html", answer=(403, None))
+    monkeypatch.setattr(wl, "_fetch_once", once)
+    gu = parse_github_url(SLASHED, SERVER)
+    assert wl.default_fetcher(gu, None, attempts=1, sleep=lambda _s: None) == (403, None)
 
 
 def test_every_name_unreachable_is_a_network_error(monkeypatch):
