@@ -103,6 +103,11 @@ def _dangling_target(href: str, linking_file: Path) -> Path | None:
     t = resolve_href(href, linking_file)  # drops the fragment
     if t.exists() or _sparse_absent(t):
         return None
+    if "\0" in decoded:
+        # `%00` decodes to a NUL, which no file name can hold. `resolve()` raises on it on Linux (a crash
+        # here) and takes it on Windows with 3.13, so the answer would depend on the system. No path with a
+        # NUL exists anywhere: the link is dead, and it is reported with the spelling it has on disk.
+        return t
     if encoded:
         d = resolve_href(decoded, linking_file)
         # Report the DECODED path: it is the one the link denotes, and the one to look for on disk.

@@ -71,7 +71,13 @@ def resolve_cache() -> Iterator[None]:
 def resolved(path: Path) -> Path:
     """`path.resolve()`, memoised only while a `resolve_cache()` scope is open (see the note above).
 
-    Outside a scope, and for relative paths, this is exactly `path.resolve()`."""
+    Outside a scope, and for relative paths, this is exactly `path.resolve()`.
+
+    A path with a NUL is the exception: no file name can hold one, and `resolve()` raises on it on Linux and
+    takes it on Windows with 3.13. It is made absolute without asking the system, so every caller gets the
+    same path everywhere, and the `exists()`/`is_file()` that follow answer False."""
+    if "\0" in str(path):
+        return Path(os.path.normpath(os.path.abspath(path)))
     cache = _RESOLVE_CACHE.get()
     if cache is None or not path.is_absolute():
         return path.resolve()
