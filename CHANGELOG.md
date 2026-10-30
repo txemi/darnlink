@@ -6,6 +6,8 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.30.0] — 2026-10-30
+
 ### Added
 
 - **`yaml-refs` fills a missing `uuid` from the `link`** (feature 020, step 3). A reference with a
@@ -58,7 +60,7 @@ All notable changes to darnlink are documented here. The format is based on
 - **A NUL in a path gives the same answer on every system.** `darnlink --robustify` crashed on Linux with a
   traceback on a Markdown link whose path holds a NUL, written as `%00` or literally: it is now a `dangling`
   link, as on Windows with Python 3.13. `yaml-refs` no longer resolves a NUL either: a `$ref` with one names no type,
-  and a modeline with one is `unreadable-schema`. Same fix as `_probe` got in 292bbe6 (unreleased): the NUL
+  and a modeline with one is `unreadable-schema`. Same fix as `_probe` got in 292bbe6, also in this release: the NUL
   is refused before `resolve()`, which raises on it on Linux and not on Windows with 3.13; and `resolved()`, which
   every caller goes through, makes a path with a NUL absolute without asking the system.
 - **`--online` no longer hangs on a credential prompt.** When the default branch is not known locally,
@@ -1328,7 +1330,8 @@ First public release.
 - Ships a [pre-commit](https://pre-commit.com/) hook (`darnlink`, `darnlink-repair`).
 - Format specification: [FORMAT.md](FORMAT.md) <!-- uuid: 9052d864-2a45-4ed4-8725-d8a394e7a7ef -->.
 
-[Unreleased]: https://github.com/txemi/darnlink/compare/v0.29.0...HEAD
+[Unreleased]: https://github.com/txemi/darnlink/compare/v0.30.0...HEAD
+[0.30.0]: https://github.com/txemi/darnlink/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/txemi/darnlink/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/txemi/darnlink/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/txemi/darnlink/compare/v0.26.0...v0.27.0
