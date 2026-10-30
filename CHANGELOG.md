@@ -60,7 +60,7 @@ All notable changes to darnlink are documented here. The format is based on
 - **A NUL in a path gives the same answer on every system.** `darnlink --robustify` crashed on Linux with a
   traceback on a Markdown link whose path holds a NUL, written as `%00` or literally: it is now a `dangling`
   link, as on Windows with Python 3.13. `yaml-refs` no longer resolves a NUL either: a `$ref` with one names no type,
-  and a modeline with one is `unreadable-schema`. Same fix as `_probe` got in 292bbe6 (unreleased): the NUL
+  and a modeline with one is `unreadable-schema`. Same fix as `_probe` got in 292bbe6, also in this release: the NUL
   is refused before `resolve()`, which raises on it on Linux and not on Windows with 3.13; and `resolved()`, which
   every caller goes through, makes a path with a NUL absolute without asking the system.
 - **`--online` no longer hangs on a credential prompt.** When the default branch is not known locally,
