@@ -210,13 +210,12 @@ def test_a_pointer_with_a_space_is_written_encoded_and_stays_a_robust_link(tmp_p
 
 
 def test_a_hostile_json_file_is_reported_and_does_not_abort_the_run(tmp_path, capsys):
-    # not "nul.json": on Windows NUL is a reserved device name, and the file would never be written
-    _w(tmp_path / "nul_char.json", json.dumps({"$schema": "\u0000x", "a": 1}))
+    _w(tmp_path / "nul.json", json.dumps({"$schema": "\u0000x", "a": 1}))
     _w(tmp_path / "deep.json", '{"$schema": "s.json", "a": ' + "[" * 200000 + "]" * 200000 + "}")
     _tool(tmp_path)
     found = collect(tmp_path)
     assert found.count == 1
-    assert sorted(f.file for f in found.findings if f.kind == "unreadable-yaml") == ["deep.json", "nul_char.json"]
+    assert sorted(f.file for f in found.findings if f.kind == "unreadable-yaml") == ["deep.json", "nul.json"]
     _readme(tmp_path, "../tools/deploy.sh", C1)
     assert _check(tmp_path, capsys)["exit_code"] == 0
 
