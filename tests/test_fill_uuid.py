@@ -142,6 +142,18 @@ def test_a_link_to_a_path_that_cannot_be_looked_at_is_a_finding_not_a_crash(tmp_
         assert out["findings"][0]["kind"] == "malformed" and "cannot be looked at" in out["findings"][0]["detail"]
 
 
+def test_a_nul_cannot_be_looked_at_even_where_resolve_does_not_raise(tmp_path, capsys, monkeypatch):
+    # Windows with 3.13: `resolve()` takes a NUL without raising and `is_file()` says False, so without the explicit
+    # refusal the link read as "names no file" there and "cannot be looked at" on Linux (CI of darnlink #20, PR-20 #5)
+    from darnlink import yaml_refs
+    monkeypatch.setattr(yaml_refs, "resolve_href",
+                        lambda href, f: Path(os.path.normpath(f.parent / href.split("#", 1)[0])))
+    root = _tree(tmp_path)
+    for doc in ('runs_on:\n  link: "../docs/a\\0b.md"\n', f'runs_on:\n  uuid: {D1}\n  link: "../docs/a\\0b.md"\n'):
+        out = _untouched(root, doc, capsys)
+        assert out["findings"][0]["kind"] == "malformed" and "cannot be looked at" in out["findings"][0]["detail"]
+
+
 def test_a_web_link_is_never_filled(tmp_path, capsys):
     out = _untouched(_tree(tmp_path), "runs_on:\n  link: https://example.org/x.md\n", capsys)
     assert out["findings"][0]["kind"] == "malformed" and "web link" in out["findings"][0]["detail"]

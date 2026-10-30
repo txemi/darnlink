@@ -444,6 +444,10 @@ def _probe(link: str, yaml_file: Path) -> Optional[Tuple[Path, bool]]:
     path cannot be looked at (a name too long, a NUL, a folder without permission): a finding, not a crash."""
     try:
         points = resolve_href(link, yaml_file)
+        # A NUL makes `resolve()` raise on Linux, but on Windows with 3.13 it does not, and `is_file()` then says
+        # False: the link would read as "names no file". Refused here, so the finding is the same on every system.
+        if "\0" in str(points):
+            raise ValueError("embedded null character in path")
         if points.is_dir():
             points = points / "README.md"
         return points, points.is_file()
