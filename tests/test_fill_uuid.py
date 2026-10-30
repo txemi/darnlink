@@ -1,5 +1,6 @@
 """Feature 020, step 3: `yaml-refs` fills the missing `uuid` of a reference from its `link`, with exactly one candidate."""
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -127,6 +128,18 @@ def test_no_anchor_or_no_file_stays_malformed(tmp_path, capsys):
     assert _untouched(root, "runs_on:\n  link: ../docs/gone.md\n", capsys)["findings"][0]["kind"] == "malformed"
     out = _untouched(root, "runs_on:\n  link: ../inv/hosts.yaml#/hosts/7\n", capsys)
     assert "no anchor at #/hosts/7" in out["findings"][0]["detail"]
+
+
+def test_a_link_to_a_path_that_cannot_be_looked_at_is_a_finding_not_a_crash(tmp_path, capsys):
+    # a NUL (ValueError) and, where the OS refuses it with an error rather than "not found", a name longer than the
+    # filesystem allows (OSError); with and without a uuid
+    root = _tree(tmp_path)
+    links = ['"../docs/a\\0b.md"'] + (["../docs/" + "a" * 300 + ".md"] if os.name != "nt" else [])
+    for link in links:
+        out = _untouched(root, f"runs_on:\n  link: {link}\n", capsys)
+        assert out["findings"][0]["kind"] == "malformed" and "cannot be looked at" in out["findings"][0]["detail"]
+        out = _untouched(root, f"runs_on:\n  uuid: {D1}\n  link: {link}\n", capsys)
+        assert out["findings"][0]["kind"] == "malformed" and "cannot be looked at" in out["findings"][0]["detail"]
 
 
 def test_a_web_link_is_never_filled(tmp_path, capsys):

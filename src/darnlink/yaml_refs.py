@@ -439,6 +439,18 @@ def _same(a: Path, b: Path) -> bool:
     return resolved(a) == resolved(b)
 
 
+def _probe(link: str, yaml_file: Path) -> Optional[Tuple[Path, bool]]:
+    """(the path a link names, whether it is a file); a directory link names the README.md inside. None when the
+    path cannot be looked at (a name too long, a NUL, a folder without permission): a finding, not a crash."""
+    try:
+        points = resolve_href(link, yaml_file)
+        if points.is_dir():
+            points = points / "README.md"
+        return points, points.is_file()
+    except (OSError, ValueError):
+        return None
+
+
 def judge(value: object, yaml_file: Path, index: TargetIndex, root: Path) -> Tuple[str, str, str, str, str]:
     """(kind, link, uuid, detail, new_link) for one reference value. `root` only shortens the paths in `detail`.
     For a `fillable` reference, `uuid` is the one to write."""
@@ -457,9 +469,10 @@ def judge(value: object, yaml_file: Path, index: TargetIndex, root: Path) -> Tup
     target = index.get(uuid)
     if target is None:
         return UNRESOLVABLE, link, uuid, "no file declares this uuid", ""
-    points = resolve_href(link, yaml_file)
-    if points.is_dir():
-        points = points / "README.md"   # a directory link: its target is the README.md inside
+    probed = _probe(link, yaml_file)
+    if probed is None:
+        return MALFORMED, link, uuid, "the link names a path that cannot be looked at", ""
+    points, points_is_file = probed
     shown = _shown(target, root)
     path_part, fragment = split_fragment(link)
     element = index.element(uuid)
@@ -471,7 +484,7 @@ def judge(value: object, yaml_file: Path, index: TargetIndex, root: Path) -> Tup
             return OK, link, uuid, "", ""
         return REPAIR, link, uuid, f"the element moved to #{element} in {shown}", \
             f"{path_part}#{pointer_fragment(want)}"
-    if points.is_file():
+    if points_is_file:
         return CONFLICT, link, uuid, f"path names an existing file, but the uuid lives in {shown}", ""
     where = f"{shown}#{element}" if element else shown
     # an element's pointer is written percent-encoded, as the Markdown repair writes it; a heading fragment as it was
@@ -483,10 +496,11 @@ def _judge_missing_uuid(link: str, yaml_file: Path, index: TargetIndex, root: Pa
     """A `{link}` with no `uuid` key (step 3): `fillable` with exactly one candidate anchor, never for a web link."""
     if is_web_href(link):
         return MALFORMED, link, "", "no uuid: a web link is never filled", ""
-    points = resolve_href(link, yaml_file)
-    if points.is_dir():
-        points = points / "README.md"   # a directory link: its target is the README.md inside
-    if not points.is_file():
+    probed = _probe(link, yaml_file)
+    if probed is None:
+        return MALFORMED, link, "", "no uuid, and the link names a path that cannot be looked at", ""
+    points, points_is_file = probed
+    if not points_is_file:
         return MALFORMED, link, "", "no uuid, and the link names no file", ""
     _, fragment = split_fragment(link)
     shown = _shown(points, root)
