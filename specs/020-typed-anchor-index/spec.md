@@ -49,7 +49,7 @@ so every uuid field would become an anchor.
    typed anchors as well as frontmatter (`darnlink.typed_anchors`). "The whole index" is narrowed to
    the **typed** anchors: the untyped top-level `uuid` of a YAML file stays a `yaml-refs` target only
    (see *Known limits (step 2)*).
-3. **Filling the `uuid` from the `link`**: `yaml-refs` reports `fillable` instead of `malformed` for
+3. **Filling the `uuid` from the `link`** — *implemented*: `yaml-refs` reports `fillable` instead of `malformed` for
    a reference with a `link` and no `uuid` whose target has exactly one candidate, and `--write`
    inserts the line, byte-preserving like today's link repairs.
 
@@ -110,6 +110,20 @@ so every uuid field would become an anchor.
 - The strict axis (`--robustify`) does not propose anchoring a plain Markdown link to a typed target:
   only robust links resolve against them in this step.
 
+
+## Known limits (step 3)
+
+- **Without a fragment, the file's own anchor wins.** A link `hosts.yaml` to a file that has a
+  whole-file anchor and element anchors is filled with the whole-file one; only a file with no
+  whole-file anchor offers its element anchors, and then just one may exist. A heading fragment
+  (`README.md#usage`) names the whole file.
+- **One `--write` fills, the next one repairs.** When the only candidate is an element and the link
+  has no fragment, the first pass writes the `uuid` and the second adds the pointer fragment.
+- **Only block-style `link:` lines are filled**, and only when the link text appears nowhere else in
+  the file (the counting rule of link repairs). A flow mapping (`{link: x}`), a link written with
+  escapes, or the same text in a comment is reported `fillable` and left to the reader.
+- **A `uuid` key that is present but empty** (`uuid:`) is not filled: it stays `malformed`, as
+  writing a second `uuid` key would make the mapping invalid.
 ## Out of scope (later features)
 
 - Comment syntaxes other than `#` for code anchors (`//`, `--`, `/* */`).
@@ -122,5 +136,5 @@ One test module per step. Step 1: each of the three `$ref` forms, for both types
 negative (an inlined pattern; a `DarnlinkAnchor` definition in a local file under another `$id`;
 the name match for `DarnlinkRef` still accepted). Step 2 (`tests/test_typed_anchor_targets.py`): anchors at depth
 in YAML and JSON, a code `#---` block, several anchors with and without a pointer fragment,
-duplicates, an invalid value, excludes. Step 3: fill with one candidate, refuse with zero or several
+duplicates, an invalid value, excludes. Step 3 (`tests/test_fill_uuid.py`): fill with one candidate, refuse with zero or several
 and for a web link, byte-identical output except the added line.

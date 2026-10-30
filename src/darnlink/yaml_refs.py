@@ -30,6 +30,12 @@ correct, repairable (the uuid lives elsewhere: the new relative path is proposed
 or ambiguous. A `link` that is a web URL is not checked here (a `DarnlinkWebRef` may point to
 another repository).
 
+A reference with a `link` and no `uuid` key (step 3) is `fillable` when the link names a file with exactly one
+candidate anchor: the element its JSON Pointer fragment names or, without one, the file's own anchor (and, when the
+file has none, its only element anchor). `--write` inserts the `uuid:` line under the `link:` line and keeps every
+other byte. With zero candidates it stays `malformed`, with several it is `ambiguous`, and a web link is never
+filled: darnlink never mints a uuid, it copies the one the target already declares.
+
 Known limits: a `$ref` to another file (other than the reference type itself), `prefixItems`, `if` and
 `not` are not followed, and a repeated `link` key is not reported (the YAML loader keeps the last one).
 """
@@ -63,9 +69,9 @@ REF, ANCHOR = "ref", "anchor"
 
 _MODELINE = re.compile(r"^#\s*yaml-language-server:\s*\$schema=(\S+)")
 
-OK, REPAIR, CONFLICT, UNRESOLVABLE, AMBIGUOUS, MALFORMED, NO_SCHEMA, UNREADABLE, INVALID_ANCHOR = (
+OK, REPAIR, CONFLICT, UNRESOLVABLE, AMBIGUOUS, MALFORMED, NO_SCHEMA, UNREADABLE, INVALID_ANCHOR, FILLABLE = (
     "ok", "repair", "conflict", "unresolvable", "ambiguous", "malformed", "unreadable-schema", "unreadable-yaml",
-    "invalid-anchor")
+    "invalid-anchor", "fillable")
 
 #: What `_load_yaml` returns for a file it cannot read. Not None: an empty file loads as None and is readable.
 UNREADABLE_DOC = object()
@@ -352,6 +358,8 @@ class TargetIndex:
     by_uuid: Dict[str, Path]
     duplicates: Dict[str, List[Path]]
     pointers: Dict[str, str] = field(default_factory=dict)
+    #: resolved file -> its anchors as (element pointer, uuid), duplicates included: the candidates of a `link`.
+    files: Dict[Path, List[Tuple[str, str]]] = field(default_factory=dict)
 
     def get(self, uuid: str) -> Optional[Path]:
         return self.by_uuid.get(uuid.lower())
@@ -363,6 +371,18 @@ class TargetIndex:
     def is_ambiguous(self, uuid: str) -> bool:
         return uuid.lower() in self.duplicates
 
+    def candidates(self, target: Path, fragment: str) -> List[str]:
+        """The uuids a `link` to `target#fragment` can mean (step 3). A JSON Pointer fragment names one element;
+        otherwise the file's own anchor counts, and only when the file has none, its element anchors."""
+        anchors = self.files.get(resolved(target), [])
+        if fragment.startswith("/"):
+            pointer = unquote(fragment)
+            return sorted({u for element, u in anchors if element == pointer})
+        whole = sorted({u for element, u in anchors if not element})
+        if whole or fragment:   # a heading fragment (`README.md#usage`) still names the whole file
+            return whole
+        return sorted({u for _, u in anchors})
+
 
 def build_target_index(root: Path, excludes: set[str], yaml_docs: Dict[Path, object],
                        anchors: Optional[Dict[Path, List[Tuple[str, str]]]] = None,
@@ -373,12 +393,19 @@ def build_target_index(root: Path, excludes: set[str], yaml_docs: Dict[Path, obj
     by_uuid = dict(md.by_uuid)
     duplicates = {u: list(ps) for u, ps in md.duplicates.items()}
     pointers: Dict[str, str] = {}
+    files: Dict[Path, List[Tuple[str, str]]] = {}
+    for u, p in md.by_uuid.items():
+        files.setdefault(resolved(p), []).append(("", u))
+    for u, ps in md.duplicates.items():
+        for p in ps:
+            files.setdefault(resolved(p), []).append(("", u))
     seen: set = set()
 
     def add(path: Path, element: str, u: str) -> None:
         if (path, element, u) in seen:   # a top-level `uuid` that the schema also types as an anchor
             return
         seen.add((path, element, u))
+        files.setdefault(resolved(path), []).append((element, u))
         if u in duplicates:
             duplicates[u].append(path)
         elif u in by_uuid:
@@ -398,7 +425,7 @@ def build_target_index(root: Path, excludes: set[str], yaml_docs: Dict[Path, obj
             if (path, u) in (code or ()) and (u in md.by_uuid or u in md.duplicates):
                 continue   # a script that repeats its README's uuid did not adopt anything: the README stays the target
             add(path, element, u)
-    return TargetIndex(by_uuid, duplicates, pointers)
+    return TargetIndex(by_uuid, duplicates, pointers, files)
 
 
 def _shown(path: Path, root: Path) -> str:
@@ -412,8 +439,27 @@ def _same(a: Path, b: Path) -> bool:
     return resolved(a) == resolved(b)
 
 
+def _probe(link: str, yaml_file: Path) -> Optional[Tuple[Path, bool]]:
+    """(the path a link names, whether it is a file); a directory link names the README.md inside. None when the
+    path cannot be looked at (a name too long, a NUL, a folder without permission): a finding, not a crash."""
+    try:
+        points = resolve_href(link, yaml_file)
+        # A NUL makes `resolve()` raise on Linux, but on Windows with 3.13 it does not, and `is_file()` then says
+        # False: the link would read as "names no file". Refused here, so the finding is the same on every system.
+        if "\0" in str(points):
+            raise ValueError("embedded null character in path")
+        if points.is_dir():
+            points = points / "README.md"
+        return points, points.is_file()
+    except (OSError, ValueError):
+        return None
+
+
 def judge(value: object, yaml_file: Path, index: TargetIndex, root: Path) -> Tuple[str, str, str, str, str]:
-    """(kind, link, uuid, detail, new_link) for one reference value. `root` only shortens the paths in `detail`."""
+    """(kind, link, uuid, detail, new_link) for one reference value. `root` only shortens the paths in `detail`.
+    For a `fillable` reference, `uuid` is the one to write."""
+    if isinstance(value, dict) and "uuid" not in value and isinstance(value.get("link"), str) and value["link"].strip():
+        return _judge_missing_uuid(value["link"], yaml_file, index, root)
     if not isinstance(value, dict) or not isinstance(value.get("uuid"), str) or not isinstance(value.get("link"), str):
         return MALFORMED, str(value.get("link", "")) if isinstance(value, dict) else "", "", \
             "not a {uuid, link} mapping of strings", ""
@@ -427,9 +473,10 @@ def judge(value: object, yaml_file: Path, index: TargetIndex, root: Path) -> Tup
     target = index.get(uuid)
     if target is None:
         return UNRESOLVABLE, link, uuid, "no file declares this uuid", ""
-    points = resolve_href(link, yaml_file)
-    if points.is_dir():
-        points = points / "README.md"   # a directory link: its target is the README.md inside
+    probed = _probe(link, yaml_file)
+    if probed is None:
+        return MALFORMED, link, uuid, "the link names a path that cannot be looked at", ""
+    points, points_is_file = probed
     shown = _shown(target, root)
     path_part, fragment = split_fragment(link)
     element = index.element(uuid)
@@ -441,12 +488,35 @@ def judge(value: object, yaml_file: Path, index: TargetIndex, root: Path) -> Tup
             return OK, link, uuid, "", ""
         return REPAIR, link, uuid, f"the element moved to #{element} in {shown}", \
             f"{path_part}#{pointer_fragment(want)}"
-    if points.is_file():
+    if points_is_file:
         return CONFLICT, link, uuid, f"path names an existing file, but the uuid lives in {shown}", ""
     where = f"{shown}#{element}" if element else shown
     # an element's pointer is written percent-encoded, as the Markdown repair writes it; a heading fragment as it was
     return REPAIR, link, uuid, f"target moved to {where}", \
         relative_link(target, yaml_file, pointer_fragment(want) if element else want)
+
+
+def _judge_missing_uuid(link: str, yaml_file: Path, index: TargetIndex, root: Path) -> Tuple[str, str, str, str, str]:
+    """A `{link}` with no `uuid` key (step 3): `fillable` with exactly one candidate anchor, never for a web link."""
+    if is_web_href(link):
+        return MALFORMED, link, "", "no uuid: a web link is never filled", ""
+    probed = _probe(link, yaml_file)
+    if probed is None:
+        return MALFORMED, link, "", "no uuid, and the link names a path that cannot be looked at", ""
+    points, points_is_file = probed
+    if not points_is_file:
+        return MALFORMED, link, "", "no uuid, and the link names no file", ""
+    _, fragment = split_fragment(link)
+    shown = _shown(points, root)
+    found = index.candidates(points, fragment)
+    if not found:
+        at = f" at #{fragment}" if fragment.startswith("/") else ""
+        return MALFORMED, link, "", f"no uuid, and {shown} has no anchor{at}", ""
+    if len(found) > 1:
+        return AMBIGUOUS, link, "", f"no uuid, and {shown} has {len(found)} candidate anchors", ""
+    if index.is_ambiguous(found[0]):
+        return AMBIGUOUS, link, found[0], "no uuid, and the target's uuid is declared by more than one file", ""
+    return FILLABLE, link, found[0], f"no uuid: {shown} declares {found[0]}", ""
 
 
 _LINK_LINE = r"^(\s*(?:-\s+)?link:\s*)(['\"]?){old}\2(\s*(?:#.*)?)$"
@@ -503,6 +573,71 @@ def apply_repairs(path: Path, repairs: List[RefFinding]) -> List[RefFinding]:
         return list(repairs)
     write_text_keep_newlines(path, text)
     return left
+
+
+#: A block-style `link:` line whose value is `old`, as `apply_fills` reads it (one line, its ending stripped).
+_FILL_LINE = r"([ \t]*)(-[ \t]+)?link:[ \t]*(['\"]?){old}\3[ \t]*(?:#.*)?"
+
+
+def apply_fills(path: Path, fills: List[RefFinding]) -> List[RefFinding]:
+    """Insert `uuid: <value>` under the `link:` line of each `fillable` reference of `path`, keeping every other byte.
+    As for repairs, a link text is filled only when every appearance of it in the file is one of these references,
+    all with the same uuid and each on a block-style `link:` line of its own; the rest is returned to the reader. The
+    new text must load as the original document plus exactly those `uuid` keys, or nothing is written."""
+    from .frontmatter_edit import read_text_keep_newlines, write_text_keep_newlines
+
+    original = read_text_keep_newlines(path)
+    lines = re.findall(r"[^\n]*\n|[^\n]+\Z", original)
+    newline = "\r\n" if "\r\n" in original else "\n"
+    by_old: Dict[str, set] = {}
+    for f in fills:
+        by_old.setdefault(f.link, set()).add(f.uuid)
+    left: List[RefFinding] = []
+    inserts: Dict[int, str] = {}
+    for old, uuids in by_old.items():
+        mine = [f for f in fills if f.link == old]
+        pattern = re.compile(_FILL_LINE.format(old=re.escape(old)))
+        at = [i for i, line in enumerate(lines) if pattern.fullmatch(line.rstrip("\r\n"))]
+        if len(uuids) != 1 or len(at) != len(mine) or original.count(old) != len(mine):
+            left += mine   # the same counting rule as `apply_repairs`: anything else is left, never guessed
+            continue
+        u = next(iter(uuids))
+        for i in at:
+            m = pattern.fullmatch(lines[i].rstrip("\r\n"))
+            inserts[i] = " " * (len(m.group(1).expandtabs()) + len(m.group(2) or "")) + f"uuid: {u}"
+    if not inserts:
+        return list(fills)
+    out = []
+    for i, line in enumerate(lines):
+        if i in inserts:
+            body = line.rstrip("\r\n")
+            eol = line[len(body):]
+            out += [line, inserts[i] + eol] if eol else [line + newline, inserts[i]]
+        else:
+            out.append(line)
+    text = "".join(out)
+    written = [f for f in fills if f not in left]
+    if not _fill_is_exact(original, text, written):
+        return list(fills)
+    write_text_keep_newlines(path, text)
+    return left
+
+
+def _fill_is_exact(original: str, text: str, written: List[RefFinding]) -> bool:
+    """True if `text` loads as the original document with a `uuid` added to each filled reference and nothing else."""
+    import yaml
+    loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+    try:
+        before = yaml.load(original.lstrip("﻿"), Loader=loader)
+        after = yaml.load(text.lstrip("﻿"), Loader=loader)
+    except Exception:
+        return False
+    for f in written:
+        value = _at(before, "" if f.pointer == "/" else f.pointer)
+        if not isinstance(value, dict) or "uuid" in value:
+            return False
+        value["uuid"] = f.uuid
+    return before == after
 
 
 def _at(doc: object, pointer: str) -> object:
@@ -640,25 +775,30 @@ def run_cli(argv: List[str]) -> int:
     excludes = set(DEFAULT_EXCLUDES) | set(args.exclude)
     findings, stats = plan(root, excludes)
     repaired: List[RefFinding] = []
+    filled: List[RefFinding] = []
     if args.write:
-        by_file: Dict[str, List[RefFinding]] = {}
-        for f in findings:
-            if f.kind == REPAIR:
-                by_file.setdefault(f.file, []).append(f)
-        for rel, items in by_file.items():
-            left = apply_repairs(root.resolve() / rel, items)
-            repaired += [f for f in items if f not in left]
-        findings = [f for f in findings if f not in repaired]
+        for kind, apply, done in ((REPAIR, apply_repairs, repaired), (FILLABLE, apply_fills, filled)):
+            by_file: Dict[str, List[RefFinding]] = {}
+            for f in findings:
+                if f.kind == kind:
+                    by_file.setdefault(f.file, []).append(f)
+            for rel, items in by_file.items():
+                left = apply(root.resolve() / rel, items)
+                done += [f for f in items if f not in left]
+        findings = [f for f in findings if f not in repaired and f not in filled]
     if args.json:
         print(json.dumps({"stats": stats, "findings": [asdict(f) for f in findings],
-                          "repaired": [asdict(f) for f in repaired]}, ensure_ascii=False, indent=2))
+                          "repaired": [asdict(f) for f in repaired], "filled": [asdict(f) for f in filled]},
+                         ensure_ascii=False, indent=2))
     else:
         for f in repaired:
             print(f"REPAIRED     {f.file}#{f.pointer}  {f.link} -> {f.new_link}")
+        for f in filled:
+            print(f"FILLED       {f.file}#{f.pointer}  {f.link}  uuid: {f.uuid}")
         for f in findings:
             extra = f"  -> {f.new_link}" if f.new_link else ""
             print(f"{f.kind.upper():<12} {f.file}#{f.pointer}  {f.link}  ({f.detail}){extra}")
         print(f"darnlink yaml-refs: {stats['references']} references in {stats['with_schema']} YAML files with a "
               f"local schema ({stats['yaml_files']} scanned): {stats['ok']} ok, {len(repaired)} repaired, "
-              f"{len(findings)} broken")
+              f"{len(filled)} filled, {len(findings)} broken")
     return 2 if findings else 0
