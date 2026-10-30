@@ -6,6 +6,8 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.30.0] — 2026-10-30
+
 ### Added
 
 - **`yaml-refs` fills a missing `uuid` from the `link`** (feature 020, step 3). A reference with a
@@ -1328,7 +1330,8 @@ First public release.
 - Ships a [pre-commit](https://pre-commit.com/) hook (`darnlink`, `darnlink-repair`).
 - Format specification: [FORMAT.md](FORMAT.md) <!-- uuid: 9052d864-2a45-4ed4-8725-d8a394e7a7ef -->.
 
-[Unreleased]: https://github.com/txemi/darnlink/compare/v0.29.0...HEAD
+[Unreleased]: https://github.com/txemi/darnlink/compare/v0.30.0...HEAD
+[0.30.0]: https://github.com/txemi/darnlink/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/txemi/darnlink/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/txemi/darnlink/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/txemi/darnlink/compare/v0.26.0...v0.27.0
