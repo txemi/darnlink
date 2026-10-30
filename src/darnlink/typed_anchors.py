@@ -167,7 +167,10 @@ def _typed_schema(path: Path, decl: str, rel: str, schemas: _Schemas, found: Typ
     schema declares no anchor are never loaded (measured on a fleet repository: 1,556 YAML files, 8 s).
     An unreadable schema is a finding only with `report`: a YAML modeline names a schema for darnlink's kind of tools,
     while the `$schema` of any JSON configuration may name a file that is simply not there."""
-    schema, recognizer = schemas.get((path.parent / decl.split("#", 1)[0]).resolve())
+    base = decl.split("#", 1)[0]
+    if "\0" in base:   # no system names a file with a NUL; resolving one raises on Linux but not on Windows with 3.13,
+        raise ValueError("the schema path has a NUL character")   # so it is said here, the same everywhere
+    schema, recognizer = schemas.get((path.parent / base).resolve())
     if schema == {}:
         if report:
             found.findings.append(RefFinding(NO_SCHEMA, rel, "/", "", "", f"the file names the schema {decl}, which "
