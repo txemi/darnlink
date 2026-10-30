@@ -45,3 +45,12 @@ def test_a_modeline_with_a_nul_is_an_unreadable_schema(tmp_path, system):
     _w(tmp_path / "data" / "card.yaml", "# yaml-language-server: $schema=../x\0y.json\nname: a\n")
     findings, _ = _plan(tmp_path, set())
     assert [f.kind for f in findings] == [NO_SCHEMA]
+
+
+def test_a_literal_nul_in_a_markdown_link_is_dead_not_a_crash(tmp_path, system):
+    # A NUL typed as is, not as `%00`: it reached `resolve()` through `resolved()` in `_anchor_target`, before any
+    # of the guards above.
+    doc = tmp_path / "doc.md"
+    _w(doc, f"---\nuuid: {U_A}\n---\n\n[x](b\0c.md)\n")
+    dead = [x for x in plan_robustify(tmp_path).findings if x.kind is Kind.DANGLING and x.file == doc]
+    assert len(dead) == 1
