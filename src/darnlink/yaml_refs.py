@@ -19,7 +19,8 @@ is one of the first kind. The anchor type, `DarnlinkAnchor`, is recognised only 
 `$id`, a local file whose own `$id` is that one (a pinned copy), or `#/$defs/DarnlinkAnchor` in the same document.
 
 The targets are the frontmatter `uuid` of every `.md` file (the same index as the Markdown links), the
-top-level `uuid` of every YAML file, and every typed anchor of a YAML file with a local schema, at any depth.
+top-level `uuid` of every YAML file, every typed anchor of a YAML file with a local schema, at any depth, and
+(step 2, `darnlink.typed_anchors`) the typed anchors of JSON files and the `#---` blocks of code files.
 An anchor that identifies one element of a file (`/hosts/3/uuid` identifies `/hosts/3`) is reached with that
 element's JSON Pointer as the fragment of the link (`hosts.yaml#/hosts/3`), and the fragment is repaired like
 the path. An anchor that is not a lowercase canonical uuid is reported `invalid-anchor`.
@@ -45,7 +46,7 @@ from typing import Dict, Iterator, List, Optional, Tuple
 from urllib.parse import unquote
 
 from .frontmatter_index import DEFAULT_EXCLUDES, build_index, dir_excluded
-from .paths import is_web_href, relative_link, resolve_href, resolved, split_fragment
+from .paths import is_web_href, pointer_fragment, relative_link, resolve_href, resolved, split_fragment
 
 REF_DEF_NAME = "DarnlinkRef"
 ANCHOR_DEF_NAME = "DarnlinkAnchor"
@@ -233,6 +234,28 @@ def anchor_positions(instance: object, schema: dict,
     return _typed_positions(instance, schema, ANCHOR, recognizer or TypeRecognizer())
 
 
+
+def file_anchors(doc: object, schema: dict, recognizer: TypeRecognizer,
+                 rel: str) -> Tuple[List[Tuple[str, str]], List[RefFinding], bool]:
+    """The typed anchors of one parsed file: (good ones as (element pointer, uuid), an `invalid-anchor` finding per bad
+    one, whether the bad ones include the file-level anchor). '' as the element pointer is the whole file."""
+    good: List[Tuple[str, str]] = []
+    bad: List[RefFinding] = []
+    whole_file_bad = False
+    for pointer, value in anchor_positions(doc, schema, recognizer):
+        element = pointer.rsplit("/", 1)[0]
+        problem = ""
+        if not (isinstance(value, str) and CANONICAL_UUID.fullmatch(value)):
+            problem = "an anchor must be a lowercase canonical uuid"
+        elif not isinstance(_at(doc, element), dict):
+            problem = "an anchor must be a key of the element it identifies, not an item of a list"
+        if problem:
+            bad.append(RefFinding(INVALID_ANCHOR, rel, pointer or "/", "", str(value), f"{problem}: not a link target"))
+            whole_file_bad = whole_file_bad or not element
+        else:
+            good.append((element, value))
+    return good, bad, whole_file_bad
+
 def _typed_positions(instance: object, schema: dict, want: str,
                      recognizer: TypeRecognizer) -> List[Tuple[str, object]]:
     """[(JSON Pointer, value)] of every position of `instance` whose schema node is the type `want`.
@@ -342,8 +365,10 @@ class TargetIndex:
 
 
 def build_target_index(root: Path, excludes: set[str], yaml_docs: Dict[Path, object],
-                       anchors: Optional[Dict[Path, List[Tuple[str, str]]]] = None) -> TargetIndex:
-    """`anchors` maps a YAML file to its typed anchors, as (element pointer, uuid); '' is the whole file."""
+                       anchors: Optional[Dict[Path, List[Tuple[str, str]]]] = None,
+                       code: Optional[set] = None) -> TargetIndex:
+    """`anchors` maps a YAML file to its typed anchors, as (element pointer, uuid); '' is the whole file. `code`
+    holds the (file, uuid) of `#---` block anchors, which give way to a Markdown frontmatter with their uuid."""
     md = build_index(root, excludes)
     by_uuid = dict(md.by_uuid)
     duplicates = {u: list(ps) for u, ps in md.duplicates.items()}
@@ -370,6 +395,8 @@ def build_target_index(root: Path, excludes: set[str], yaml_docs: Dict[Path, obj
             add(path, "", u.strip().lower())
     for path, items in (anchors or {}).items():
         for element, u in items:
+            if (path, u) in (code or ()) and (u in md.by_uuid or u in md.duplicates):
+                continue   # a script that repeats its README's uuid did not adopt anything: the README stays the target
             add(path, element, u)
     return TargetIndex(by_uuid, duplicates, pointers)
 
@@ -412,11 +439,14 @@ def judge(value: object, yaml_file: Path, index: TargetIndex, root: Path) -> Tup
     if _same(points, target):
         if fragment == want or (element and unquote(fragment) == element):   # `%20` in a link is a space
             return OK, link, uuid, "", ""
-        return REPAIR, link, uuid, f"the element moved to #{element} in {shown}", f"{path_part}#{want}"
+        return REPAIR, link, uuid, f"the element moved to #{element} in {shown}", \
+            f"{path_part}#{pointer_fragment(want)}"
     if points.is_file():
         return CONFLICT, link, uuid, f"path names an existing file, but the uuid lives in {shown}", ""
     where = f"{shown}#{element}" if element else shown
-    return REPAIR, link, uuid, f"target moved to {where}", relative_link(target, yaml_file, want)
+    # an element's pointer is written percent-encoded, as the Markdown repair writes it; a heading fragment as it was
+    return REPAIR, link, uuid, f"target moved to {where}", \
+        relative_link(target, yaml_file, pointer_fragment(want) if element else want)
 
 
 _LINK_LINE = r"^(\s*(?:-\s+)?link:\s*)(['\"]?){old}\2(\s*(?:#.*)?)$"
@@ -558,24 +588,26 @@ def _plan(root: Path, excludes: set[str]) -> Tuple[List[RefFinding], Dict[str, i
                                                                          "load as one YAML document"))
             continue
         stats["with_schema"] += 1
-        for pointer, value in anchor_positions(docs[path], schema, recognizer):
-            stats["anchors"] += 1
-            element = pointer.rsplit("/", 1)[0]
-            problem = ""
-            if not (isinstance(value, str) and CANONICAL_UUID.fullmatch(value)):
-                problem = "an anchor must be a lowercase canonical uuid"
-            elif not isinstance(_at(docs[path], element), dict):
-                problem = "an anchor must be a key of the element it identifies, not an item of a list"
-            if problem:
-                findings.append(RefFinding(INVALID_ANCHOR, rel, pointer or "/", "", str(value),
-                                           f"{problem}: not a link target"))
-                if not element:
-                    not_targets.add(path)   # its top-level `uuid` is this same invalid anchor
-            else:
-                anchors.setdefault(path, []).append((element, value))
+        good, bad, whole_file_bad = file_anchors(docs[path], schema, recognizer, rel)
+        stats["anchors"] += len(good) + len(bad)
+        findings += bad
+        if whole_file_bad:
+            not_targets.add(path)   # its top-level `uuid` is this same invalid anchor
+        if good:
+            anchors[path] = good
         checked.append((path, rel, schema, recognizer))
+    # JSON files and code `#---` blocks are targets too (step 2). YAML was read above, with its untyped top-level `uuid`.
+    from .typed_anchors import collect
+    extra = collect(root, excludes, kinds=("json", "code"))
+    findings += extra.findings
+    for path, items in extra.anchors.items():
+        have = anchors.setdefault(path, [])
+        added = [item for item in items if item not in have]   # a YAML file's block may repeat its typed `uuid`
+        have += added
+        stats["anchors"] += len(added)
     # Anchors first, references after: a reference may point to an anchor in a file read later.
-    index = build_target_index(root, excludes, {p: d for p, d in docs.items() if p not in not_targets}, anchors)
+    index = build_target_index(root, excludes, {p: d for p, d in docs.items() if p not in not_targets}, anchors,
+                               extra.code)
     for path, rel, schema, recognizer in checked:
         for pointer, value in ref_positions(docs[path], schema, recognizer):
             stats["references"] += 1

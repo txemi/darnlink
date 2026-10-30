@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
 from .frontmatter_index import DEFAULT_EXCLUDES, build_index, index_from_contents, scan_tree
+from .typed_anchors import collect as collect_typed_anchors, with_typed_anchors
 from .paths import resolve_cache, resolved
 from .repair import apply_repairs, plan_repairs
 from .report import Finding, Kind
@@ -62,7 +63,7 @@ def _findings_json(
 
 def _run_repair(root: Path, write: bool, excludes: set, as_json: bool, block_markers: tuple,
                 only: Optional[set] = None) -> int:
-    index = build_index(root, excludes)
+    index = with_typed_anchors(build_index(root, excludes), collect_typed_anchors(root, excludes))
     result = plan_repairs(root, index, excludes, block_markers, only=only)
     repairs = [f for f in result.findings if f.kind is Kind.REPAIR]
     conflicts = [f for f in result.findings if f.kind is Kind.CONFLICT]
@@ -76,7 +77,8 @@ def _run_repair(root: Path, write: bool, excludes: set, as_json: bool, block_mar
         print(f"darnlink repair — root: {root}")
         if only is not None:
             print(f"  write scope: {len(only)} file(s) (--only)")
-        print(f"  indexed uuids: {len(index.by_uuid)} | duplicate uuids: {len(index.duplicates)}")
+        print(f"  indexed uuids: {len(index.by_uuid)} | duplicate uuids: {len(index.duplicates)} | "
+              f"typed anchors outside Markdown: {index.typed_anchors}")
         print(f"  links to repair: {len(repairs)} | conflicts: {len(conflicts)} | unresolved: {len(unresolved)} | ignored files: {len(result.ignored)} | link-ignored: {len(result.link_ignored)} | invalid frontmatter: {len(index.invalid)}")
         for f in repairs:
             print(f"  [repair] {f.file}: {f.detail}")
@@ -183,7 +185,10 @@ def _run_check(root: Path, excludes: set, as_json: bool, block_markers: tuple,
     # Integrity axis (repair, dry-run): robust links whose path is stale/unresolvable, plus invalid YAML.
     # FR-010: `--only` restricts FINDINGS to links whose source file is in the set (check writes
     # nothing, so there is no write scope — just a report filter). The index is still whole.
-    index = index_from_contents(files, contents, out_of_root)
+    # Feature 020: robust links also resolve to typed anchors outside Markdown (YAML and JSON elements,
+    # code `#---` blocks). Their own problems are `yaml-refs`'s to report; they never move this exit code.
+    index = with_typed_anchors(index_from_contents(files, contents, out_of_root),
+                               collect_typed_anchors(root, excludes))
     rep = plan_repairs(root, index, excludes, block_markers, only=only, prescanned=(files, contents))
     repairs = [f for f in rep.findings if f.kind is Kind.REPAIR]
     conflicts = [f for f in rep.findings if f.kind is Kind.CONFLICT]
@@ -217,6 +222,7 @@ def _run_check(root: Path, excludes: set, as_json: bool, block_markers: tuple,
         print(json.dumps({
             "check": True,
             "exit_code": code,
+            "typed_anchors": index.typed_anchors,
             "write_scope": sorted(str(p) for p in only) if only is not None else None,
             "integrity": {
                 "failed": integrity_fail,
@@ -273,6 +279,9 @@ def _run_check(root: Path, excludes: set, as_json: bool, block_markers: tuple,
               f"-> {'FAIL' if integrity_fail else 'ok'}")
         print(f"  [strict]    to robustify: {len(upgrades)} | invalid frontmatter: {len(rob_invalid)} "
               f"-> {'FAIL' if strict_fail else 'ok'}")
+        if index.typed_anchors:
+            print(f"  [targets]   typed anchors outside Markdown: {index.typed_anchors} "
+                  f"(their own problems: `darnlink yaml-refs`)")
         for p_ in index.out_of_root:
             print(f"  [out-of-root-link] {p_}: symlink whose target lives outside the scanned root; "
                   f"not indexed — a robust link to its uuid will fail as `unresolvable` "

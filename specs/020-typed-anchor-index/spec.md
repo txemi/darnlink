@@ -44,8 +44,11 @@ so every uuid field would become an anchor.
    `DarnlinkAnchor` positions recognised by `$id`, pinned copy or local definition; the anchors of
    every YAML file with a local schema, at any depth, become `yaml-refs` targets, and a fragment that
    is a JSON Pointer is repaired with the path when the element moved.
-2. **The rest of the index**: JSON files (by their `$schema` key) and code files (their `#---`
-   block) as targets too, and Markdown links (`<!-- uuid: … -->`) resolving against the whole index.
+2. **The rest of the index** — *implemented*: JSON files (by their `$schema` key) and code files
+   (their `#---` block) as targets too, and Markdown links (`<!-- uuid: … -->`) resolving against the
+   typed anchors as well as frontmatter (`darnlink.typed_anchors`). "The whole index" is narrowed to
+   the **typed** anchors: the untyped top-level `uuid` of a YAML file stays a `yaml-refs` target only
+   (see *Known limits (step 2)*).
 3. **Filling the `uuid` from the `link`**: `yaml-refs` reports `fillable` instead of `malformed` for
    a reference with a `link` and no `uuid` whose target has exactly one candidate, and `--write`
    inserts the line, byte-preserving like today's link repairs.
@@ -78,6 +81,35 @@ so every uuid field would become an anchor.
   lines that need different fragments are reported and left to the reader.
 - A draft-07 `#/definitions/DarnlinkAnchor` is not recognised: the published schema uses `$defs`.
 
+## Known limits (step 2)
+
+- **The untyped top-level `uuid` of a YAML file is not a target for Markdown links.** Measured on
+  2026-10-29 in a fleet repository: 137 uuids are both a README's frontmatter and the top-level
+  `uuid` of a YAML file beside it (`activo.yaml`, `objeto.yaml`: two descriptions of one entity).
+  Indexing them would make every Markdown link to those READMEs `ambiguous` and turn the gate red.
+  When that repository types those `uuid` fields as `DarnlinkAnchor`, the pairs become real
+  duplicates; it must decide which file carries the anchor before typing them.
+- **A `#---` block anchor gives way to a Markdown frontmatter with the same uuid** (review of #19): a
+  script that repeats its README's uuid, or a copied file, adopted no schema, so it is skipped as a
+  target instead of making the links to the README `ambiguous`. A typed anchor (YAML or JSON with a
+  schema) does not give way: the schema is the adoption, and the pair is a real duplicate.
+- **A file that declares no anchor gives no finding.** A JSON file whose `$schema` names a missing or
+  unreadable file, a decorative banner between two `#---` lines (a block is reported as "not YAML"
+  only if a line of it starts with `uuid:`), and a file that cannot be opened are skipped silently.
+  A YAML modeline that names an unreadable schema is still reported by `yaml-refs`, as before.
+- A file is parsed only when its schema declares a type, so the scan stays cheap (~4 s on ~15.000
+  non-Markdown files, against 36 s to load every YAML file). A JSON file's `$schema` key is looked for
+  in its first 64 KiB, and only then is the file read whole; a JSON, YAML or schema file over 8 MiB is
+  not read; a code block is looked for only in the first 64 KiB, and only in a file that starts with
+  `#`. A schema is read only if it is a regular file. A `$schema` with a URI scheme (`file:`, `urn:`)
+  is not local.
+- The `<!-- darnlink-ignore-file -->` marker counts in a YAML or JSON file anywhere, and in a code file
+  only among its leading comment lines (where the block is).
+- A non-Markdown symlink out of the root is not a target; `check` does not list it (it lists only the
+  Markdown ones, as before), since most such links carry no anchor.
+- The strict axis (`--robustify`) does not propose anchoring a plain Markdown link to a typed target:
+  only robust links resolve against them in this step.
+
 ## Out of scope (later features)
 
 - Comment syntaxes other than `#` for code anchors (`//`, `--`, `/* */`).
@@ -88,7 +120,7 @@ so every uuid field would become an anchor.
 
 One test module per step. Step 1: each of the three `$ref` forms, for both types, positive and
 negative (an inlined pattern; a `DarnlinkAnchor` definition in a local file under another `$id`;
-the name match for `DarnlinkRef` still accepted). Step 2: anchors at depth
+the name match for `DarnlinkRef` still accepted). Step 2 (`tests/test_typed_anchor_targets.py`): anchors at depth
 in YAML and JSON, a code `#---` block, several anchors with and without a pointer fragment,
 duplicates, an invalid value, excludes. Step 3: fill with one candidate, refuse with zero or several
 and for a web link, byte-identical output except the added line.

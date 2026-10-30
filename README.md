@@ -155,6 +155,26 @@ a `{uuid, link}` mapping in a YAML file, at a position its JSON Schema (named by
 never touched. Exit code 0 when every reference is correct, 2 when one is broken or a file cannot be
 read. The module docstring of `darnlink.yaml_refs` lists its known limits.
 
+**Typed anchors outside Markdown are link targets too** (feature 020): a `DarnlinkAnchor` position in a
+YAML file (modeline) or a JSON file (`$schema` key) with a local schema, and the `uuid` of a block
+between two `#---` lines among the leading `#` comments of any other file (a script, a TOML file):
+
+```sh
+#!/bin/sh
+#---
+# uuid: 6798c9d3-e47e-4050-9643-54bea6dc02e7
+#---
+```
+
+A robust Markdown link (`[deploy](tools/deploy.sh) <!-- uuid: … -->`) and a `DarnlinkRef` both resolve
+to them, and are repaired when the file moves. An anchor that identifies one element of its file is
+linked with the element's JSON Pointer as fragment (`hosts.yaml#/hosts/3`), repaired too when the
+element moves. The plain top-level `uuid` of a YAML file without a typed schema is a target for
+`yaml-refs` only, never for Markdown links: such a file often repeats the uuid of the README beside it.
+For the same reason a `#---` block whose uuid is also a Markdown file's gives way to that file.
+The problems of the anchors themselves (an invalid value, an unreadable schema) are reported by
+`yaml-refs`; `check` only counts them (`typed_anchors` in its JSON).
+
 ### `--json` output
 
 Stable shape, meant for gates and scripts:
