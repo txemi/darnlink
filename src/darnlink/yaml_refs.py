@@ -164,6 +164,10 @@ class TypeRecognizer:
             return True
         if self._dir is None or base.startswith(("http://", "https://")):
             return False
+        if "\0" in base:
+            # A NUL names no file. `resolve()` raises on it on Linux and not on Windows with 3.13 (where
+            # `read_text` then fails and this said False): refused first, it says False everywhere.
+            return False
         path = (self._dir / base).resolve()
         if path not in self._ids:
             try:
@@ -700,6 +704,13 @@ def _plan(root: Path, excludes: set[str]) -> Tuple[List[RefFinding], Dict[str, i
         decl = modeline_schema(path)
         if not decl or decl.startswith(("http://", "https://")):
             continue
+        rel = path.relative_to(root).as_posix()
+        if "\0" in decl:
+            # Same finding on every system: `resolve()` raises on a NUL on Linux, and on Windows with 3.13
+            # it does not and the read fails, which already gave this finding there.
+            findings.append(RefFinding(NO_SCHEMA, rel, "/", "", "", f"the modeline names {decl!r}, which is "
+                                                                        "not a readable JSON object"))
+            continue
         spath = (path.parent / decl).resolve()
         if spath not in schemas:
             try:
@@ -708,7 +719,6 @@ def _plan(root: Path, excludes: set[str]) -> Tuple[List[RefFinding], Dict[str, i
                 loaded = None
             schemas[spath] = loaded if isinstance(loaded, dict) else None
         schema = schemas[spath]
-        rel = path.relative_to(root).as_posix()
         if schema is None:
             findings.append(RefFinding(NO_SCHEMA, rel, "/", "", "", f"the modeline names {decl}, which is not a "
                                                                         "readable JSON object"))

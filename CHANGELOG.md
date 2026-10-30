@@ -55,6 +55,11 @@ All notable changes to darnlink are documented here. The format is based on
 
 ### Fixed
 
+- **A NUL in a path gives the same answer on every system.** `darnlink --robustify` crashed on Linux with a
+  traceback on a Markdown link whose path decodes to a NUL (`%00`): it is now a `dangling` link, as on
+  Windows with Python 3.13. `yaml-refs` no longer resolves a NUL either: a `$ref` with one names no type,
+  and a modeline with one is `unreadable-schema`. Same fix as `_probe` in 0.29.0+ (292bbe6): the NUL is
+  refused before `resolve()`, which raises on it on Linux and not on Windows with 3.13.
 - **`--online` no longer hangs on a credential prompt.** When the default branch is not known locally,
   the own-repo rung asks the remote with `git ls-remote`; over an https origin, git (or Git Credential
   Manager on Windows) could wait for a login nobody would give, and on Windows the 10-second timeout
