@@ -6,6 +6,19 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Published types `DarnlinkAnchor` and `DarnlinkRef`, v1, LinkML first** (feature 019). The
+  package now ships `darnlink/schemas/v1/darnlink_types.linkml.yaml`, the single source of truth,
+  and `darnlink_types.schema.json`, generated from it by `tools/gen_schemas.py` and committed so a
+  repository can pin it without LinkML. `DarnlinkAnchor` is a typed UUID in canonical lowercase
+  RFC 4122 form (no trailing newline); `DarnlinkRef` is `{link, uuid}`, both required and nothing else, where `link` is a
+  relative path or a lowercase `http(s)` URL, on one line and not blank, and `uuid` is the target's anchor. Both are reachable under
+  `$defs` (the generator inlines LinkML types, so the script adds `$defs/DarnlinkAnchor` and points
+  `DarnlinkRef.uuid` at it). The `$id` carries `/v1/` and v1 never breaks; consumers pin a copy with
+  its sha256 instead of resolving it over the network. A `$ref` into a pinned copy's `DarnlinkRef`
+  is already recognised by `yaml-refs`. `linkml` and `jsonschema` join the `dev` extra only.
+
 ### Fixed
 
 - `web-check --online` no longer reports a false `web_not_found` for a link to a declared Forgejo
@@ -16,6 +29,27 @@ All notable changes to darnlink are documented here. The format is based on
   one of those readings is final at once (most of them are expected to 404), while any other
   transient status is retried as usual; the first reading that is not a 404 is the answer. `commit/` links are
   untouched (a SHA holds no slash), and a link that 404s under every reading is still broken.
+
+## [0.29.0] — 2026-10-29
+
+### Added
+
+- `darnlink yaml-refs` (**experimental**): checks typed `{uuid, link}` references in YAML data files
+  and, with `--write`, repairs the ones whose target moved. It only looks at the positions the
+  file's own JSON Schema (its `yaml-language-server` modeline) declares as the reference type: a
+  `$ref` to a definition named `DarnlinkRef`, or to a published `ref.schema.json`. A mapping that
+  merely has `uuid` and `link` keys is never touched. Targets are the frontmatter `uuid` of every
+  `.md` file and the top-level `uuid` of every YAML file. A file with a schema modeline that does
+  not load (a syntax error, several documents, a custom tag), or whose schema cannot be read, is
+  reported, never skipped. A repair keeps the link's
+  `#fragment` and quoting, and is only written if the file still loads afterwards. Exit code 0 when
+  every reference is correct, 2 when one is broken. `--json` for machines.
+
+### Removed
+
+- `repo_policy.yaml`, `repo_policy.schema.json` and `tools/repo_policy_check.py`, with their CI
+  stage. They were maintainer tooling, not part of the package, and no longer live in this
+  repository.
 
 ## [0.28.0] — 2026-10-09
 
@@ -1247,7 +1281,8 @@ First public release.
 - Ships a [pre-commit](https://pre-commit.com/) hook (`darnlink`, `darnlink-repair`).
 - Format specification: [FORMAT.md](FORMAT.md) <!-- uuid: 9052d864-2a45-4ed4-8725-d8a394e7a7ef -->.
 
-[Unreleased]: https://github.com/txemi/darnlink/compare/v0.28.0...HEAD
+[Unreleased]: https://github.com/txemi/darnlink/compare/v0.29.0...HEAD
+[0.29.0]: https://github.com/txemi/darnlink/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/txemi/darnlink/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/txemi/darnlink/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/txemi/darnlink/compare/v0.24.0...v0.26.0

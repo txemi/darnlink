@@ -54,16 +54,21 @@ uvx --from "$DARNLANG_REF" darnlang check --ext all --show-text
 
 uv sync --extra dev   # set up the environment (project + dev deps), like CI's install step
 uv run pytest -q
-uv run darnlink .              # repair check: robust links must not be broken
+# CI keeps one environment per Python (`UV_PROJECT_ENVIRONMENT=.venv-<py>`, Jenkinsfile) inside the
+# workspace. `.venv` is a default exclude but `.venv-3.10` is not, and the dev extras (linkml) ship
+# Markdown with links of their own: scanning them fails robustify and the dangling axis on files
+# that are not ours.
+VENV_EXCLUDE=(--exclude '.venv-*')
+uv run darnlink . "${VENV_EXCLUDE[@]}"   # repair check: robust links must not be broken
 # MAX self-gate (dogfood the strictest setting): a link to a file with no uuid fails the gate.
 # README.md is deny-listed — it's the PyPI/GitHub landing page, so it stays frontmatter-free (its
 # OUTBOUND links are still anchored with invisible <!-- uuid --> comments; only a frontmatter uuid would
 # show on the package page, which we don't want). See docs/elevating-your-link-gate.md.
-uv run darnlink . --robustify --create-frontmatter --no-create-frontmatter-for README.md
+uv run darnlink . --robustify --create-frontmatter --no-create-frontmatter-for README.md "${VENV_EXCLUDE[@]}"
 
 # Dangling axis (dogfood `dangling: repo`, the strictest rung the recipe offers). Runs LAST
 # because it shells out to darnlink again; see tools/dangling_gate.py for why it lives in its own
 # file and why it is fail-closed at zero.
 # `uv run python`, not `python3`: Windows ships no python3 command, and this is the project env.
-uv run python tools/dangling_gate.py
+uv run python tools/dangling_gate.py . "${VENV_EXCLUDE[@]}"
 
