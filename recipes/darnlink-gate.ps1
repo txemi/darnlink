@@ -28,6 +28,9 @@ $root = (git rev-parse --show-toplevel 2>$null)
 if (-not $root) { $root = (Get-Location).Path }
 $root = $root.Trim()
 Set-Location -LiteralPath $root
+# Set-Location does not move the PROCESS cwd, and [IO.Path]::GetFullPath resolves against that one:
+# without this, a relative finding path from a run started in a subfolder would miss the staged set.
+[Environment]::CurrentDirectory = $root
 
 # --- config (JSON, all optional); env wins over file ---
 # A config that EXISTS but does not parse is a hard error, in both fail modes — same as bash. This
