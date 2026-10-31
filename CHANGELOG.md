@@ -17,7 +17,9 @@ All notable changes to darnlink are documented here. The format is based on
   whatever the schema rejects and exits 0 (1 with `--strict`); it needs no JSON Schema validator.
   Both come from one table, `darnlink/gate_config.py`, written out by `tools/gen_schemas.py`, and a
   test checks they agree on every key, in both directions, and that the table names exactly the
-  keys the bash recipe reads. The recipes do not call it yet.
+  keys the bash recipe reads. Both recipes run it on every pass, right after the pre-flight, and
+  print its warnings without changing the verdict; with a pinned `ref` older than the command they
+  say so in one line and go on.
 
 ### Fixed
 
