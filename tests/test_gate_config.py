@@ -111,7 +111,7 @@ def test_a_huge_integer_or_a_deep_nesting_is_a_warning_not_a_crash(tmp_path):
     assert file_problems(path)
 
 
-# Shapes real-world configs use: all canonical.
+# Shapes real-world configs use (documentation keys, notes, booleans, counts): all canonical.
 CANONICAL = [
     {},
     {"ref": "git+https://github.com/txemi/darnlink@4afde9f629d43429f0460484b8bee1ca00b56cc8",
@@ -119,7 +119,7 @@ CANONICAL = [
      "dangling": "repo", "scope": "repo", "web": True, "create_readme": True,
      "forgejo_web": ["https://forge.example.com"]},
     {"ref": "git+https://github.com/txemi/darnlink@7d42686", "ref_comment": "v0.27.0, pinned by SHA",
-     "_deuda_excluida": ["mirrors"], "mode": "max", "dangling": "repo", "dangling_max": 0,
+     "_excluded_debt": ["mirrors"], "mode": "max", "dangling": "repo", "dangling_max": 0,
      "scope": "repo", "default_branch": "master"},
     {"mode": "check", "dangling": "added-lines", "scope": "repo", "create_readme": True,
      "fail_closed": False, "default_branch": "main"},
@@ -152,6 +152,9 @@ INVALID = [
     ({"excludes": ["old", ""]}, "items [1]"),
     ({"recipe_sha256": SHA.upper()}, "lower-case hex"),
     ({"ref_tag": 28}, "not a string"),
+    ({"web": None}, "default (off)"),
+    ({"dangling": None}, "default (off)"),
+    ({"fail_closed": 0.0}, "write true or false"),
 ]
 
 

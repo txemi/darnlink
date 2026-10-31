@@ -131,8 +131,10 @@ def _kind_problem(kind: str, value: Any) -> str:
             return ""
         if isinstance(value, str) and value.lower() in allowed:
             return f"write it in lower case, {value.lower()!r}"
+        if value is None:
+            return "is null: the recipes take the default (off); remove the key or write false"
         if not isinstance(value, str):
-            # A number can read as ON (bash prints 0.0 as "0.0"); null and [] fall back to off. Either way, not canonical.
+            # A number can read as ON (bash prints 0.0 as "0.0", not on the off-list); [] reads as off.
             return "is not a boolean or one of its strings (write true or false)"
         if kind == "flag":
             return "is not a boolean; the recipes would read this string as ON"
