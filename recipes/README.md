@@ -152,6 +152,15 @@ whole-repo where it's the wall.
 }
 ```
 
+**Check it.** `darnlink gate-config` (from 0.31) reads `darnlink-gate.json` and prints a
+`darnlink: warning:` for each key the recipes do not read and each value they would misread: a flag
+set to `"disabled"` turns it ON, `"exclude"` instead of `"excludes"` configures nothing. It exits 0,
+also with warnings; `--strict` makes them exit 1. The published schema of the file is
+`src/darnlink/schemas/v1/gate_config.schema.json`, for an editor (`"$schema"`) or a schema gate. It
+describes the **canonical form**: lower-case flag and enum values, which is stricter than what the
+recipes accept. Besides the keys below, it allows `$schema`, `ref_comment` and `ref_tag`, and any
+key starting with `_` as a note.
+
 ⚠️ **`recipe_sha256` is a placeholder too, and unlike `ref` it does not fail cleanly.** A wrong
 `ref` is a 404 and `curl -f` says so; a wrong digest is a *checksum mismatch*, and the first cause
 that message names is "someone bumped `ref` without re-sealing" — which is not what happened. The

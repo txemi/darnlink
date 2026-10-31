@@ -6,6 +6,19 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **The schema of `darnlink-gate.json`, and `darnlink gate-config` to check a config against it.**
+  Nothing validated the gate's config: an unknown key (`"exclude"` for `"excludes"`) configured
+  nothing, and a flag set to any string not on the «off» list (`"disabled"`) turned it on, both in
+  silence. `src/darnlink/schemas/v1/gate_config.schema.json` describes the 18 keys in their
+  canonical form (closed, lower-case values), plus `$schema`, `ref_comment`, `ref_tag` and notes
+  starting with `_`. `darnlink gate-config [PATH] [--strict]` prints a `darnlink: warning:` for
+  whatever the schema rejects and exits 0 (1 with `--strict`); it needs no JSON Schema validator.
+  Both come from one table, `darnlink/gate_config.py`, written out by `tools/gen_schemas.py`, and a
+  test checks they agree on every key, in both directions, and that the table names exactly the
+  keys the bash recipe reads. The recipes do not call it yet.
+
 ## [0.30.0] — 2026-10-30
 
 ### Added

@@ -822,6 +822,9 @@ def _main(argv: Optional[List[str]] = None) -> int:
     if raw and raw[0] == "yaml-refs":  # EXPERIMENTAL: typed {uuid, link} references in YAML data files
         from .yaml_refs import run_cli as _run_yaml_refs_cli
         return _run_yaml_refs_cli(raw[1:])
+    if raw and raw[0] == "gate-config":  # warn about what the darnlink-gate.json schema rejects
+        from .gate_config import run_cli as _run_gate_config_cli
+        return _run_gate_config_cli(raw[1:])
 
     parser = argparse.ArgumentParser(
         prog="darnlink",

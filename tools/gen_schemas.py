@@ -20,9 +20,14 @@ What `gen-json-schema` does NOT give us, and the deterministic fixes applied her
 3. **Key order.** Output is `json.dumps(..., indent=2, sort_keys=True)` plus a trailing newline, so
    the bytes depend only on the content.
 
+The second schema it writes, `gate_config.schema.json` (the keys of `darnlink-gate.json`), has no
+LinkML source: it comes from the `KEYS` table in `darnlink/gate_config.py`, which also drives the
+run-time check `darnlink gate-config`, so the two cannot disagree. `tests/test_gate_config.py` fails
+if that committed copy drifts; that test needs no LinkML, so it runs on every CI agent.
+
 Usage:
-    uv run --extra dev python tools/gen_schemas.py           # rewrite the JSON Schema
-    uv run --extra dev python tools/gen_schemas.py --check   # exit 1 if the committed copy drifted
+    uv run --extra dev python tools/gen_schemas.py           # rewrite both JSON Schemas
+    uv run --extra dev python tools/gen_schemas.py --check   # exit 1 if a committed copy drifted
 """
 
 from __future__ import annotations
@@ -36,6 +41,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_DIR = ROOT / "src" / "darnlink" / "schemas" / "v1"
 LINKML_SOURCE = SCHEMA_DIR / "darnlink_types.linkml.yaml"
 JSON_OUTPUT = SCHEMA_DIR / "darnlink_types.schema.json"
+GATE_CONFIG_OUTPUT = SCHEMA_DIR / "gate_config.schema.json"
 
 # The only base type the published types use today. Another one is a deliberate change: add its
 # JSON form here rather than guess it.
@@ -93,23 +99,31 @@ def generate(source: Path = LINKML_SOURCE) -> str:
     return json.dumps(schema, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
 
 
+def generate_gate_config() -> str:
+    """Return the JSON Schema text of `darnlink-gate.json`, from `darnlink.gate_config.KEYS`."""
+    from darnlink.gate_config import render_gate_config_schema
+
+    return render_gate_config_schema()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--check", action="store_true",
-                        help="do not write; exit 1 if the committed JSON Schema differs")
+                        help="do not write; exit 1 if a committed JSON Schema differs")
     args = parser.parse_args(argv)
-    fresh = generate()
-    current = JSON_OUTPUT.read_text(encoding="utf-8") if JSON_OUTPUT.exists() else None
-    if args.check:
-        if current != fresh:
-            print(f"{JSON_OUTPUT.relative_to(ROOT)} is stale: run tools/gen_schemas.py",
-                  file=sys.stderr)
-            return 1
-        return 0
-    if current != fresh:
-        JSON_OUTPUT.write_text(fresh, encoding="utf-8")
-        print(f"wrote {JSON_OUTPUT.relative_to(ROOT)}")
-    return 0
+    stale = 0
+    for output, make in ((JSON_OUTPUT, generate), (GATE_CONFIG_OUTPUT, generate_gate_config)):
+        fresh = make()
+        current = output.read_text(encoding="utf-8") if output.exists() else None
+        if current == fresh:
+            continue
+        if args.check:
+            print(f"{output.relative_to(ROOT)} is stale: run tools/gen_schemas.py", file=sys.stderr)
+            stale = 1
+            continue
+        output.write_text(fresh, encoding="utf-8", newline="\n")  # LF on Windows too: the tests compare bytes
+        print(f"wrote {output.relative_to(ROOT)}")
+    return stale
 
 
 if __name__ == "__main__":
