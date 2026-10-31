@@ -107,7 +107,8 @@ def test_schema_and_config_problems_agree_on_every_value_of_every_key(key):
 @pytest.mark.parametrize(("key", "value"), [("web", 0.0), ("fail_closed", 0), ("dangling", 1.0),
                                             ("dangling_max", 5.0), ("own_web_max", 1e2)])
 def test_a_number_the_bash_recipe_misreads_is_a_warning(key, value):
-    """bash prints a JSON number with Python's str(): 0.0 is "0.0", off no list, so `web: 0.0` reads as ON."""
+    """The recipes read a JSON number with Python's str(): 0.0 is "0.0", on neither flag list, so
+    `web: 0.0` stops the gate (exit 1). Write true/false."""
     assert config_problems({key: value})
 
 

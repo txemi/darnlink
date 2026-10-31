@@ -24,8 +24,9 @@ All notable changes to darnlink are documented here. The format is based on
 - **A config the recipes cannot trust stops the gate, and both recipes run the same gate.**
   `darnlink-gate.ps1` ran with every default, in silence, on a `darnlink-gate.json` that is not
   valid JSON; it now exits 1 with the bash recipe's message, reading the file as bash does (UTF-8,
-  optional BOM; on PowerShell 7 also as strictly, so a trailing comma is an error there too). In both recipes a flag set to a string off the closed list
-  (`"disabled"`, `"enabled"`, `0.0`) turned the flag ON; the lists are now closed on both sides
+  optional BOM). PowerShell 7 parses as strictly as bash; Windows PowerShell 5.1 checks only for a
+  trailing comma beyond what its own parser rejects. In both recipes a flag set to a string off the
+  closed list (`"disabled"`, `"enabled"`, `0.0`) turned the flag ON; the lists are now closed on both sides
   (`true`/`1`/`yes`/`on`, `false`/`0`/`no`/`off`, any case, as in `gate_config.py`) and anything else
   exits 1 naming the key and the value. The `.ps1` now follows the bash recipe where they diverged:
   `mode`, `scope` and key names are case-sensitive (`"MAX"` ran max on Windows and check elsewhere);
@@ -33,6 +34,11 @@ All notable changes to darnlink are documented here. The format is based on
   works in any mode; and its web pass no longer `exit`s before the later axes.
   `tests/test_recipe_parity.py` checks both against one table of configs (the PowerShell half where
   `pwsh` or `powershell` is on PATH).
+
+  **Upgrading:** this can break a config that used to pass. A flag set to anything off the two lists
+  (`"web": "enabled"`, `"fail_closed": 2`, `0.0`) used to turn the flag on and now exits 1 on every
+  run, naming the key. Write `true` or `false`. `darnlink gate-config` lists such values before you
+  upgrade.
 
 ## [0.30.0] — 2026-10-30
 

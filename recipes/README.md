@@ -131,6 +131,8 @@ is that orchestration in one place; a consumer carries only a tiny config + a 3-
   silence), and a flag (`fail_closed`, `web`, `own_web_from_origin`, `include_mermaid`,
   `create_readme`) whose value is not on the closed list, compared in any case: `true`, `1`, `yes`,
   `on` / `false`, `0`, `no`, `off`, or absent. `"disabled"` used to turn the flag **on**.
+  On Windows PowerShell 5.1 the JSON check is laxer: beyond what its own parser rejects, it only
+  catches a trailing comma (PowerShell 7 parses as strictly as bash).
 - **Both recipes run the same gate** (from 0.31). `darnlink-gate.ps1` follows the bash recipe:
   `mode` and `scope` are case-sensitive (`"MAX"` runs `check`, as it does in bash), and it reads
   `dangling`, `dangling_max`, `default_branch` and `create_readme_excludes` and runs
