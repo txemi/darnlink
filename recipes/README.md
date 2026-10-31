@@ -43,9 +43,8 @@ is that orchestration in one place; a consumer carries only a tiny config + a 3-
   and a gate people bypass gates nothing. The added lines come from `git diff --cached -U0`; git lives
   here, not in darnlink (spec 008, Option B).
 
-  ⚠️ **Not yet in `darnlink-gate.ps1`.** The Windows recipe ignores the `dangling` key, so a
-  Windows-only surface silently does not gate this axis. Being explicit rather than letting the
-  difference be discovered: on a repo that gates on both, POSIX gates it and Windows does not.
+  `darnlink-gate.ps1` gates it too, with the same settings and budget (from 0.31; before, it
+  ignored the key).
 
 - `web` (opt-in, **default off**, `mode=max` only) → adds a whole-repo `web-check --online` pass:
   cross-repo Markdown links to **other GitHub repos** must resolve to the destination file's `uuid`,
@@ -113,10 +112,8 @@ is that orchestration in one place; a consumer carries only a tiny config + a 3-
   exit `1` is not exclusively a usage error (`uvx` and an uncaught exception use it too). Under
   `fail_closed` it still fails, with `4`: in CI an axis that could not run is not a pass.
 
-  ⚠️ **`darnlink-gate.ps1` implements these keys, but its web pass still `exit`s the moment it
-  finishes**, so on Windows the create-readme and dangling axes do not run after a web pass — the
-  bug the POSIX recipe was fixed for. Same caveat as `dangling` below: stated rather than left to be
-  discovered.
+  The web pass falls through to the create-readme and dangling axes in both recipes (from 0.31,
+  the `.ps1` no longer `exit`s after it).
 
 - `scope=repo` → judge the whole tree (**the wall — use in pre-push & CI**).
   `scope=staged` → judge only the files you're committing (**multi-session pre-commit**, so a
@@ -129,6 +126,18 @@ is that orchestration in one place; a consumer carries only a tiny config + a 3-
   validated**. Prefer the env var over the json key — reading the json needs `python3`, and
   "python3 missing" is one of the very cases fail-closed exists to catch.
 - **Refuses `--write`** (this gate never mutates; robustify by hand).
+- **Stops on a config it cannot trust** (exit `1`, in both fail modes, before running anything): a
+  `darnlink-gate.json` that is not valid JSON (the `.ps1` used to run with every default, in
+  silence), and a flag (`fail_closed`, `web`, `own_web_from_origin`, `include_mermaid`,
+  `create_readme`) whose value is not on the closed list, compared in any case: `true`, `1`, `yes`,
+  `on` / `false`, `0`, `no`, `off`, or absent. `"disabled"` used to turn the flag **on**.
+  On Windows PowerShell 5.1 the JSON check is laxer: beyond what its own parser rejects, it only
+  catches a trailing comma (PowerShell 7 parses as strictly as bash).
+- **Both recipes run the same gate** (from 0.31). `darnlink-gate.ps1` follows the bash recipe:
+  `mode` and `scope` are case-sensitive (`"MAX"` runs `check`, as it does in bash), and it reads
+  `dangling`, `dangling_max`, `default_branch` and `create_readme_excludes` and runs
+  `create_readme` in any mode. `tests/test_recipe_parity.py` holds one table of configs that both
+  must follow; its PowerShell half runs where `pwsh` or `powershell` is on PATH.
 
 Exit: `0` clean · `2` integrity failure · `3` strict-only failure · `1` usage / `max`-mode findings ·
 `4` could-not-gate (fail-closed only).
