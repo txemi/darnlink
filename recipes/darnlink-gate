@@ -217,6 +217,22 @@ print(len(v) if isinstance(v, list) else 0)
 PY
 }
 
+# A BOOLEAN key takes one of a CLOSED list of spellings, compared after lower-casing: true, 1, yes,
+# on / false, 0, no, off (and empty, which is absent). A JSON `true`/`false` arrives here as the string
+# "True"/"False" (see read_cfg), so it is on those lists too. Anything else -- `"disabled"`, `"enabled"`,
+# `0.0` (which read_cfg prints as "0.0"), a list -- is a config error and stops the gate, in both fail
+# modes, exactly like a config that does not parse. It used to fall to `*) X=1`, so `"fail_closed":
+# "disabled"` turned the flag ON and nothing said a word: the one direction a typo must never go.
+# Same lists as FLAG_ON / FLAG_OFF in src/darnlink/gate_config.py, and as Read-Flag in the .ps1.
+bad_flag() {  # $1 = key, $2 = the env var that overrides it, $3 = the value read
+  local src="$cfg"
+  [ -n "${!2:-}" ] && src="environment variable $2"
+  echo "darnlink-gate: $1='$3' (from $src) is not a boolean -> FAILING." >&2
+  echo "  Write true or false. Accepted, in any case: true, 1, yes, on / false, 0, no, off." >&2
+  echo "  Nothing was validated: an unknown value is not read as on, and not as off either." >&2
+  exit 1
+}
+
 REF="${DARNLINK_REF:-$(read_cfg ref 'git+https://github.com/txemi/darnlink@v0.7.0')}"
 MODE="${DARNLINK_GATE_MODE:-$(read_cfg mode check)}"
 SCOPE="${DARNLINK_GATE_SCOPE:-$(read_cfg scope repo)}"
@@ -227,7 +243,8 @@ SCOPE="${DARNLINK_GATE_SCOPE:-$(read_cfg scope repo)}"
 # "False" — a naive `!= "0"` test would read that as ON and brick the very consumer that asked to
 # turn it OFF. Accept the obvious spellings on both sides.
 FAIL_CLOSED="${DARNLINK_GATE_FAIL_CLOSED:-$(read_cfg fail_closed "")}"
-case "${FAIL_CLOSED,,}" in ""|0|false|no|off) FAIL_CLOSED="" ;; *) FAIL_CLOSED=1 ;; esac
+case "${FAIL_CLOSED,,}" in ""|0|false|no|off) FAIL_CLOSED="" ;; 1|true|yes|on) FAIL_CLOSED=1 ;;
+  *) bad_flag fail_closed DARNLINK_GATE_FAIL_CLOSED "$FAIL_CLOSED" ;; esac
 # WEB (opt-in): when on, mode=max adds a 3rd whole-repo pass — `web-check --online` — that verifies
 # cross-repo Markdown links to OTHER GitHub repos still resolve to the destination file's uuid (read
 # online, anchored with `<!-- web-uuid: X -->`). ⚠️ BOTH kinds of destination need $GITHUB_TOKEN:
@@ -236,7 +253,8 @@ case "${FAIL_CLOSED,,}" in ""|0|false|no|off) FAIL_CLOSED="" ;; *) FAIL_CLOSED=1
 # a failure — never a crash), and the gate now says so instead of printing a quiet zero.
 # Fail-closed only on a genuinely broken/moved public web link. Same normalise-the-string dance as above.
 WEB="${DARNLINK_GATE_WEB:-$(read_cfg web "")}"
-case "${WEB,,}" in ""|0|false|no|off) WEB="" ;; *) WEB=1 ;; esac
+case "${WEB,,}" in ""|0|false|no|off) WEB="" ;; 1|true|yes|on) WEB=1 ;;
+  *) bad_flag web DARNLINK_GATE_WEB "$WEB" ;; esac
 # OWN_WEB (opt-in, needs `web`): the owners you control. A destination owned by one of them whose .md
 # has no uuid stops being "someone else's problem" and becomes a gate failure — see feature 016. A
 # LIST of names, never a sentinel: `own_web_from_origin` is its own key precisely so an owner literally
@@ -251,7 +269,8 @@ OWN_WEB_FROM_ORIGIN="${DARNLINK_GATE_OWN_WEB_FROM_ORIGIN:-$(read_cfg own_web_fro
 # ⚠️ NORMALISE ON THE LINE AFTER THE ASSIGNMENT. This `case` used to sit thirteen lines below, past
 # two unrelated assignments -- and that is not a style point, it is how the bug below happened: the
 # next person to add a key landed right above a `case` that looked like theirs and was not.
-case "${OWN_WEB_FROM_ORIGIN,,}" in ""|0|false|no|off) OWN_WEB_FROM_ORIGIN="" ;; *) OWN_WEB_FROM_ORIGIN=1 ;; esac
+case "${OWN_WEB_FROM_ORIGIN,,}" in ""|0|false|no|off) OWN_WEB_FROM_ORIGIN="" ;; 1|true|yes|on) OWN_WEB_FROM_ORIGIN=1 ;;
+  *) bad_flag own_web_from_origin DARNLINK_GATE_OWN_WEB_FROM_ORIGIN "$OWN_WEB_FROM_ORIGIN" ;; esac
 
 # The repo's DEFAULT BRANCH, for telling a link that is PENDING on it from one that is broken.
 # ⚠️ Normally derived from `origin`, and in CI that derivation FAILS: a multibranch PR job fetches
@@ -282,7 +301,8 @@ INCLUDE_MERMAID="${DARNLINK_GATE_INCLUDE_MERMAID:-$(read_cfg include_mermaid "")
 # `read_cfg` prints the raw Python value, so a JSON `false` arrives as the STRING "False" -- and the
 # `[ -n "$X" ]` this feeds is TRUE for any non-empty string. Without this line, `include_mermaid:
 # false` TURNED THE AXIS ON: the config said off, the gate read on, and nothing said a word.
-case "${INCLUDE_MERMAID,,}" in ""|0|false|no|off) INCLUDE_MERMAID="" ;; *) INCLUDE_MERMAID=1 ;; esac
+case "${INCLUDE_MERMAID,,}" in ""|0|false|no|off) INCLUDE_MERMAID="" ;; 1|true|yes|on) INCLUDE_MERMAID=1 ;;
+  *) bad_flag include_mermaid DARNLINK_GATE_INCLUDE_MERMAID "$INCLUDE_MERMAID" ;; esac
 # A budget, so the rung is adoptable before a repo reaches zero. Non-numeric counts as ABSENT, never as
 # infinite: silently WIDENING an allowance is the one direction a config typo must not be able to go —
 # the same rule `dangling_max` follows, and for the same reason.
@@ -295,7 +315,8 @@ fi
 # folder has no README (so no uuid to anchor to) FAILS the gate (dry-run: it's DETECTED, not written).
 # Robustify it by hand with `--create-readme --write`. Raises the max ceiling from "files" to "folders".
 CREATE_README="${DARNLINK_GATE_CREATE_README:-$(read_cfg create_readme "")}"
-case "${CREATE_README,,}" in ""|0|false|no|off) CREATE_README="" ;; *) CREATE_README=1 ;; esac
+case "${CREATE_README,,}" in ""|0|false|no|off) CREATE_README="" ;; 1|true|yes|on) CREATE_README=1 ;;
+  *) bad_flag create_readme DARNLINK_GATE_CREATE_README "$CREATE_README" ;; esac
 # DANGLING (opt-in, default off): links whose target does not exist (darnlink feature 015). It is a
 # SEPARATE axis, never folded into MODE, and that is the whole point — every consumer already carries
 # years of these (measured: thousands across a nine-repo fleet), so folding it into check/max would

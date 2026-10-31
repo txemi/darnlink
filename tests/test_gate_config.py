@@ -65,10 +65,17 @@ def test_keys_are_what_the_bash_recipe_reads():
     assert calls and all(c.endswith(("$(", "<(")) for c in calls), calls
 
 
-def test_the_powershell_recipe_reads_no_key_outside_keys():
+def test_the_powershell_recipe_reads_exactly_the_keys_bash_reads():
+    """Not only no key outside KEYS: the SAME keys as bash. The .ps1 used to skip `dangling`,
+    `dangling_max`, `default_branch` and `create_readme_excludes`, so one config gated differently on
+    Windows, and the old `<=` here could not see it."""
     text = PS1_RECIPE.read_text(encoding="utf-8")
-    read = set(re.findall(r"CfgOr '([a-z_]+)'", text)) | set(re.findall(r"\$cfg\.([a-z_]+)", text))
-    assert read and read <= set(RECIPE_KEYS)
+    code = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
+    read = (set(re.findall(r"(?:CfgStr|CfgList|CfgHas|Read-Flag) '([a-z_]+)'", code))
+            | set(re.findall(r"\$cfg\.([a-z_]+)", code)))
+    assert read == set(RECIPE_KEYS) - {"recipe_sha256"}
+    # Every read goes through one of those helpers; the old truthiness reader must not come back.
+    assert "CfgOr" not in code
 
 
 # --- 3. the schema and config_problems agree ------------------------------------------------------
@@ -138,7 +145,7 @@ def test_canonical_configs_pass_both(data):
 # One wrong thing each: (config, a word the warning must contain).
 INVALID = [
     ({"exclude": ["old"]}, "unknown key 'exclude'"),
-    ({"fail_closed": "disabled"}, "would read this string as ON"),
+    ({"fail_closed": "disabled"}, "the recipes stop on it"),
     ({"web": "True"}, "lower case, 'true'"),
     ({"mode": "MAX"}, "is not one of repair, check, max"),
     ({"scope": "Staged"}, "staged, repo"),
@@ -175,7 +182,7 @@ def test_file_problems(tmp_path):
     path = tmp_path / "darnlink-gate.json"
     assert file_problems(path) == []                     # absent: every key takes its default
     path.write_text('{"mode": "max",}', encoding="utf-8")
-    assert "not valid JSON" in file_problems(path)[0]   # the bash recipe stops; ps1 runs with defaults
+    assert "not valid JSON" in file_problems(path)[0]   # both recipes stop (exit 1)
     path.write_bytes(b'\xef\xbb\xbf{"mode": "max"}')     # a BOM is read as the recipes read it
     assert file_problems(path) == []
 
