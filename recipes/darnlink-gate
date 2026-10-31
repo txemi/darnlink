@@ -409,6 +409,20 @@ run() { uvx --from "$REF" darnlink "$@"; }   # single source of the darnlink inv
 # darnlink is reachable. If it isn't → fail OPEN (don't brick a commit; CI covers the wall).
 if ! run --help >/dev/null 2>&1; then bail "can't run darnlink at $REF (bad ref / no network)"; fi
 
+# The config against its published schema (`darnlink gate-config`, 0.31+): a warning on stderr for
+# each key this recipe does not read and each value it would misread. Advisory: it never changes the
+# verdict (a value that would have changed it already stopped the gate above). A ref older than the
+# command would read `gate-config` as a PATH, so it is asked first, and only the subcommand's own
+# usage line counts; without it the gate says so in one line and goes on. The probe runs without colour:
+# argparse paints `--help` under FORCE_COLOR (Python 3.14), and the line would no longer match.
+if [ -f "$cfg" ]; then
+  gc_usage="$(NO_COLOR=1 PYTHON_COLORS=0 run gate-config --help 2>/dev/null || true)"
+  case "$gc_usage" in
+    "usage: darnlink gate-config"*) run gate-config darnlink-gate.json || true ;;
+    *) echo "darnlink-gate: $REF has no 'darnlink gate-config' (0.31+): $cfg is not checked against its schema." >&2 ;;
+  esac
+fi
+
 # --- create-readme axis (opt-in, ANY mode) ---------------------------------------------------------
 # Runs `--create-readme` (a dry-run) and reports ONLY the `create_readme` findings — a directory link
 # whose target folder has no README. It takes its OWN excludes (CREATE_README_EXCLUDES) layered ON TOP

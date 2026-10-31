@@ -262,6 +262,26 @@ foreach ($b in $ignoreBlocks) { if ($b) { $dlArgs += @('--ignore-block', $b) } }
 & uvx --from $ref darnlink --help *> $null
 if ($LASTEXITCODE -ne 0) { Invoke-Bail "can't run darnlink at $ref (bad ref / no network)" }
 
+# The config against its published schema (`darnlink gate-config`, 0.31+), as the bash recipe does:
+# warnings on stderr, never a change of verdict. A ref older than the command would read `gate-config`
+# as a PATH, so it is asked first, and only the subcommand's own usage line counts. Its own
+# $ErrorActionPreference, as Get-CreateReadmeOffenders below: the probe redirects stderr. The probe
+# runs without colour, as in bash: argparse paints `--help` under FORCE_COLOR (Python 3.14).
+function Invoke-GateConfig {
+  $ErrorActionPreference = 'Continue'
+  if (-not (Test-Path -LiteralPath $cfgPath -PathType Leaf)) { return }
+  $saved = @($env:NO_COLOR, $env:PYTHON_COLORS)
+  $env:NO_COLOR = '1'; $env:PYTHON_COLORS = '0'
+  try { $usage = (& uvx --from $ref darnlink gate-config --help 2>$null | Out-String) }
+  finally { $env:NO_COLOR = $saved[0]; $env:PYTHON_COLORS = $saved[1] }
+  if (([string]$usage).StartsWith('usage: darnlink gate-config')) {
+    & uvx --from $ref darnlink gate-config darnlink-gate.json
+  } else {
+    [Console]::Error.WriteLine("darnlink-gate: $ref has no 'darnlink gate-config' (0.31+): $cfgPath is not checked against its schema.")
+  }
+}
+Invoke-GateConfig
+
 # The create-readme axis as its OWN dry-run pass, keeping only the `create_readme` findings, with
 # create_readme_excludes layered on top of the global excludes. Returns the offender count, or 'ERR'
 # if it could not be evaluated. Offenders go to stderr. Same pass, same argv as the bash recipe's

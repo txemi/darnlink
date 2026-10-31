@@ -7,8 +7,9 @@ They used to diverge on the same `darnlink-gate.json`: with `"mode": "MAX"` bash
 file did not parse; and in both, a flag set to any unknown string (`"disabled"`) turned it ON.
 
 One table, below: for each config, the exit code and the darnlink command lines the gate must run
-(what follows `uvx --from <ref> darnlink`, without the `--help` pre-flight). Each recipe is run
-against the table with the same uvx shim, in the same kind of sandbox:
+(what follows `uvx --from <ref> darnlink`, without the `--help` pre-flight and the `gate-config`
+check that follows it). Each recipe is run against the table with the same uvx shim, in the same kind
+of sandbox:
 
 - bash where the other recipe tests run it (POSIX, with bash, git and the darnlink script);
 - PowerShell wherever `pwsh` or `powershell` is on PATH, and skipped otherwise. CI has it on the
@@ -119,6 +120,8 @@ MAX = ". --robustify --create-frontmatter"
 MAX_CR = ". --robustify --create-frontmatter --create-readme"
 CR_PASS = ". --robustify --create-frontmatter --create-readme --json"
 WEB = "web-check . --online"
+# Right after the `--help` pre-flight, both recipes ask whether the ref has `gate-config`, and run it.
+GATE_CONFIG = ["gate-config --help", "gate-config darnlink-gate.json"]
 
 
 @dataclass
@@ -130,6 +133,12 @@ class Case:
     argv: List[str]
     says: Optional[str] = None         # a substring of stdout+stderr
     env: dict = field(default_factory=dict)
+    preflight: Optional[bool] = None   # does it get past the config into the pre-flight? (default: argv)
+    gate_config: List[str] = field(default_factory=lambda: list(GATE_CONFIG))  # what follows `--help`
+
+    def head(self) -> List[str]:
+        reached = bool(self.argv) if self.preflight is None else self.preflight
+        return ["--help", *self.gate_config] if reached else []
 
 
 def _flag(value, rc, argv, says=None):
@@ -176,7 +185,7 @@ CASES = [
     Case("mode=repair", plain_link, {"ref": "x", "mode": "repair"}, 0, [CHECK]),
     Case("mode=Repair", plain_link, {"ref": "x", "mode": "Repair"}, 3, [CHECK]),
     Case("key-MODE", clean, {"ref": "x", "MODE": "max"}, 0, [CHECK]),
-    Case("scope=staged", clean, {"ref": "x", "scope": "staged"}, 0, [], "no staged .md"),
+    Case("scope=staged", clean, {"ref": "x", "scope": "staged"}, 0, [], "no staged .md", preflight=True),
     Case("scope=Staged", clean, {"ref": "x", "scope": "Staged"}, 0, [CHECK]),
     Case("scope=STAGED", clean, {"ref": "x", "scope": "STAGED"}, 0, [CHECK]),
 
@@ -232,12 +241,21 @@ CASES = [
          0, [CHECK, MAX, WEB + " --default-branch off"]),
     Case("default_branch=true", clean, {"ref": "x", "mode": "max", "web": True, "default_branch": True},
          0, [CHECK, MAX, WEB], "looks like a JSON boolean"),
+
+    # Row 51: `gate-config` warns and never changes the verdict; a ref without it is said, not fatal.
+    Case("gate-config-warns", clean, {"ref": "x", "mode": "check", "exclude": ["docs"]}, 0, [CHECK],
+         "'exclude'"),
+    Case("gate-config-old-ref", clean, {"ref": "x", "mode": "max"}, 0, [CHECK, MAX],
+         "has no 'darnlink gate-config'", env={"SHIM_NO_GATE_CONFIG": "1"},
+         gate_config=["gate-config --help"]),
+    Case("gate-config-force-color", clean, {"ref": "x", "mode": "check", "exclude": ["docs"]}, 0, [CHECK],
+         "'exclude'", env={"FORCE_COLOR": "1"}),
 ]
 
 
 # --- the harness -----------------------------------------------------------------------------------
 
-_SHIM = '''import subprocess, sys
+_SHIM = '''import os, subprocess, sys
 args = sys.argv[1:]
 if args[:1] == ["--from"]:
     args = args[2:]
@@ -245,7 +263,10 @@ if args[:1] == ["darnlink"]:
     args = args[1:]
 with open({log!r}, "a", encoding="utf-8") as fh:
     fh.write(" ".join(args) + "\\n")
-sys.exit(subprocess.call([{darnlink!r}, *args]))
+run = args
+if os.environ.get("SHIM_NO_GATE_CONFIG") and args[:1] == ["gate-config"]:
+    run = args[1:]  # a ref older than the subcommand: `gate-config --help` is the top-level help
+sys.exit(subprocess.call([{darnlink!r}, *run]))
 '''
 
 
@@ -279,16 +300,21 @@ def _sandbox(tmp_path: Path, case: Case) -> tuple[Path, dict, Path]:
     return repo, env, log
 
 
-def _observe(cmd: List[str], tmp_path: Path, case: Case) -> tuple[int, List[str], str]:
+def _observe(cmd: List[str], tmp_path: Path, case: Case) -> tuple[int, List[str], List[str], str]:
     repo, env, log = _sandbox(tmp_path, case)
     r = subprocess.run(cmd, cwd=repo, env=env, capture_output=True, text=True, timeout=600)
     lines = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
-    return r.returncode, [ln for ln in lines if ln != "--help"], r.stdout + r.stderr
+    probes = [ln for ln in lines if ln == "--help" or ln.startswith("gate-config")]
+    argv = [ln for ln in lines if ln not in probes]
+    # Every probe, and all of them before the first real pass: not one more, nor one further down.
+    head = probes if lines[:len(probes)] == probes else ["out of place:", *lines]
+    return r.returncode, head, argv, r.stdout + r.stderr
 
 
-def _check(case: Case, observed: tuple[int, List[str], str]) -> None:
-    rc, argv, out = observed
-    assert (rc, argv) == (case.rc, case.argv), f"{case.id}: got rc={rc} argv={argv}\n{out}"
+def _check(case: Case, observed: tuple[int, List[str], List[str], str]) -> None:
+    rc, head, argv, out = observed
+    assert (rc, head, argv) == (case.rc, case.head(), case.argv), \
+        f"{case.id}: got rc={rc} head={head} argv={argv}\n{out}"
     if case.says:
         assert case.says in out, f"{case.id}: {case.says!r} not in the output\n{out}"
 
