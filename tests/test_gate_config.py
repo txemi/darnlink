@@ -42,7 +42,7 @@ def _errors(data):
 # --- 1. generated, not hand-written ---------------------------------------------------------------
 
 def test_the_committed_schema_is_the_generated_one():
-    assert COMMITTED.read_bytes() == render_gate_config_schema().encode("utf-8"), (
+    assert COMMITTED.read_text(encoding="utf-8") == render_gate_config_schema(), (
         "gate_config.schema.json drifted from darnlink/gate_config.py: run tools/gen_schemas.py")
 
 
