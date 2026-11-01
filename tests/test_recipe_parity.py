@@ -183,6 +183,20 @@ def glob_name_old_debt_staged(repo: Path) -> None:
     _git(repo, "add", "a*.md", "ab.md")
 
 
+def hash_name_clean_staged(repo: Path) -> None:
+    """A clean staged file whose name has a `#`. Pasted into a sed expression, the name broke it, and
+    the gate died with rc 1 on a clean commit."""
+    (repo / "C#notes.md").write_text("# C\nnothing to see\n", encoding="utf-8")
+    _git(repo, "add", "C#notes.md")
+
+
+def amp_name_dangling_staged(repo: Path) -> None:
+    """A staged file whose name has a `&` ADDS a dangling link. Pasted into a sed replacement, `&` is
+    "the match": the hunks went to `ab.md`, and the added link passed as old debt."""
+    (repo / "a&b.md").write_text("# A\nsee [gone](missing.md)\n", encoding="utf-8")
+    _git(repo, "add", "a&b.md")
+
+
 def outside_a_repo_staged(repo: Path) -> None:
     """No git repository here at all (GIT_CEILING_DIRECTORIES stops git at the sandbox, so no parent one counts):
     `git diff --cached` exits 129 outside one, and that is not "nothing staged"."""
@@ -346,6 +360,10 @@ CASES = [
          {"ref": "x", "scope": "staged", "dangling": "added-lines"}, 1, [CHECK_JSON], "[dangling]"),
     Case("staged-added-lines-glob-name", glob_name_old_debt_staged,
          {"ref": "x", "scope": "staged", "dangling": "added-lines"}, 0, [CHECK_JSON], "clean"),
+    Case("staged-added-lines-hash-name", hash_name_clean_staged,
+         {"ref": "x", "scope": "staged", "dangling": "added-lines"}, 0, [CHECK_JSON], "clean"),
+    Case("staged-added-lines-amp-name", amp_name_dangling_staged,
+         {"ref": "x", "scope": "staged", "dangling": "added-lines"}, 1, [CHECK_JSON], "[dangling]"),
     # Outside a git repository `git diff --cached` exits 129: "could not look", not "nothing staged".
     Case("fail_closed-staged-outside-a-repo", outside_a_repo_staged,
          {"ref": "x", "scope": "staged", "fail_closed": True}, 4, [],
