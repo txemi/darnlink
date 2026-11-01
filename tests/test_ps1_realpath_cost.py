@@ -10,6 +10,7 @@ the run. This test runs the recipe twice over the same tree, the real one and a 
 from __future__ import annotations
 
 import subprocess
+import sys
 import time
 import warnings
 from pathlib import Path
@@ -54,6 +55,7 @@ def _time(cmd, repo, env) -> tuple[float, int, str]:
 
 
 @pytest.mark.skipif(_powershell() is None or _darnlink_bin() is None, reason="needs PowerShell and darnlink")
+@pytest.mark.skipif(sys.version_info[:2] != (3, 13), reason="measured once per CI run, on the newest Python")
 def test_measure_realpath_cost(tmp_path):
     repo, env, _log = _sandbox(tmp_path, CASE)
     src = PS1_RECIPE.read_text(encoding="utf-8")
