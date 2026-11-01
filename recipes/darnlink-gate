@@ -179,6 +179,24 @@ if [ -f "$cfg" ] && [ -n "$PY" ] \
   exit 1
 fi
 
+# A config that parses but whose top level is not an OBJECT (`[1]`, `"x"`, `3`, `null`) is the same
+# failure in a different shape: no key can be read from it, so every reader below fell back to its
+# default -- `d.get` raised outside their `try` and the `|| printf` default took over -- and the gate
+# ran an old pinned version at mode=check, in silence. Same message, same exit, both fail modes.
+if [ -f "$cfg" ] && [ -n "$PY" ]; then
+  cfg_root="$("$PY" -c 'import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8-sig"))
+if not isinstance(d, dict):
+    print({list: "an array", str: "a string", bool: "a boolean", type(None): "null"}.get(type(d), "a number"))
+' "$cfg" 2>/dev/null || true)"
+  if [ -n "$cfg_root" ]; then
+    echo "darnlink-gate: $cfg exists but is not a JSON object -> FAILING." >&2
+    echo "  Nothing was validated. Every key would have silently reverted to its default," >&2
+    echo "  including the pinned version, mode and excludes. Its top level is $cfg_root." >&2
+    exit 1
+  fi
+fi
+
 # --- read config (JSON, all optional) via python; env wins over file ---
 read_cfg() { "${PY:-python3}" - "$cfg" "$1" "$2" <<'PY' 2>/dev/null || printf '%s' "$2"
 import json, sys

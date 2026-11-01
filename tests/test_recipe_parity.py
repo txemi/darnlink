@@ -164,6 +164,7 @@ class Case:
     env: dict = field(default_factory=dict)
     preflight: Optional[bool] = None   # does it get past the config into the pre-flight? (default: argv)
     gate_config: List[str] = field(default_factory=lambda: list(GATE_CONFIG))  # what follows `--help`
+    args: List[str] = field(default_factory=list)  # passed to the recipe on its command line
 
     def head(self) -> List[str]:
         reached = bool(self.argv) if self.preflight is None else self.preflight
@@ -181,6 +182,13 @@ CASES = [
     Case("invalid-json-empty", clean, b"", 1, [], "not valid JSON"),
     Case("invalid-json-utf16", clean, '{"mode": "max"}'.encode("utf-16"), 1, [], "not valid JSON"),
     Case("bom-is-fine", clean, b'\xef\xbb\xbf{"ref": "x", "mode": "max"}', 0, [CHECK, MAX]),
+    # Row 56: valid JSON whose top level is not an object stops both, as a file that does not parse.
+    Case("root-array", clean, b'[1]', 1, [], "is not a JSON object"),
+    Case("root-empty-array", clean, b' []', 1, [], "Its top level is an array"),
+    Case("root-string", clean, b'"x"', 1, [], "Its top level is a string"),
+    Case("root-number", clean, b'3', 1, [], "Its top level is a number"),
+    Case("root-boolean", clean, b'true', 1, [], "Its top level is a boolean"),
+    Case("root-null", clean, b'\nnull\n', 1, [], "Its top level is null"),
 
     # Row 45: a flag is one of a CLOSED list; anything else stops the gate, naming key and value.
     _flag("disabled", 1, [], "create_readme='disabled'"),
@@ -300,6 +308,11 @@ CASES = [
     Case("default_branch=true", clean, {"ref": "x", "mode": "max", "web": True, "default_branch": True},
          0, [CHECK, MAX, WEB], "looks like a JSON boolean"),
 
+    # Row 56: command-line arguments are not forwarded to darnlink (bash never did); --write is refused.
+    Case("args-not-forwarded", clean, {"ref": "x"}, 0, [CHECK], args=["--exclude", "A.md"]),
+    Case("args-not-forwarded-max", clean, {"ref": "x", "mode": "max"}, 0, [CHECK, MAX], args=["--json"]),
+    Case("args-write-refused", clean, {"ref": "x"}, 1, [], "refusing --write", args=["--write"]),
+
     # Row 51: `gate-config` warns and never changes the verdict; a ref without it is said, not fatal.
     Case("gate-config-warns", clean, {"ref": "x", "mode": "check", "exclude": ["docs"]}, 0, [CHECK],
          "'exclude'"),
@@ -386,7 +399,7 @@ def _check(case: Case, observed: tuple[int, List[str], List[str], str]) -> None:
                     reason="the bash half needs a POSIX bash, git and the darnlink script (as test_recipe_gate)")
 @pytest.mark.parametrize("case", CASES, ids=[c.id for c in CASES])
 def test_bash_recipe_follows_the_table(case, tmp_path):
-    _check(case, _observe(["bash", str(BASH_RECIPE)], tmp_path, case))
+    _check(case, _observe(["bash", str(BASH_RECIPE), *case.args], tmp_path, case))
 
 
 @pytest.mark.skipif(_powershell() is None or shutil.which("git") is None or _darnlink_bin() is None,
@@ -396,7 +409,7 @@ def test_powershell_recipe_follows_the_table(case, tmp_path):
     cmd = [_powershell(), "-NoProfile", "-NonInteractive"]
     if WINDOWS:
         cmd += ["-ExecutionPolicy", "Bypass"]
-    _check(case, _observe(cmd + ["-File", str(PS1_RECIPE)], tmp_path, case))
+    _check(case, _observe(cmd + ["-File", str(PS1_RECIPE), *case.args], tmp_path, case))
 
 
 def test_the_table_covers_every_key_the_recipes_read():

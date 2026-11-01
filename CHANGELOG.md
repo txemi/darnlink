@@ -52,6 +52,13 @@ All notable changes to darnlink are documented here. The format is based on
   as `"docs/canci\303\263n.md"`), so it matched no finding and a strict or integrity failure in it
   passed the pre-commit. Both now read `git diff -z` (NUL-separated, verbatim); the `.ps1` decodes
   git's output as UTF-8 for that call.
+- **Both recipes: a `darnlink-gate.json` whose top level is not an object ran with every default.**
+  `[1]`, `"x"`, `3` or `null` parse as JSON, so the invalid-JSON check let them through, and no key
+  could be read from them: the gate ran its old default `ref` at `mode=check`, in silence. They now
+  exit 1 like a file that does not parse, naming what the top level is.
+- **`darnlink-gate.ps1` no longer forwards its command-line arguments to darnlink.** It spliced them
+  into the whole-repo passes while the bash recipe forwards none, so the same invocation ran a
+  different gate on Windows. `--write` is still refused by name.
 
 ## [0.30.0] — 2026-10-30
 

@@ -69,6 +69,23 @@ if (Test-Path -LiteralPath $cfgPath -PathType Leaf) {
     [Console]::Error.WriteLine("    $($_.Exception.Message)")
     exit 1
   }
+  # Valid JSON whose top level is not an OBJECT (`[1]`, `"x"`, `3`, `null`): no key can be read from
+  # it, so every key took its default, in silence -- as in bash, the same failure as a file that does
+  # not parse. Judged by the first character of the text rather than by what ConvertFrom-Json returns:
+  # PowerShell 7 unrolls an array, so `[]` would come back as $null, which reads as no file at all.
+  $first = $text.TrimStart([char[]]@(' ', "`t", "`r", "`n")).Substring(0, 1)
+  $rootKind = if ($first -ceq '{') { $null }
+              elseif ($first -ceq '[') { 'an array' }
+              elseif ($first -ceq '"') { 'a string' }
+              elseif ($first -cin @('t', 'f')) { 'a boolean' }
+              elseif ($first -ceq 'n') { 'null' }
+              else { 'a number' }
+  if ($rootKind) {
+    [Console]::Error.WriteLine("darnlink-gate: $cfgPath exists but is not a JSON object -> FAILING.")
+    [Console]::Error.WriteLine("  Nothing was validated. Every key would have silently reverted to its default,")
+    [Console]::Error.WriteLine("  including the pinned version, mode and excludes. Its top level is $rootKind.")
+    exit 1
+  }
 }
 
 # Is `key` in the file, spelled exactly so? Case-SENSITIVE, like the bash recipe's `d.get(key)`:
@@ -240,6 +257,11 @@ if (($ownWeb.Count -gt 0 -or $ownWebFromOrigin -or -not [string]::IsNullOrEmpty(
 }
 
 # --- guard: read-only. Never pass --write through. ---
+# Command-line arguments are NOT forwarded to darnlink, as in bash: the gate is configured by
+# darnlink-gate.json and the environment only. This recipe used to splice `@args` into its whole-repo
+# passes (bash forwards nothing), so the same invocation ran a different gate on Windows -- and an
+# argument such as `--exclude` could quietly narrow it. The --write refusal stays: it names the
+# mistake instead of ignoring it.
 if ($args -contains '--write') {
   Write-Error "darnlink-gate: refusing --write (read-only gate; robustify by hand: uvx --from $ref darnlink . --robustify --write)."
   exit 1
@@ -326,10 +348,10 @@ if ($scope -cne 'staged') {
     # create_readme FOLDS into this pass only with no create_readme_excludes (the legacy shape); with
     # them it moves to its own pass below, so those excludes never leak into robustify.
     if ($createReadme -and $crExcludes.Count -eq 0) { $maxArgs += '--create-readme'; $foldedCR = $true }
-    & uvx --from $ref darnlink check . @dlArgs @args
+    & uvx --from $ref darnlink check . @dlArgs
     $rc = $LASTEXITCODE
     if ($rc -eq 0) {
-      & uvx --from $ref darnlink . @maxArgs @dlArgs @args
+      & uvx --from $ref darnlink . @maxArgs @dlArgs
       $rc = $LASTEXITCODE
     }
     # WEB pass (opt-in, max only): EVERY web-check non-zero is fail-closed (0 = clean incl web_unverifiable/
@@ -423,7 +445,7 @@ if ($scope -cne 'staged') {
       $rcIsFinal = $true
     }
   } else {
-    & uvx --from $ref darnlink check . @dlArgs @args   # `darnlink check` → 0/2/3 (mode=check|repair)
+    & uvx --from $ref darnlink check . @dlArgs   # `darnlink check` → 0/2/3 (mode=check|repair)
     $rc = $LASTEXITCODE
   }
   # rc>3 (e.g. network) -> fail open. A final verdict (the web pass) is immune up to 4, its contract;
