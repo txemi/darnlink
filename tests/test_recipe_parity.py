@@ -127,6 +127,11 @@ def symlink_staged(repo: Path) -> None:
     _git(repo, "add", "link.md")
 
 
+def clean_staged(repo: Path) -> None:
+    clean(repo)
+    _git(repo, "add", "A.md")
+
+
 def accent_staged(repo: Path) -> None:
     """The commit stages a file whose NAME is not ASCII, with a strict finding in it. Without `-z`,
     `git diff --name-only` prints it quoted and escaped, and it matched no finding."""
@@ -242,6 +247,30 @@ CASES = [
     Case("staged-non-ascii-name", accent_staged, {"ref": "x", "scope": "staged"}, 3, [CHECK_JSON],
          "un-anchored"),
 
+    # Row 55: exit 4 is "could not gate", and only under fail_closed: the pre-flight fails, a pass dies
+    # above darnlink's own codes, or an optional axis cannot be evaluated. Fail-open skips with 0.
+    Case("fail_closed-preflight-down", clean, {"ref": "x", "fail_closed": True}, 4, [],
+         "fail-closed is on", env={"SHIM_FAIL": "--help", "SHIM_FAIL_RC": "2"},
+         preflight=True, gate_config=[]),
+    Case("fail-open-preflight-down", clean, {"ref": "x"}, 0, [], "SKIP",
+         env={"SHIM_FAIL": "--help", "SHIM_FAIL_RC": "2"}, preflight=True, gate_config=[]),
+    Case("fail_closed-check-dies", clean, {"ref": "x", "fail_closed": True}, 4, [CHECK],
+         "fail-closed is on", env={"SHIM_FAIL": CHECK}),
+    Case("fail_closed-env-check-dies", clean, {"ref": "x"}, 4, [CHECK], "fail-closed is on",
+         env={"SHIM_FAIL": CHECK, "DARNLINK_GATE_FAIL_CLOSED": "1"}),
+    Case("fail-open-check-dies", clean, {"ref": "x"}, 0, [CHECK], "SKIP", env={"SHIM_FAIL": CHECK}),
+    Case("fail_closed-create_readme-down", dir_link, {"ref": "x", "create_readme": True, "fail_closed": True},
+         4, [CHECK, CR_PASS], "fail-closed is on", env={"SHIM_FAIL": CR_PASS}),
+    Case("fail_closed-dangling-down", dangling, {"ref": "x", "dangling": "repo", "fail_closed": True},
+         4, [CHECK, CHECK_JSON], "fail-closed is on", env={"SHIM_FAIL": CHECK_JSON}),
+    Case("fail_closed-staged-down", clean_staged, {"ref": "x", "scope": "staged", "fail_closed": True},
+         4, [CHECK_JSON], "fail-closed is on", env={"SHIM_FAIL": CHECK_JSON}),
+    # Row 55: `web` with scope=staged runs no web pass: the staged scope judges `check --json` only.
+    Case("web-staged-clean", clean_staged, {"ref": "x", "mode": "max", "web": True, "scope": "staged"},
+         0, [CHECK_JSON], "clean"),
+    Case("web-staged-strict", accent_staged, {"ref": "x", "mode": "max", "web": True, "scope": "staged"},
+         3, [CHECK_JSON], "un-anchored"),
+
     # Row 46: `create_readme` in any mode, and `create_readme_excludes` biting only its own pass.
     Case("create_readme-under-repair", dir_link, {"ref": "x", "mode": "repair", "create_readme": True},
          1, [CHECK, CR_PASS], "no README"),
@@ -295,6 +324,10 @@ with open({log!r}, "a", encoding="utf-8") as fh:
 run = args
 if os.environ.get("SHIM_NO_GATE_CONFIG") and args[:1] == ["gate-config"]:
     run = args[1:]  # a ref older than the subcommand: `gate-config --help` is the top-level help
+# A darnlink that cannot run: the call whose argv starts with SHIM_FAIL exits SHIM_FAIL_RC, logged.
+fail = os.environ.get("SHIM_FAIL")
+if fail is not None and " ".join(args).startswith(fail):
+    sys.exit(int(os.environ.get("SHIM_FAIL_RC", "127")))
 sys.exit(subprocess.call([{darnlink!r}, *run]))
 '''
 
