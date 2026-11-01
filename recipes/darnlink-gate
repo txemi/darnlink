@@ -179,6 +179,24 @@ if [ -f "$cfg" ] && [ -n "$PY" ] \
   exit 1
 fi
 
+# A config that parses but whose top level is not an OBJECT (`[1]`, `"x"`, `3`, `null`) is the same
+# failure in a different shape: no key can be read from it, so every reader below fell back to its
+# default -- `d.get` raised outside their `try` and the `|| printf` default took over -- and the gate
+# ran an old pinned version at mode=check, in silence. Same message, same exit, both fail modes.
+if [ -f "$cfg" ] && [ -n "$PY" ]; then
+  cfg_root="$("$PY" -c 'import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8-sig"))
+if not isinstance(d, dict):
+    print({list: "an array", str: "a string", bool: "a boolean", type(None): "null"}.get(type(d), "a number"))
+' "$cfg" 2>/dev/null || true)"
+  if [ -n "$cfg_root" ]; then
+    echo "darnlink-gate: $cfg exists but is not a JSON object -> FAILING." >&2
+    echo "  Nothing was validated. Every key would have silently reverted to its default," >&2
+    echo "  including the pinned version, mode and excludes. Its top level is $cfg_root." >&2
+    exit 1
+  fi
+fi
+
 # --- read config (JSON, all optional) via python; env wins over file ---
 read_cfg() { "${PY:-python3}" - "$cfg" "$1" "$2" <<'PY' 2>/dev/null || printf '%s' "$2"
 import json, sys
@@ -756,7 +774,21 @@ fi
 if [ -z "$PY" ]; then
   bail "(staged) no python3 or python (3.x) found"
 fi
-mapfile -t STAGED < <(git diff --cached --name-only --diff-filter=ACMR -- '*.md' 2>/dev/null || true)
+# `-z`: NUL-separated and VERBATIM. Without it git quotes any name with a byte outside ASCII
+# (`docs/canción.md` comes out as `"docs/canci\303\263n.md"`, quotes included), so the file matched no
+# finding and the gate passed it in silence. `core.quotePath=false` would fix the accents and still
+# quote a tab, a newline or a double quote; NUL is the one separator a path cannot contain.
+# Read with `read -d ''`, not `mapfile -d ''` (bash 4.4+), through a temp file so git's own status is
+# seen: a git that fails gives no staged files, "nothing to judge", as `|| true` did.
+STAGED=()
+stg_list="$(mktemp)" || bail "(staged) cannot create a temp file"
+trap 'rm -f "$stg_list"' EXIT
+stg_rc=0
+git diff --cached -z --name-only --diff-filter=ACMR -- '*.md' > "$stg_list" 2>/dev/null || stg_rc=$?
+if [ "$stg_rc" -eq 0 ]; then
+  while IFS= read -r -d '' f; do STAGED+=("$f"); done < "$stg_list"
+fi
+rm -f -- "$stg_list"
 [ "${#STAGED[@]}" -eq 0 ] && { echo "darnlink-gate (staged): no staged .md — nothing to judge."; exit 0; }
 
 # darnlink check exits 0/2/3 on findings (expected — we still get JSON); only rc>3 (e.g. 127) is
@@ -775,10 +807,10 @@ fi
 # (`create_readme_offenders` already used a temp file for exactly this reason; the staged path did
 # not, and only tipped over once the JSON grew.)
 DL_JSON_FILE="$(mktemp)"; printf '%s' "$DL_JSON" > "$DL_JSON_FILE"
-DL_STAGED_FILE="$(mktemp)"; printf '%s\n' "${STAGED[@]}" > "$DL_STAGED_FILE"
+DL_STAGED_FILE="$(mktemp)"; printf '%s\0' "${STAGED[@]}" > "$DL_STAGED_FILE"   # NUL, as git gave them
 DL_ADDED_FILE="$(mktemp)"
 # Best-effort cleanup on every exit path, including the failure ones (`set -e`, a signal).
-trap 'rm -f "$DL_JSON_FILE" "$DL_STAGED_FILE" "$DL_ADDED_FILE"' EXIT
+trap 'rm -f "$stg_list" "$DL_JSON_FILE" "$DL_STAGED_FILE" "$DL_ADDED_FILE"' EXIT
 export DL_JSON_FILE DL_STAGED_FILE DL_ADDED_FILE
 export DL_ROOT="$root" DL_REF="$REF" DL_MODE="$MODE" DL_DANGLING="$DANGLING"
 
@@ -808,15 +840,17 @@ sys.stdout.reconfigure(newline="\n")  # Windows: print() would emit \r\n and the
 root = os.environ["DL_ROOT"]
 mode = os.environ.get("DL_MODE", "check")
 
-def _read(var):
+def _read(var, errors="strict"):
     path = os.environ.get(var)
     if not path or not os.path.exists(path):
         return ""
-    with open(path, encoding="utf-8") as fh:
+    with open(path, encoding="utf-8", errors=errors) as fh:
         return fh.read()
 
 # realpath both sides: darnlink emits resolved absolute paths, so resolve symlinks here too to match.
-staged = {os.path.realpath(os.path.join(root, p)) for p in _read("DL_STAGED_FILE").split("\n") if p.strip()}
+# NUL-separated (`git diff -z`); surrogateescape keeps a name that is not UTF-8 the path it is.
+staged = {os.path.realpath(os.path.join(root, p))
+          for p in _read("DL_STAGED_FILE", "surrogateescape").split("\0") if p}
 data = json.loads(_read("DL_JSON_FILE"))
 def hits(axis):
     return [f for f in data.get(axis, {}).get("findings", []) if os.path.realpath(f["file"]) in staged]
@@ -872,7 +906,9 @@ if strict:
     # that reads as "nothing to do", and the anchor never appears.
     print("darnlink-gate (staged): un-anchored plain link in a file you're committing.")
     print("  Anchor the files you are committing (and give their targets a uuid):")
-    print("    git diff --cached --name-only -- '*.md' | \\")
+    # `-c core.quotePath=false`: without it git prints a non-ASCII name quoted and escaped, and
+    # `--only-from -` would read a path that does not exist.
+    print("    git -c core.quotePath=false diff --cached --name-only -- '*.md' | \\")
     print(f"      uvx --from {os.environ['DL_REF']} darnlink ."
           f"{os.environ.get('DL_ARGS_STR', '')} --robustify --create-frontmatter --write --only-from -")
     print("  It writes the staged files AND creates the missing `uuid` in the files they link to --")

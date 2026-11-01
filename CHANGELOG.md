@@ -42,6 +42,28 @@ All notable changes to darnlink are documented here. The format is based on
   run, naming the key. Write `true` or `false`. `darnlink gate-config` lists such values before you
   upgrade.
 
+- **`darnlink-gate.ps1`, staged scope: a path through a symlink or a junction matched nothing.**
+  It compared paths with `[IO.Path]::GetFullPath`, which only normalises the text, while darnlink
+  reports resolved paths and the bash recipe resolves both sides with `realpath`. With a link in the
+  path a finding never matched the staged set and the gate passed in silence. It now resolves each
+  component's link target (falling back to `GetFullPath` on any error), and compares paths
+  case-insensitively on Windows. Written for PowerShell 7 and 5.1, but CI does not exercise 5.1.
+- **Both recipes, staged scope: a staged file whose name is not ASCII was never judged.** They read
+  the staged files with `git diff --name-only`, which quotes such a name (`docs/canción.md` arrives
+  as `"docs/canci\303\263n.md"`), so it matched no finding and a strict or integrity failure in it
+  passed the pre-commit. Both now read `git diff -z` (NUL-separated, verbatim); the `.ps1` runs
+  that git through `System.Diagnostics.Process` and decodes its output as UTF-8, whatever the
+  console's code page. The fix command a strict failure suggests now carries
+  `git -c core.quotePath=false`, for the same reason, and the `.ps1` prints the same command as bash
+  (it suggested a bare `darnlink . --robustify --write`, which rewrites the whole repo). On Windows PowerShell 5.1 a pipe between two native programs re-encodes the text, so with a non-ASCII name that pasted command may still get a mangled path there; PowerShell 7 and bash are not affected.
+- **Both recipes: a `darnlink-gate.json` whose top level is not an object ran with every default.**
+  `[1]`, `"x"`, `3` or `null` parse as JSON, so the invalid-JSON check let them through, and no key
+  could be read from them: the gate ran its old default `ref` at `mode=check`, in silence. They now
+  exit 1 like a file that does not parse, naming what the top level is.
+- **`darnlink-gate.ps1` no longer forwards its command-line arguments to darnlink.** It spliced them
+  into the whole-repo passes while the bash recipe forwards none, so the same invocation ran a
+  different gate on Windows. `--write` is still refused by name.
+
 ## [0.30.0] — 2026-10-30
 
 ### Added

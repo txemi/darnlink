@@ -69,6 +69,23 @@ if (Test-Path -LiteralPath $cfgPath -PathType Leaf) {
     [Console]::Error.WriteLine("    $($_.Exception.Message)")
     exit 1
   }
+  # Valid JSON whose top level is not an OBJECT (`[1]`, `"x"`, `3`, `null`): no key can be read from
+  # it, so every key took its default, in silence -- as in bash, the same failure as a file that does
+  # not parse. Judged by the first character of the text rather than by what ConvertFrom-Json returns:
+  # PowerShell 7 unrolls an array, so `[]` would come back as $null, which reads as no file at all.
+  $first = $text.TrimStart([char[]]@(' ', "`t", "`r", "`n")).Substring(0, 1)
+  $rootKind = if ($first -ceq '{') { $null }
+              elseif ($first -ceq '[') { 'an array' }
+              elseif ($first -ceq '"') { 'a string' }
+              elseif ($first -cin @('t', 'f')) { 'a boolean' }
+              elseif ($first -ceq 'n') { 'null' }
+              else { 'a number' }
+  if ($rootKind) {
+    [Console]::Error.WriteLine("darnlink-gate: $cfgPath exists but is not a JSON object -> FAILING.")
+    [Console]::Error.WriteLine("  Nothing was validated. Every key would have silently reverted to its default,")
+    [Console]::Error.WriteLine("  including the pinned version, mode and excludes. Its top level is $rootKind.")
+    exit 1
+  }
 }
 
 # Is `key` in the file, spelled exactly so? Case-SENSITIVE, like the bash recipe's `d.get(key)`:
@@ -240,6 +257,11 @@ if (($ownWeb.Count -gt 0 -or $ownWebFromOrigin -or -not [string]::IsNullOrEmpty(
 }
 
 # --- guard: read-only. Never pass --write through. ---
+# Command-line arguments are NOT forwarded to darnlink, as in bash: the gate is configured by
+# darnlink-gate.json and the environment only. This recipe used to splice `@args` into its whole-repo
+# passes (bash forwards nothing), so the same invocation ran a different gate on Windows -- and an
+# argument such as `--exclude` could quietly narrow it. The --write refusal stays: it names the
+# mistake instead of ignoring it.
 if ($args -contains '--write') {
   Write-Error "darnlink-gate: refusing --write (read-only gate; robustify by hand: uvx --from $ref darnlink . --robustify --write)."
   exit 1
@@ -326,10 +348,10 @@ if ($scope -cne 'staged') {
     # create_readme FOLDS into this pass only with no create_readme_excludes (the legacy shape); with
     # them it moves to its own pass below, so those excludes never leak into robustify.
     if ($createReadme -and $crExcludes.Count -eq 0) { $maxArgs += '--create-readme'; $foldedCR = $true }
-    & uvx --from $ref darnlink check . @dlArgs @args
+    & uvx --from $ref darnlink check . @dlArgs
     $rc = $LASTEXITCODE
     if ($rc -eq 0) {
-      & uvx --from $ref darnlink . @maxArgs @dlArgs @args
+      & uvx --from $ref darnlink . @maxArgs @dlArgs
       $rc = $LASTEXITCODE
     }
     # WEB pass (opt-in, max only): EVERY web-check non-zero is fail-closed (0 = clean incl web_unverifiable/
@@ -423,7 +445,7 @@ if ($scope -cne 'staged') {
       $rcIsFinal = $true
     }
   } else {
-    & uvx --from $ref darnlink check . @dlArgs @args   # `darnlink check` → 0/2/3 (mode=check|repair)
+    & uvx --from $ref darnlink check . @dlArgs   # `darnlink check` → 0/2/3 (mode=check|repair)
     $rc = $LASTEXITCODE
   }
   # rc>3 (e.g. network) -> fail open. A final verdict (the web pass) is immune up to 4, its contract;
@@ -491,17 +513,99 @@ if ($scope -cne 'staged') {
 # NOTE mode=max here behaves as strict (level 2), by design: the create-frontmatter axis needs
 # whole-tree reasoning, and per the wall architecture the staged pre-commit stays fast — max is
 # enforced at the whole-repo wall (pre-push / CI). See docs/elevating-your-link-gate.md §7.
-$staged = @(git diff --cached --name-only --diff-filter=ACMR -- '*.md' 2>$null)
+# `-z`, as in bash: NUL-separated and VERBATIM. Without it git quotes any name with a byte outside
+# ASCII (`docs/canción.md` comes out as `"docs/canci\303\263n.md"`), so the file matched no finding and
+# the gate passed it in silence. Read through System.Diagnostics.Process, not `& git`: PowerShell
+# decodes a native command's output with [Console]::OutputEncoding (an OEM code page on Windows
+# PowerShell 5.1, and setting it throws without a console) and splits it at line breaks. Here the
+# stream is decoded as UTF-8, which is what git writes, and split only at NUL. A git that fails or
+# cannot be started gives no staged files, as `& git ... 2>$null` did: "nothing to judge".
+function Get-StagedMarkdown {
+  $stdout = ''
+  try {
+    $gitCmd = Get-Command git -CommandType Application -ErrorAction Stop | Select-Object -First 1
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $gitCmd.Source
+    # One string, not ArgumentList (which Windows PowerShell 5.1's .NET does not have). No shell runs
+    # it, so the quoted pathspec reaches git as `*.md`, unexpanded.
+    $psi.Arguments = 'diff --cached -z --name-only --diff-filter=ACMR -- "*.md"'
+    $psi.WorkingDirectory = $root
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.StandardOutputEncoding = New-Object System.Text.UTF8Encoding($false)
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    $stderrTask = $proc.StandardError.ReadToEndAsync()   # drained alongside: a full pipe would block git
+    $out = $proc.StandardOutput.ReadToEnd()
+    $proc.WaitForExit()
+    [void]$stderrTask.Result
+    if ($proc.ExitCode -eq 0) { $stdout = $out }
+  } catch { $stdout = '' }
+  return @($stdout.Split([char]0) | Where-Object { $_ })
+}
+$staged = @(Get-StagedMarkdown)
 if (-not $staged) { Write-Output "darnlink-gate (staged): no staged .md - nothing to judge."; exit 0 }
 
 $json = (& uvx --from $ref darnlink check . --json @dlArgs 2>$null | Out-String)
 $rc = $LASTEXITCODE
 if ($rc -gt 3 -or -not ([string]$json).Trim()) { Invoke-Bail "(staged) darnlink unreachable (rc=$rc)" }
 
+# realpath, as the bash recipe's `os.path.realpath`: darnlink reports RESOLVED absolute paths, so a
+# path that goes through a symlink or a junction has to be resolved here too, or the finding never
+# matches the staged set and the gate passes in silence. [IO.Path]::GetFullPath only normalises the
+# text. So each component in turn: when one is a link, its target replaces the prefix and the walk
+# starts again on the result. `.Target` is the raw link text on both runtimes (a string on
+# PowerShell 7, possibly a one-element string[] on 5.1, so `@(...)[0]` takes either), relative to the link's folder when it is not rooted.
+# A component that does not exist ends the walk with the rest appended, as realpath leaves a missing
+# tail; a loop (more than 40 links) stops resolving, as realpath does without strict.
+# Path keys compare as the file system does: case-insensitively on Windows, exactly elsewhere. Not a
+# PowerShell hashtable, which ignores case everywhere.
+$script:pathComparer = if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+  [StringComparer]::OrdinalIgnoreCase } else { [StringComparer]::Ordinal }
+$script:realPathCache = New-Object 'System.Collections.Generic.Dictionary[string,string]' $script:pathComparer
+# The separators of THIS platform, not a fixed `[\\/]`: on Linux a backslash is a file-name character.
+$script:pathSeps = [char[]]@([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+# Any exception on the way (a path the provider rejects, an unreadable link) returns the old answer,
+# GetFullPath of the path: never worse than before the resolution existed. If GetFullPath itself
+# throws, the path as given.
+function Resolve-RealPath([string]$path) {
+  try { return (Resolve-RealPathCore $path) } catch {
+    try { return [System.IO.Path]::GetFullPath($path) } catch { return $path }
+  }
+}
+function Resolve-RealPathCore([string]$path) {
+  $full = [IO.Path]::GetFullPath($path)
+  if ($script:realPathCache.ContainsKey($full)) { return $script:realPathCache[$full] }
+  $cur = [IO.Path]::GetPathRoot($full)
+  $rest = [System.Collections.Generic.List[string]]::new()
+  foreach ($c in $full.Substring($cur.Length).Split($script:pathSeps)) { if ($c) { $rest.Add($c) } }
+  $hops = 0
+  while ($rest.Count -gt 0) {
+    $next = [IO.Path]::Combine($cur, $rest[0])
+    $rest.RemoveAt(0)
+    $item = Get-Item -LiteralPath $next -Force -ErrorAction SilentlyContinue
+    if ($null -eq $item) {
+      $cur = $next
+      foreach ($c in $rest) { $cur = [IO.Path]::Combine($cur, $c) }
+      break
+    }
+    $target = if ($item.LinkType -cin @('SymbolicLink', 'Junction')) { @($item.Target)[0] } else { $null }
+    if (-not $target -or $hops -ge 40) { $cur = $next; continue }
+    $hops++
+    # Combine returns a rooted target unchanged, and joins a relative one to the link's folder.
+    $resolved = [IO.Path]::GetFullPath([IO.Path]::Combine($cur, $target))
+    $cur = [IO.Path]::GetPathRoot($resolved)
+    $parts = @($resolved.Substring($cur.Length).Split($script:pathSeps) | Where-Object { $_ })
+    $rest.InsertRange(0, [string[]]$parts)
+  }
+  $script:realPathCache[$full] = $cur
+  return $cur
+}
+
 $data = $json | ConvertFrom-Json
-$stagedSet = [System.Collections.Generic.HashSet[string]]::new()
-foreach ($p in $staged) { [void]$stagedSet.Add(([IO.Path]::GetFullPath((Join-Path $root $p)))) }
-function Hits($axis) { @($data.$axis.findings | Where-Object { $null -ne $_ -and $stagedSet.Contains(([IO.Path]::GetFullPath($_.file))) }) }
+$stagedSet = New-Object 'System.Collections.Generic.HashSet[string]' $script:pathComparer
+foreach ($p in $staged) { [void]$stagedSet.Add((Resolve-RealPath (Join-Path $root $p))) }
+function Hits($axis) { @($data.$axis.findings | Where-Object { $null -ne $_ -and $stagedSet.Contains((Resolve-RealPath $_.file)) }) }
 
 # The lines THIS COMMIT ADDS, per staged file (full path -> set of line numbers), from
 # `git diff --cached -U0`: every `+` line in a hunk header's range is new. `+N` with no count is one
@@ -511,7 +615,7 @@ function Get-AddedLines($paths) {
   $added = @{}
   foreach ($p in $paths) {
     if (-not $p) { continue }
-    $key = [IO.Path]::GetFullPath((Join-Path $root $p))
+    $key = Resolve-RealPath (Join-Path $root $p)
     foreach ($ln in @(git diff --cached -U0 -- $p 2>$null)) {
       if ($ln -cmatch '^@@ -\S* \+([0-9]+)(,([0-9]+))? @@') {
         $start = [int]$Matches[1]
@@ -534,7 +638,7 @@ if ($dangling -cne 'off') {
   if ($dangling -ceq 'added-lines') {
     $added = Get-AddedLines $staged
     $dang = @($found | Where-Object {
-      $k = [IO.Path]::GetFullPath($_.file)
+      $k = Resolve-RealPath $_.file
       $null -ne $_.line -and $added.ContainsKey($k) -and $added[$k].Contains([int]$_.line)
     })
   } else { $dang = $found }
@@ -543,7 +647,23 @@ foreach ($f in $integ)  { Write-Output "  [integrity/$($f.kind)] $($f.file): $($
 foreach ($f in $strict) { Write-Output "  [strict/$($f.kind)] $($f.file): $($f.detail)" }
 foreach ($f in $dang)   { Write-Output "  [dangling] $($f.file): $($f.detail)" }
 if ($integ.Count -gt 0)  { Write-Output "darnlink-gate (staged): integrity failure in a file you're committing."; exit 2 }
-if ($strict.Count -gt 0) { Write-Output "darnlink-gate (staged): un-anchored plain link in a file you're committing (anchor it: uvx --from $ref darnlink . --robustify --write)."; exit 3 }
+if ($strict.Count -gt 0) {
+  # The suggestion the bash recipe prints, word for word: it writes only the staged files (and the
+  # uuid of their targets) and carries this gate's --exclude/--ignore-block. A bare
+  # `darnlink . --robustify --write` rewrites the whole repo under a different policy. The arguments
+  # are quoted for PowerShell, where the line is pasted.
+  $dlArgsStr = ''
+  foreach ($a in $dlArgs) { $dlArgsStr += " '" + ($a -replace "'", "''") + "'" }
+  Write-Output "darnlink-gate (staged): un-anchored plain link in a file you're committing."
+  Write-Output "  Anchor the files you are committing (and give their targets a uuid):"
+  Write-Output "    git -c core.quotePath=false diff --cached --name-only -- '*.md' |"
+  Write-Output "      uvx --from $ref darnlink .$dlArgsStr --robustify --create-frontmatter --write --only-from -"
+  Write-Output "  It writes the staged files AND creates the missing ``uuid`` in the files they link to --"
+  Write-Output "  an anchor needs a uuid at BOTH ends. Nothing else in the repo is touched."
+  Write-Output "  (Do NOT run a bare ``darnlink . --robustify --write``: it rewrites the whole repo and"
+  Write-Output "   drops this gate's --exclude/--ignore-block, applying a different policy.)"
+  exit 3
+}
 if ($dang.Count -gt 0 -and $dangling -cne 'warn') {
   Write-Output "darnlink-gate (staged): $($dang.Count) link(s) you are adding point at a path that does not exist. Fix the path, or drop the link if the target is gone."
   exit 1

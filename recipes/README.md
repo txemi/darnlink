@@ -125,10 +125,13 @@ is that orchestration in one place; a consumer carries only a tiny config + a 3-
   wall, and failing open on a transient network/PyPI hiccup means a **GREEN build with zero files
   validated**. Prefer the env var over the json key — reading the json needs `python3`, and
   "python3 missing" is one of the very cases fail-closed exists to catch.
-- **Refuses `--write`** (this gate never mutates; robustify by hand).
+- **Refuses `--write`** (this gate never mutates; robustify by hand), and forwards **no other
+  command-line argument** to darnlink: the gate is configured by `darnlink-gate.json` and the
+  environment only, in both recipes (the `.ps1` used to pass its arguments to the whole-repo passes).
 - **Stops on a config it cannot trust** (exit `1`, in both fail modes, before running anything): a
   `darnlink-gate.json` that is not valid JSON (the `.ps1` used to run with every default, in
-  silence), and a flag (`fail_closed`, `web`, `own_web_from_origin`, `include_mermaid`,
+  silence), a file whose top level is not an object (`[1]`, `"x"`, `3`: both recipes used to run
+  with every default), and a flag (`fail_closed`, `web`, `own_web_from_origin`, `include_mermaid`,
   `create_readme`) whose value is not on the closed list, compared in any case: `true`, `1`, `yes`,
   `on` / `false`, `0`, `no`, `off`, or absent. `"disabled"` used to turn the flag **on**.
   On Windows PowerShell 5.1 the JSON check is laxer: beyond what its own parser rejects, it only

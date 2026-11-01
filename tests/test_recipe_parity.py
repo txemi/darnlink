@@ -112,6 +112,35 @@ def old_debt_staged(repo: Path) -> None:
     _git(repo, "add", "A.md")
 
 
+def symlink_staged(repo: Path) -> None:
+    """The commit stages a SYMLINK to a file that carries a strict finding. darnlink reports the
+    finding under the link's target, so the staged set only matches it once both sides are resolved
+    (bash: `os.path.realpath`). Where a symlink cannot be created, the case is skipped."""
+    plain_link(repo)
+    (repo / "A.md").rename(repo / "real.md")
+    _git(repo, "add", "T.md", "real.md")
+    _git(repo, "commit", "-q", "-m", "base")
+    try:
+        os.symlink("real.md", repo / "link.md")
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"cannot create a symlink here: {exc}")
+    _git(repo, "add", "link.md")
+
+
+def clean_staged(repo: Path) -> None:
+    clean(repo)
+    _git(repo, "add", "A.md")
+
+
+def accent_staged(repo: Path) -> None:
+    """The commit stages a file whose NAME is not ASCII, with a strict finding in it. Without `-z`,
+    `git diff --name-only` prints it quoted and escaped, and it matched no finding."""
+    (repo / "T.md").write_text(f"---\nuuid: {U}\n---\n# T\n", encoding="utf-8")
+    (repo / "docs").mkdir()
+    (repo / "docs" / "canci\u00f3n.md").write_text("# C\nsee [t](../T.md)\n", encoding="utf-8")
+    _git(repo, "add", "docs")
+
+
 # --- the table ---------------------------------------------------------------------------------------
 
 CHECK = "check ."
@@ -135,6 +164,7 @@ class Case:
     env: dict = field(default_factory=dict)
     preflight: Optional[bool] = None   # does it get past the config into the pre-flight? (default: argv)
     gate_config: List[str] = field(default_factory=lambda: list(GATE_CONFIG))  # what follows `--help`
+    args: List[str] = field(default_factory=list)  # passed to the recipe on its command line
 
     def head(self) -> List[str]:
         reached = bool(self.argv) if self.preflight is None else self.preflight
@@ -152,6 +182,13 @@ CASES = [
     Case("invalid-json-empty", clean, b"", 1, [], "not valid JSON"),
     Case("invalid-json-utf16", clean, '{"mode": "max"}'.encode("utf-16"), 1, [], "not valid JSON"),
     Case("bom-is-fine", clean, b'\xef\xbb\xbf{"ref": "x", "mode": "max"}', 0, [CHECK, MAX]),
+    # Row 56: valid JSON whose top level is not an object stops both, as a file that does not parse.
+    Case("root-array", clean, b'[1]', 1, [], "is not a JSON object"),
+    Case("root-empty-array", clean, b' []', 1, [], "Its top level is an array"),
+    Case("root-string", clean, b'"x"', 1, [], "Its top level is a string"),
+    Case("root-number", clean, b'3', 1, [], "Its top level is a number"),
+    Case("root-boolean", clean, b'true', 1, [], "Its top level is a boolean"),
+    Case("root-null", clean, b'\nnull\n', 1, [], "Its top level is null"),
 
     # Row 45: a flag is one of a CLOSED list; anything else stops the gate, naming key and value.
     _flag("disabled", 1, [], "create_readme='disabled'"),
@@ -212,6 +249,35 @@ CASES = [
          {"ref": "x", "scope": "staged", "dangling": "added-lines"}, 0, [CHECK_JSON], "clean"),
     Case("staged-warn", dangling_staged, {"ref": "x", "scope": "staged", "dangling": "warn"},
          0, [CHECK_JSON], "informational"),
+    # Row 53: a staged path that goes through a symlink matches the finding at the link's target.
+    Case("staged-symlink", symlink_staged, {"ref": "x", "scope": "staged"}, 3, [CHECK_JSON], "un-anchored"),
+    # Row 54: a staged name outside ASCII is read verbatim (`git diff -z`), not quoted.
+    Case("staged-non-ascii-name", accent_staged, {"ref": "x", "scope": "staged"}, 3, [CHECK_JSON],
+         "un-anchored"),
+
+    # Row 55: exit 4 is "could not gate", and only under fail_closed: the pre-flight fails, a pass dies
+    # above darnlink's own codes, or an optional axis cannot be evaluated. Fail-open skips with 0.
+    Case("fail_closed-preflight-down", clean, {"ref": "x", "fail_closed": True}, 4, [],
+         "fail-closed is on", env={"SHIM_FAIL": "--help", "SHIM_FAIL_RC": "2"},
+         preflight=True, gate_config=[]),
+    Case("fail-open-preflight-down", clean, {"ref": "x"}, 0, [], "SKIP",
+         env={"SHIM_FAIL": "--help", "SHIM_FAIL_RC": "2"}, preflight=True, gate_config=[]),
+    Case("fail_closed-check-dies", clean, {"ref": "x", "fail_closed": True}, 4, [CHECK],
+         "fail-closed is on", env={"SHIM_FAIL": CHECK}),
+    Case("fail_closed-env-check-dies", clean, {"ref": "x"}, 4, [CHECK], "fail-closed is on",
+         env={"SHIM_FAIL": CHECK, "DARNLINK_GATE_FAIL_CLOSED": "1"}),
+    Case("fail-open-check-dies", clean, {"ref": "x"}, 0, [CHECK], "SKIP", env={"SHIM_FAIL": CHECK}),
+    Case("fail_closed-create_readme-down", dir_link, {"ref": "x", "create_readme": True, "fail_closed": True},
+         4, [CHECK, CR_PASS], "fail-closed is on", env={"SHIM_FAIL": CR_PASS}),
+    Case("fail_closed-dangling-down", dangling, {"ref": "x", "dangling": "repo", "fail_closed": True},
+         4, [CHECK, CHECK_JSON], "fail-closed is on", env={"SHIM_FAIL": CHECK_JSON}),
+    Case("fail_closed-staged-down", clean_staged, {"ref": "x", "scope": "staged", "fail_closed": True},
+         4, [CHECK_JSON], "fail-closed is on", env={"SHIM_FAIL": CHECK_JSON}),
+    # Row 55: `web` with scope=staged runs no web pass: the staged scope judges `check --json` only.
+    Case("web-staged-clean", clean_staged, {"ref": "x", "mode": "max", "web": True, "scope": "staged"},
+         0, [CHECK_JSON], "clean"),
+    Case("web-staged-strict", accent_staged, {"ref": "x", "mode": "max", "web": True, "scope": "staged"},
+         3, [CHECK_JSON], "un-anchored"),
 
     # Row 46: `create_readme` in any mode, and `create_readme_excludes` biting only its own pass.
     Case("create_readme-under-repair", dir_link, {"ref": "x", "mode": "repair", "create_readme": True},
@@ -242,6 +308,11 @@ CASES = [
     Case("default_branch=true", clean, {"ref": "x", "mode": "max", "web": True, "default_branch": True},
          0, [CHECK, MAX, WEB], "looks like a JSON boolean"),
 
+    # Row 56: command-line arguments are not forwarded to darnlink (bash never did); --write is refused.
+    Case("args-not-forwarded", clean, {"ref": "x"}, 0, [CHECK], args=["--exclude", "A.md"]),
+    Case("args-not-forwarded-max", clean, {"ref": "x", "mode": "max"}, 0, [CHECK, MAX], args=["--json"]),
+    Case("args-write-refused", clean, {"ref": "x"}, 1, [], "refusing --write", args=["--write"]),
+
     # Row 51: `gate-config` warns and never changes the verdict; a ref without it is said, not fatal.
     Case("gate-config-warns", clean, {"ref": "x", "mode": "check", "exclude": ["docs"]}, 0, [CHECK],
          "'exclude'"),
@@ -266,6 +337,10 @@ with open({log!r}, "a", encoding="utf-8") as fh:
 run = args
 if os.environ.get("SHIM_NO_GATE_CONFIG") and args[:1] == ["gate-config"]:
     run = args[1:]  # a ref older than the subcommand: `gate-config --help` is the top-level help
+# A darnlink that cannot run: the call whose argv starts with SHIM_FAIL exits SHIM_FAIL_RC, logged.
+fail = os.environ.get("SHIM_FAIL")
+if fail is not None and " ".join(args).startswith(fail):
+    sys.exit(int(os.environ.get("SHIM_FAIL_RC", "127")))
 sys.exit(subprocess.call([{darnlink!r}, *run]))
 '''
 
@@ -324,7 +399,7 @@ def _check(case: Case, observed: tuple[int, List[str], List[str], str]) -> None:
                     reason="the bash half needs a POSIX bash, git and the darnlink script (as test_recipe_gate)")
 @pytest.mark.parametrize("case", CASES, ids=[c.id for c in CASES])
 def test_bash_recipe_follows_the_table(case, tmp_path):
-    _check(case, _observe(["bash", str(BASH_RECIPE)], tmp_path, case))
+    _check(case, _observe(["bash", str(BASH_RECIPE), *case.args], tmp_path, case))
 
 
 @pytest.mark.skipif(_powershell() is None or shutil.which("git") is None or _darnlink_bin() is None,
@@ -334,7 +409,7 @@ def test_powershell_recipe_follows_the_table(case, tmp_path):
     cmd = [_powershell(), "-NoProfile", "-NonInteractive"]
     if WINDOWS:
         cmd += ["-ExecutionPolicy", "Bypass"]
-    _check(case, _observe(cmd + ["-File", str(PS1_RECIPE)], tmp_path, case))
+    _check(case, _observe(cmd + ["-File", str(PS1_RECIPE), *case.args], tmp_path, case))
 
 
 def test_the_table_covers_every_key_the_recipes_read():
