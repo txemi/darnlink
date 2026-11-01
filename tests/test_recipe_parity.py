@@ -285,9 +285,9 @@ CASES = [
          {"ref": "x", "scope": "staged", "fail_closed": True}, 4, [],
          "cannot list the staged files", preflight=True),
     Case("fail_closed-env-staged-list-git-fails", broken_index_staged, {"ref": "x", "scope": "staged"}, 4, [],
-         "fail-closed is on", env={"DARNLINK_GATE_FAIL_CLOSED": "1"}, preflight=True),
+         "cannot list the staged files", env={"DARNLINK_GATE_FAIL_CLOSED": "1"}, preflight=True),
     Case("fail-open-staged-list-git-fails", broken_index_staged, {"ref": "x", "scope": "staged"}, 0, [],
-         "SKIP", preflight=True),
+         "cannot list the staged files", preflight=True),
     # Row 55: `web` with scope=staged runs no web pass: the staged scope judges `check --json` only.
     Case("web-staged-clean", clean_staged, {"ref": "x", "mode": "max", "web": True, "scope": "staged"},
          0, [CHECK_JSON], "clean"),
