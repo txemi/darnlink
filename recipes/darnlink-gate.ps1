@@ -266,6 +266,14 @@ if ($args -contains '--write') {
   Write-Error "darnlink-gate: refusing --write (read-only gate; robustify by hand: uvx --from $ref darnlink . --robustify --write)."
   exit 1
 }
+# Any other argument is IGNORED, not an error, as in bash: a consumer's own pre-commit hook with the
+# default `pass_filenames: true` hands this script every staged file name, and exiting 1 on those would
+# break every commit of a setup that works. It is said once, with the same text as bash: the gate is
+# configured by darnlink-gate.json and the environment only. [Console]::Error, not Write-Warning (which
+# adds a prefix) and not Write-Error (which is terminating under $ErrorActionPreference = "Stop").
+if ($args.Count -gt 0) {
+  [Console]::Error.WriteLine("darnlink-gate: ignoring $($args.Count) command-line argument(s) (first: $($args[0])); the gate is configured by darnlink-gate.json and the environment only.")
+}
 
 # --- ensure uvx (installer leaves it in ~\.local\bin); fail OPEN if absent ---
 # $HOME, not $env:USERPROFILE: the same directory on Windows, and defined under pwsh elsewhere too.
@@ -522,15 +530,16 @@ if ($scope -cne 'staged') {
 # cannot be started is "could not look", not "nothing staged": it sets $script:stagedListFailure and
 # the caller goes through Invoke-Bail, as the bash recipe does (exit 4 under fail_closed, else a skip).
 $script:stagedListFailure = $null
-function Get-StagedMarkdown {
-  $stdout = ''
+# Runs `git <arguments>` in $root and returns @{ Out = <stdout as UTF-8 text>; Failure = <null, or why> }.
+# $label names the command in the failure text. The arguments are ONE string, not ArgumentList (which
+# Windows PowerShell 5.1's .NET does not have), so a file name goes through Quote-NativeArg. No shell
+# runs it, so a quoted pathspec reaches git as written, unexpanded.
+function Invoke-GitText([string]$arguments, [string]$label) {
   try {
     $gitCmd = Get-Command git -CommandType Application -ErrorAction Stop | Select-Object -First 1
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $gitCmd.Source
-    # One string, not ArgumentList (which Windows PowerShell 5.1's .NET does not have). No shell runs
-    # it, so the quoted pathspec reaches git as `*.md`, unexpanded.
-    $psi.Arguments = 'diff --cached -z --name-only --diff-filter=ACMR -- "*.md"'
+    $psi.Arguments = $arguments
     $psi.WorkingDirectory = $root
     $psi.UseShellExecute = $false
     $psi.RedirectStandardOutput = $true
@@ -541,10 +550,21 @@ function Get-StagedMarkdown {
     $out = $proc.StandardOutput.ReadToEnd()
     $proc.WaitForExit()
     [void]$stderrTask.Result
-    if ($proc.ExitCode -eq 0) { $stdout = $out }
-    else { $script:stagedListFailure = "git diff --cached failed, rc=$($proc.ExitCode)" }
-  } catch { $stdout = ''; $script:stagedListFailure = 'git could not be run' }
-  return @($stdout.Split([char]0) | Where-Object { $_ })
+    if ($proc.ExitCode -eq 0) { return @{ Out = [string]$out; Failure = $null } }
+    return @{ Out = ''; Failure = "$label failed, rc=$($proc.ExitCode)" }
+  } catch { return @{ Out = ''; Failure = 'git could not be run' } }
+}
+# One command-line argument for ProcessStartInfo.Arguments, quoted by the rules both .NET runtimes
+# parse with: a quote is escaped, and the backslashes before it (or at the end) are doubled.
+function Quote-NativeArg([string]$text) {
+  $t = $text -replace '(\\*)"', '$1$1\"'
+  $t = $t -replace '(\\+)$', '$1$1'
+  return '"' + $t + '"'
+}
+function Get-StagedMarkdown {
+  $r = Invoke-GitText 'diff --cached -z --name-only --diff-filter=ACMR -- "*.md"' 'git diff --cached'
+  if ($r.Failure) { $script:stagedListFailure = $r.Failure }
+  return @($r.Out.Split([char]0) | Where-Object { $_ })
 }
 $staged = @(Get-StagedMarkdown)
 if ($script:stagedListFailure) { Invoke-Bail "(staged) cannot list the staged files ($script:stagedListFailure)" }
@@ -614,13 +634,19 @@ function Hits($axis) { @($data.$axis.findings | Where-Object { $null -ne $_ -and
 # The lines THIS COMMIT ADDS, per staged file (full path -> set of line numbers), from
 # `git diff --cached -U0`: every `+` line in a hunk header's range is new. `+N` with no count is one
 # line; `+N,0` is a pure deletion. Same parse as the bash recipe's sed.
+$script:addedLinesFailure = $null
 function Get-AddedLines($paths) {
-  $ErrorActionPreference = 'Continue'
   $added = @{}
   foreach ($p in $paths) {
     if (-not $p) { continue }
     $key = Resolve-RealPath (Join-Path $root $p)
-    foreach ($ln in @(git diff --cached -U0 -- $p 2>$null)) {
+    # Through the same helper as the staged list: output decoded as UTF-8 and split only at LF (as
+    # bash; a lone CR inside a line is not a line break), and a git that fails is "could not look" --
+    # an empty set would let every added dangling link through. `--literal-pathspecs`: the name is a
+    # file, not a glob (`a*.md` would also pull the hunks of `ab.md`).
+    $r = Invoke-GitText ('--literal-pathspecs diff --cached -U0 -- ' + (Quote-NativeArg $p)) 'git diff --cached -U0'
+    if ($r.Failure) { $script:addedLinesFailure = "cannot read the added lines of $p ($($r.Failure))"; return $added }
+    foreach ($ln in $r.Out.Split([char]10)) {
       if ($ln -cmatch '^@@ -\S* \+([0-9]+)(,([0-9]+))? @@') {
         $start = [int]$Matches[1]
         $count = if ($Matches.ContainsKey(3)) { [int]$Matches[3] } else { 1 }
@@ -641,6 +667,7 @@ if ($dangling -cne 'off') {
   $found = @(Hits 'dangling')
   if ($dangling -ceq 'added-lines') {
     $added = Get-AddedLines $staged
+    if ($script:addedLinesFailure) { Invoke-Bail "(staged) $script:addedLinesFailure" }
     $dang = @($found | Where-Object {
       $k = Resolve-RealPath $_.file
       $null -ne $_.line -and $added.ContainsKey($k) -and $added[$k].Contains([int]$_.line)

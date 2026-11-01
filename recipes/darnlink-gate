@@ -390,6 +390,14 @@ for a in "$@"; do
     --write) echo "darnlink-gate: refusing --write (this gate is read-only; robustify by hand: 'uvx --from $REF darnlink . --robustify --write')." >&2; exit 1;;
   esac
 done
+# Every other argument is IGNORED, not an error: a consumer's own pre-commit hook with the default
+# `pass_filenames: true` hands this script every staged file name, and exiting 1 on those would break
+# every commit of a setup that works. It is said once, though: the gate is configured by
+# darnlink-gate.json and the environment only, and an argument that looks like an option (`--exclude`)
+# is a policy somebody believes they set.
+if [ "$#" -gt 0 ]; then
+  echo "darnlink-gate: ignoring $# command-line argument(s) (first: $1); the gate is configured by darnlink-gate.json and the environment only." >&2
+fi
 
 # ONE place decides what to do when the gate could NOT run: skip (default, pre-commit) or abort red
 # (CI). Never "green without validating", which is the expensive silent failure.
@@ -826,11 +834,19 @@ export DL_ARGS_STR
 # (spec 008, Option B). `-U0` gives hunks with no context, so every `+` line in the header range is
 # genuinely new. Collected per staged file as `path:start,count`.
 if [ "$DANGLING" = added-lines ]; then
+  # A git that fails here is "could not look", as for the staged list: an empty set would let every
+  # added dangling link through. `--literal-pathspecs`: the name is a file, not a glob (`a*.md` would
+  # also pull the hunks of `ab.md`).
   for p in "${STAGED[@]}"; do
     [ -n "$p" ] || continue
-    git diff --cached -U0 -- "$p" 2>/dev/null \
+    add_rc=0
+    add_diff="$(git --literal-pathspecs diff --cached -U0 -- "$p" 2>/dev/null)" || add_rc=$?
+    if [ "$add_rc" -ne 0 ]; then
+      bail "(staged) cannot read the added lines of $p (git diff --cached -U0 failed, rc=$add_rc)"
+    fi
+    printf '%s\n' "$add_diff" \
       | sed -n 's/^@@ -[^ ]* +\([0-9]*\)\(,\([0-9]*\)\)\{0,1\} @@.*/\1,\3/p' \
-      | sed "s#^#$p:#" >> "$DL_ADDED_FILE" || true
+      | sed "s#^#$p:#" >> "$DL_ADDED_FILE"
   done
 fi
 

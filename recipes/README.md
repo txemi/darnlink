@@ -121,7 +121,13 @@ is that orchestration in one place; a consumer carries only a tiny config + a 3-
   `git diff --cached` — **darnlink stays git-agnostic; the git lives here** (darnlink spec 008,
   Option B). If git cannot list the staged files (unreadable index, git missing), that is "could not
   look", not "nothing staged": the gate stops like any other axis that could not run (`4` under
-  fail-closed, a skip otherwise), in both recipes.
+  fail-closed, a skip otherwise), in both recipes. The same goes for reading the lines each file adds
+  (`dangling=added-lines`) and for running outside a git repository.
+  When a strict failure prints the fix command to paste (`git ... diff --cached --name-only | uvx ...
+  --only-from -`), note that on **Windows PowerShell 5.1** a pipe between two native programs
+  re-encodes the text through `$OutputEncoding` (ASCII), so a non-ASCII file name can reach darnlink
+  mangled; set `$OutputEncoding = [Text.UTF8Encoding]::new($false)` first, or use PowerShell 7.4+.
+  The gate's own check is not affected: it reads the names as UTF-8.
 - Fails **open** on a network/uvx error (offline commits aren't bricked) — **UNLESS fail-closed is on**.
   ⚠️ **In CI set `DARNLINK_GATE_FAIL_CLOSED=1`** (or `"fail_closed": true`): there the gate *is* the
   wall, and failing open on a transient network/PyPI hiccup means a **GREEN build with zero files
@@ -130,6 +136,9 @@ is that orchestration in one place; a consumer carries only a tiny config + a 3-
 - **Refuses `--write`** (this gate never mutates; robustify by hand), and forwards **no other
   command-line argument** to darnlink: the gate is configured by `darnlink-gate.json` and the
   environment only, in both recipes (the `.ps1` used to pass its arguments to the whole-repo passes).
+  Such arguments are **ignored with a warning on stderr, not refused**: a `pre-commit` hook with
+  `pass_filenames: true` hands the gate every staged file name, and exiting 1 on those would break
+  every commit of a setup that works. Set `pass_filenames: false`, and put policy in the config file.
 - **Stops on a config it cannot trust** (exit `1`, in both fail modes, before running anything): a
   `darnlink-gate.json` that is not valid JSON (the `.ps1` used to run with every default, in
   silence), a file whose top level is not an object (`[1]`, `"x"`, `3`: both recipes used to run
