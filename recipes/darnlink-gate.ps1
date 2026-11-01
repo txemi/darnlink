@@ -555,7 +555,7 @@ if ($rc -gt 3 -or -not ([string]$json).Trim()) { Invoke-Bail "(staged) darnlink 
 # matches the staged set and the gate passes in silence. [IO.Path]::GetFullPath only normalises the
 # text. So each component in turn: when one is a link, its target replaces the prefix and the walk
 # starts again on the result. `.Target` is the raw link text on both runtimes (a string on
-# PowerShell 7, a one-element string[] on 5.1), relative to the link's folder when it is not rooted.
+# PowerShell 7, possibly a one-element string[] on 5.1, so `@(...)[0]` takes either), relative to the link's folder when it is not rooted.
 # A component that does not exist ends the walk with the rest appended, as realpath leaves a missing
 # tail; a loop (more than 40 links) stops resolving, as realpath does without strict.
 # Path keys compare as the file system does: case-insensitively on Windows, exactly elsewhere. Not a
@@ -566,9 +566,12 @@ $script:realPathCache = New-Object 'System.Collections.Generic.Dictionary[string
 # The separators of THIS platform, not a fixed `[\\/]`: on Linux a backslash is a file-name character.
 $script:pathSeps = [char[]]@([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
 # Any exception on the way (a path the provider rejects, an unreadable link) returns the old answer,
-# GetFullPath of the path: never worse than before the resolution existed.
+# GetFullPath of the path: never worse than before the resolution existed. If GetFullPath itself
+# throws, the path as given.
 function Resolve-RealPath([string]$path) {
-  try { return (Resolve-RealPathCore $path) } catch { return [System.IO.Path]::GetFullPath($path) }
+  try { return (Resolve-RealPathCore $path) } catch {
+    try { return [System.IO.Path]::GetFullPath($path) } catch { return $path }
+  }
 }
 function Resolve-RealPathCore([string]$path) {
   $full = [IO.Path]::GetFullPath($path)

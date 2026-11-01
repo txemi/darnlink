@@ -55,7 +55,7 @@ All notable changes to darnlink are documented here. The format is based on
   that git through `System.Diagnostics.Process` and decodes its output as UTF-8, whatever the
   console's code page. The fix command a strict failure suggests now carries
   `git -c core.quotePath=false`, for the same reason, and the `.ps1` prints the same command as bash
-  (it suggested a bare `darnlink . --robustify --write`, which rewrites the whole repo).
+  (it suggested a bare `darnlink . --robustify --write`, which rewrites the whole repo). On Windows PowerShell 5.1 a pipe between two native programs re-encodes the text, so with a non-ASCII name that pasted command may still get a mangled path there; PowerShell 7 and bash are not affected.
 - **Both recipes: a `darnlink-gate.json` whose top level is not an object ran with every default.**
   `[1]`, `"x"`, `3` or `null` parse as JSON, so the invalid-JSON check let them through, and no key
   could be read from them: the gate ran its old default `ref` at `mode=check`, in silence. They now

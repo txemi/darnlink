@@ -781,7 +781,8 @@ fi
 # Read with `read -d ''`, not `mapfile -d ''` (bash 4.4+), through a temp file so git's own status is
 # seen: a git that fails gives no staged files, "nothing to judge", as `|| true` did.
 STAGED=()
-stg_list="$(mktemp)"
+stg_list="$(mktemp)" || bail "(staged) cannot create a temp file"
+trap 'rm -f "$stg_list"' EXIT
 stg_rc=0
 git diff --cached -z --name-only --diff-filter=ACMR -- '*.md' > "$stg_list" 2>/dev/null || stg_rc=$?
 if [ "$stg_rc" -eq 0 ]; then
@@ -809,7 +810,7 @@ DL_JSON_FILE="$(mktemp)"; printf '%s' "$DL_JSON" > "$DL_JSON_FILE"
 DL_STAGED_FILE="$(mktemp)"; printf '%s\0' "${STAGED[@]}" > "$DL_STAGED_FILE"   # NUL, as git gave them
 DL_ADDED_FILE="$(mktemp)"
 # Best-effort cleanup on every exit path, including the failure ones (`set -e`, a signal).
-trap 'rm -f "$DL_JSON_FILE" "$DL_STAGED_FILE" "$DL_ADDED_FILE"' EXIT
+trap 'rm -f "$stg_list" "$DL_JSON_FILE" "$DL_STAGED_FILE" "$DL_ADDED_FILE"' EXIT
 export DL_JSON_FILE DL_STAGED_FILE DL_ADDED_FILE
 export DL_ROOT="$root" DL_REF="$REF" DL_MODE="$MODE" DL_DANGLING="$DANGLING"
 
