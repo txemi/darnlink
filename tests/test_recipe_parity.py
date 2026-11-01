@@ -184,7 +184,7 @@ def glob_name_old_debt_staged(repo: Path) -> None:
 
 
 def outside_a_repo_staged(repo: Path) -> None:
-    """No git repository here at all (the sandbox sits under the temp dir, so there is no parent one):
+    """No git repository here at all (GIT_CEILING_DIRECTORIES stops git at the sandbox, so no parent one counts):
     `git diff --cached` exits 129 outside one, and that is not "nothing staged"."""
     (repo / "A.md").write_text("# A\nnothing to see\n", encoding="utf-8")
     (repo / ".git").rename(repo / "dot-git-moved-away")
@@ -454,6 +454,8 @@ def _sandbox(tmp_path: Path, case: Case) -> tuple[Path, dict, Path]:
 
     env = {k: v for k, v in GIT_ENV.items() if k not in _GATE_ENV}
     env["PATH"] = f"{shim_dir}{os.pathsep}" + env.get("PATH", "")
+    # git never looks above the sandbox: a .git in a parent of the temp dir cannot leak into a row.
+    env["GIT_CEILING_DIRECTORIES"] = str(repo.parent)
     env.update(case.env)
     return repo, env, log
 
