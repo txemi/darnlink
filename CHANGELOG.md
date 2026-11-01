@@ -23,6 +23,13 @@ All notable changes to darnlink are documented here. The format is based on
 
 ### Fixed
 
+- **Both recipes, staged scope: a git that failed to list the staged files passed the commit.**
+  `git diff --cached` failing (an unreadable index, git not runnable) left the staged set empty and
+  the gate printed "no staged .md - nothing to judge" and exited 0, even with `fail_closed`: green
+  without having looked. It now goes through the same place as every other "could not run" case:
+  exit 4 under `fail_closed`, a skip with a warning otherwise, with the message
+  `(staged) cannot list the staged files (...)`. `tests/test_recipe_parity.py` has three rows for it
+  (the `.ps1` half runs where PowerShell is on PATH; PowerShell 5.1 is not exercised in CI).
 - **A config the recipes cannot trust stops the gate, and both recipes run the same gate.**
   `darnlink-gate.ps1` ran with every default, in silence, on a `darnlink-gate.json` that is not
   valid JSON; it now exits 1 with the bash recipe's message, reading the file as bash does (UTF-8,
