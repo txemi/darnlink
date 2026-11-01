@@ -119,7 +119,9 @@ is that orchestration in one place; a consumer carries only a tiny config + a 3-
   `scope=staged` → judge only the files you're committing (**multi-session pre-commit**, so a
   teammate's in-flight plain link doesn't block your commit). It filters `darnlink check --json` by
   `git diff --cached` — **darnlink stays git-agnostic; the git lives here** (darnlink spec 008,
-  Option B).
+  Option B). If git cannot list the staged files (unreadable index, git missing), that is "could not
+  look", not "nothing staged": the gate stops like any other axis that could not run (`4` under
+  fail-closed, a skip otherwise), in both recipes.
 - Fails **open** on a network/uvx error (offline commits aren't bricked) — **UNLESS fail-closed is on**.
   ⚠️ **In CI set `DARNLINK_GATE_FAIL_CLOSED=1`** (or `"fail_closed": true`): there the gate *is* the
   wall, and failing open on a transient network/PyPI hiccup means a **GREEN build with zero files

@@ -519,7 +519,9 @@ if ($scope -cne 'staged') {
 # decodes a native command's output with [Console]::OutputEncoding (an OEM code page on Windows
 # PowerShell 5.1, and setting it throws without a console) and splits it at line breaks. Here the
 # stream is decoded as UTF-8, which is what git writes, and split only at NUL. A git that fails or
-# cannot be started gives no staged files, as `& git ... 2>$null` did: "nothing to judge".
+# cannot be started is "could not look", not "nothing staged": it sets $script:stagedListFailure and
+# the caller goes through Invoke-Bail, as the bash recipe does (exit 4 under fail_closed, else a skip).
+$script:stagedListFailure = $null
 function Get-StagedMarkdown {
   $stdout = ''
   try {
@@ -540,10 +542,12 @@ function Get-StagedMarkdown {
     $proc.WaitForExit()
     [void]$stderrTask.Result
     if ($proc.ExitCode -eq 0) { $stdout = $out }
-  } catch { $stdout = '' }
+    else { $script:stagedListFailure = "git diff --cached failed, rc=$($proc.ExitCode)" }
+  } catch { $stdout = ''; $script:stagedListFailure = 'git could not be run' }
   return @($stdout.Split([char]0) | Where-Object { $_ })
 }
 $staged = @(Get-StagedMarkdown)
+if ($script:stagedListFailure) { Invoke-Bail "(staged) cannot list the staged files ($script:stagedListFailure)" }
 if (-not $staged) { Write-Output "darnlink-gate (staged): no staged .md - nothing to judge."; exit 0 }
 
 $json = (& uvx --from $ref darnlink check . --json @dlArgs 2>$null | Out-String)

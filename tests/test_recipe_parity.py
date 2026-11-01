@@ -141,6 +141,12 @@ def accent_staged(repo: Path) -> None:
     _git(repo, "add", "docs")
 
 
+def broken_index_staged(repo: Path) -> None:
+    """The index cannot be read, so `git diff --cached` fails (rc 128). That is not "nothing staged"."""
+    clean(repo)
+    (repo / ".git" / "index").write_bytes(b"this is not a git index\n" * 4)
+
+
 # --- the table ---------------------------------------------------------------------------------------
 
 CHECK = "check ."
@@ -273,6 +279,15 @@ CASES = [
          4, [CHECK, CHECK_JSON], "fail-closed is on", env={"SHIM_FAIL": CHECK_JSON}),
     Case("fail_closed-staged-down", clean_staged, {"ref": "x", "scope": "staged", "fail_closed": True},
          4, [CHECK_JSON], "fail-closed is on", env={"SHIM_FAIL": CHECK_JSON}),
+    # The staged list is how the gate looks at the commit: a git that fails to give it is "could not
+    # look" (exit 4 under fail_closed, a skip otherwise), never an empty set that passes.
+    Case("fail_closed-staged-list-git-fails", broken_index_staged,
+         {"ref": "x", "scope": "staged", "fail_closed": True}, 4, [],
+         "cannot list the staged files", preflight=True),
+    Case("fail_closed-env-staged-list-git-fails", broken_index_staged, {"ref": "x", "scope": "staged"}, 4, [],
+         "cannot list the staged files", env={"DARNLINK_GATE_FAIL_CLOSED": "1"}, preflight=True),
+    Case("fail-open-staged-list-git-fails", broken_index_staged, {"ref": "x", "scope": "staged"}, 0, [],
+         "cannot list the staged files", preflight=True),
     # Row 55: `web` with scope=staged runs no web pass: the staged scope judges `check --json` only.
     Case("web-staged-clean", clean_staged, {"ref": "x", "mode": "max", "web": True, "scope": "staged"},
          0, [CHECK_JSON], "clean"),

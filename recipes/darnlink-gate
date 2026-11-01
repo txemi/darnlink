@@ -779,15 +779,17 @@ fi
 # finding and the gate passed it in silence. `core.quotePath=false` would fix the accents and still
 # quote a tab, a newline or a double quote; NUL is the one separator a path cannot contain.
 # Read with `read -d ''`, not `mapfile -d ''` (bash 4.4+), through a temp file so git's own status is
-# seen: a git that fails gives no staged files, "nothing to judge", as `|| true` did.
+# seen: a git that fails is "could not look", NOT "nothing staged" -- an empty list from a broken
+# index (or a git that is not there) would be a green commit that validated nothing.
 STAGED=()
 stg_list="$(mktemp)" || bail "(staged) cannot create a temp file"
 trap 'rm -f "$stg_list"' EXIT
 stg_rc=0
 git diff --cached -z --name-only --diff-filter=ACMR -- '*.md' > "$stg_list" 2>/dev/null || stg_rc=$?
-if [ "$stg_rc" -eq 0 ]; then
-  while IFS= read -r -d '' f; do STAGED+=("$f"); done < "$stg_list"
+if [ "$stg_rc" -ne 0 ]; then
+  bail "(staged) cannot list the staged files (git diff --cached failed, rc=$stg_rc)"
 fi
+while IFS= read -r -d '' f; do STAGED+=("$f"); done < "$stg_list"
 rm -f -- "$stg_list"
 [ "${#STAGED[@]}" -eq 0 ] && { echo "darnlink-gate (staged): no staged .md — nothing to judge."; exit 0; }
 
