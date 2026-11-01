@@ -24,7 +24,10 @@
 # 4 could-not-gate (fail-closed only).
 $ErrorActionPreference = "Stop"
 
-$root = (git rev-parse --show-toplevel 2>$null)
+# Its own $ErrorActionPreference: under "Stop", PowerShell 5.1 turns the redirected "not a git
+# repository" line into a terminating error, and the gate died with rc 1 instead of falling back to
+# the current folder as bash does.
+$root = & { $ErrorActionPreference = 'Continue'; git rev-parse --show-toplevel 2>$null }
 if (-not $root) { $root = (Get-Location).Path }
 $root = $root.Trim()
 Set-Location -LiteralPath $root
