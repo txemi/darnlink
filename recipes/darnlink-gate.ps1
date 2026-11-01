@@ -498,10 +498,50 @@ $json = (& uvx --from $ref darnlink check . --json @dlArgs 2>$null | Out-String)
 $rc = $LASTEXITCODE
 if ($rc -gt 3 -or -not ([string]$json).Trim()) { Invoke-Bail "(staged) darnlink unreachable (rc=$rc)" }
 
+# realpath, as the bash recipe's `os.path.realpath`: darnlink reports RESOLVED absolute paths, so a
+# path that goes through a symlink or a junction has to be resolved here too, or the finding never
+# matches the staged set and the gate passes in silence. [IO.Path]::GetFullPath only normalises the
+# text. So each component in turn: when one is a link, its target replaces the prefix and the walk
+# starts again on the result. `.Target` is the raw link text on both runtimes (a string on
+# PowerShell 7, a one-element string[] on 5.1), relative to the link's folder when it is not rooted.
+# A component that does not exist ends the walk with the rest appended, as realpath leaves a missing
+# tail; a loop (more than 40 links) stops resolving, as realpath does without strict.
+$script:realPathCache = @{}
+# The separators of THIS platform, not a fixed `[\\/]`: on Linux a backslash is a file-name character.
+$script:pathSeps = [char[]]@([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+function Resolve-RealPath([string]$path) {
+  $full = [IO.Path]::GetFullPath($path)
+  if ($script:realPathCache.ContainsKey($full)) { return $script:realPathCache[$full] }
+  $cur = [IO.Path]::GetPathRoot($full)
+  $rest = [System.Collections.Generic.List[string]]::new()
+  foreach ($c in $full.Substring($cur.Length).Split($script:pathSeps)) { if ($c) { $rest.Add($c) } }
+  $hops = 0
+  while ($rest.Count -gt 0) {
+    $next = [IO.Path]::Combine($cur, $rest[0])
+    $rest.RemoveAt(0)
+    $item = Get-Item -LiteralPath $next -Force -ErrorAction SilentlyContinue
+    if ($null -eq $item) {
+      $cur = $next
+      foreach ($c in $rest) { $cur = [IO.Path]::Combine($cur, $c) }
+      break
+    }
+    $target = if ($item.LinkType -cin @('SymbolicLink', 'Junction')) { @($item.Target)[0] } else { $null }
+    if (-not $target -or $hops -ge 40) { $cur = $next; continue }
+    $hops++
+    # Combine returns a rooted target unchanged, and joins a relative one to the link's folder.
+    $resolved = [IO.Path]::GetFullPath([IO.Path]::Combine($cur, $target))
+    $cur = [IO.Path]::GetPathRoot($resolved)
+    $parts = @($resolved.Substring($cur.Length).Split($script:pathSeps) | Where-Object { $_ })
+    $rest.InsertRange(0, [string[]]$parts)
+  }
+  $script:realPathCache[$full] = $cur
+  return $cur
+}
+
 $data = $json | ConvertFrom-Json
 $stagedSet = [System.Collections.Generic.HashSet[string]]::new()
-foreach ($p in $staged) { [void]$stagedSet.Add(([IO.Path]::GetFullPath((Join-Path $root $p)))) }
-function Hits($axis) { @($data.$axis.findings | Where-Object { $null -ne $_ -and $stagedSet.Contains(([IO.Path]::GetFullPath($_.file))) }) }
+foreach ($p in $staged) { [void]$stagedSet.Add((Resolve-RealPath (Join-Path $root $p))) }
+function Hits($axis) { @($data.$axis.findings | Where-Object { $null -ne $_ -and $stagedSet.Contains((Resolve-RealPath $_.file)) }) }
 
 # The lines THIS COMMIT ADDS, per staged file (full path -> set of line numbers), from
 # `git diff --cached -U0`: every `+` line in a hunk header's range is new. `+N` with no count is one
@@ -511,7 +551,7 @@ function Get-AddedLines($paths) {
   $added = @{}
   foreach ($p in $paths) {
     if (-not $p) { continue }
-    $key = [IO.Path]::GetFullPath((Join-Path $root $p))
+    $key = Resolve-RealPath (Join-Path $root $p)
     foreach ($ln in @(git diff --cached -U0 -- $p 2>$null)) {
       if ($ln -cmatch '^@@ -\S* \+([0-9]+)(,([0-9]+))? @@') {
         $start = [int]$Matches[1]
@@ -534,7 +574,7 @@ if ($dangling -cne 'off') {
   if ($dangling -ceq 'added-lines') {
     $added = Get-AddedLines $staged
     $dang = @($found | Where-Object {
-      $k = [IO.Path]::GetFullPath($_.file)
+      $k = Resolve-RealPath $_.file
       $null -ne $_.line -and $added.ContainsKey($k) -and $added[$k].Contains([int]$_.line)
     })
   } else { $dang = $found }

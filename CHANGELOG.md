@@ -42,6 +42,12 @@ All notable changes to darnlink are documented here. The format is based on
   run, naming the key. Write `true` or `false`. `darnlink gate-config` lists such values before you
   upgrade.
 
+- **`darnlink-gate.ps1`, staged scope: a path through a symlink or a junction matched nothing.**
+  It compared paths with `[IO.Path]::GetFullPath`, which only normalises the text, while darnlink
+  reports resolved paths and the bash recipe resolves both sides with `realpath`. With a link in the
+  path a finding never matched the staged set and the gate passed in silence. It now resolves each
+  component's link target, on PowerShell 7 and 5.1 alike.
+
 ## [0.30.0] — 2026-10-30
 
 ### Added

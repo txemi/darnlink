@@ -112,6 +112,21 @@ def old_debt_staged(repo: Path) -> None:
     _git(repo, "add", "A.md")
 
 
+def symlink_staged(repo: Path) -> None:
+    """The commit stages a SYMLINK to a file that carries a strict finding. darnlink reports the
+    finding under the link's target, so the staged set only matches it once both sides are resolved
+    (bash: `os.path.realpath`). Where a symlink cannot be created, the case is skipped."""
+    plain_link(repo)
+    (repo / "A.md").rename(repo / "real.md")
+    _git(repo, "add", "T.md", "real.md")
+    _git(repo, "commit", "-q", "-m", "base")
+    try:
+        os.symlink("real.md", repo / "link.md")
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"cannot create a symlink here: {exc}")
+    _git(repo, "add", "link.md")
+
+
 # --- the table ---------------------------------------------------------------------------------------
 
 CHECK = "check ."
@@ -212,6 +227,8 @@ CASES = [
          {"ref": "x", "scope": "staged", "dangling": "added-lines"}, 0, [CHECK_JSON], "clean"),
     Case("staged-warn", dangling_staged, {"ref": "x", "scope": "staged", "dangling": "warn"},
          0, [CHECK_JSON], "informational"),
+    # Row 53: a staged path that goes through a symlink matches the finding at the link's target.
+    Case("staged-symlink", symlink_staged, {"ref": "x", "scope": "staged"}, 3, [CHECK_JSON], "un-anchored"),
 
     # Row 46: `create_readme` in any mode, and `create_readme_excludes` biting only its own pass.
     Case("create_readme-under-repair", dir_link, {"ref": "x", "mode": "repair", "create_readme": True},
