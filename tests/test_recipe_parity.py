@@ -127,6 +127,15 @@ def symlink_staged(repo: Path) -> None:
     _git(repo, "add", "link.md")
 
 
+def accent_staged(repo: Path) -> None:
+    """The commit stages a file whose NAME is not ASCII, with a strict finding in it. Without `-z`,
+    `git diff --name-only` prints it quoted and escaped, and it matched no finding."""
+    (repo / "T.md").write_text(f"---\nuuid: {U}\n---\n# T\n", encoding="utf-8")
+    (repo / "docs").mkdir()
+    (repo / "docs" / "canci\u00f3n.md").write_text("# C\nsee [t](../T.md)\n", encoding="utf-8")
+    _git(repo, "add", "docs")
+
+
 # --- the table ---------------------------------------------------------------------------------------
 
 CHECK = "check ."
@@ -229,6 +238,9 @@ CASES = [
          0, [CHECK_JSON], "informational"),
     # Row 53: a staged path that goes through a symlink matches the finding at the link's target.
     Case("staged-symlink", symlink_staged, {"ref": "x", "scope": "staged"}, 3, [CHECK_JSON], "un-anchored"),
+    # Row 54: a staged name outside ASCII is read verbatim (`git diff -z`), not quoted.
+    Case("staged-non-ascii-name", accent_staged, {"ref": "x", "scope": "staged"}, 3, [CHECK_JSON],
+         "un-anchored"),
 
     # Row 46: `create_readme` in any mode, and `create_readme_excludes` biting only its own pass.
     Case("create_readme-under-repair", dir_link, {"ref": "x", "mode": "repair", "create_readme": True},

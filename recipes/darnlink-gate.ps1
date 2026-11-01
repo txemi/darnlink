@@ -491,7 +491,18 @@ if ($scope -cne 'staged') {
 # NOTE mode=max here behaves as strict (level 2), by design: the create-frontmatter axis needs
 # whole-tree reasoning, and per the wall architecture the staged pre-commit stays fast — max is
 # enforced at the whole-repo wall (pre-push / CI). See docs/elevating-your-link-gate.md §7.
-$staged = @(git diff --cached --name-only --diff-filter=ACMR -- '*.md' 2>$null)
+# `-z`, as in bash: NUL-separated and VERBATIM. Without it git quotes any name with a byte outside
+# ASCII (`docs/canción.md` comes out as `"docs/canci\303\263n.md"`), so the file matched no finding and
+# the gate passed it in silence. PowerShell decodes a native command's output with
+# [Console]::OutputEncoding (an OEM code page on Windows PowerShell 5.1) and git writes paths in UTF-8,
+# so the encoding is set to UTF-8 for this one call. Setting it can throw without a console: then the
+# current one stays. PowerShell splits the output at line breaks, so the pieces are joined back with
+# "`n" before splitting at NUL.
+$savedEncoding = [Console]::OutputEncoding
+try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false) } catch { }
+try { $stagedRaw = (@(git diff --cached -z --name-only --diff-filter=ACMR -- '*.md' 2>$null) -join "`n") }
+finally { try { [Console]::OutputEncoding = $savedEncoding } catch { } }
+$staged = @($stagedRaw.Split([char]0) | Where-Object { $_ })
 if (-not $staged) { Write-Output "darnlink-gate (staged): no staged .md - nothing to judge."; exit 0 }
 
 $json = (& uvx --from $ref darnlink check . --json @dlArgs 2>$null | Out-String)

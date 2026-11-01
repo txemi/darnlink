@@ -47,6 +47,11 @@ All notable changes to darnlink are documented here. The format is based on
   reports resolved paths and the bash recipe resolves both sides with `realpath`. With a link in the
   path a finding never matched the staged set and the gate passed in silence. It now resolves each
   component's link target, on PowerShell 7 and 5.1 alike.
+- **Both recipes, staged scope: a staged file whose name is not ASCII was never judged.** They read
+  the staged files with `git diff --name-only`, which quotes such a name (`docs/canción.md` arrives
+  as `"docs/canci\303\263n.md"`), so it matched no finding and a strict or integrity failure in it
+  passed the pre-commit. Both now read `git diff -z` (NUL-separated, verbatim); the `.ps1` decodes
+  git's output as UTF-8 for that call.
 
 ## [0.30.0] — 2026-10-30
 
