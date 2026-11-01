@@ -147,6 +147,63 @@ def broken_index_staged(repo: Path) -> None:
     (repo / ".git" / "index").write_bytes(b"this is not a git index\n" * 4)
 
 
+def added_lines_unreadable_staged(repo: Path) -> None:
+    """The staged LIST is readable but the added lines are not: the staged blob is gone from the object
+    store, so `git diff --cached -U0` fails (rc 128) while `--name-only` (which compares ids) still
+    works. The file's mtime is moved so git cannot read the working-tree copy instead."""
+    dangling_staged(repo)
+    oid = subprocess.run(["git", "rev-parse", ":A.md"], cwd=repo, env=GIT_ENV, check=True,
+                         capture_output=True, text=True).stdout.strip()
+    blob = repo / ".git" / "objects" / oid[:2] / oid[2:]
+    blob.chmod(0o644)
+    blob.unlink()
+    st = (repo / "A.md").stat()
+    os.utime(repo / "A.md", (st.st_atime, st.st_mtime + 10))
+
+
+def accent_dangling_staged(repo: Path) -> None:
+    """The commit ADDS a dangling link to a file whose NAME is not ASCII: `added-lines` must see it."""
+    (repo / "docs").mkdir()
+    (repo / "docs" / "canci\u00f3n.md").write_text("# C\nsee [gone](missing.md)\n", encoding="utf-8")
+    _git(repo, "add", "docs")
+
+
+def glob_name_old_debt_staged(repo: Path) -> None:
+    """A staged file called `a*.md` carries OLD debt, and `ab.md` (staged too) adds lines at the same
+    place. A pathspec read as a glob attributes the hunks of `ab.md` to `a*.md`, and the old dangling
+    link looks new."""
+    if WINDOWS:
+        pytest.skip("a file name cannot contain `*` here")
+    (repo / "a*.md").write_text("# A\nsee [gone](missing.md)\n", encoding="utf-8")
+    (repo / "ab.md").write_text("# B\n", encoding="utf-8")
+    _git(repo, "add", "a*.md", "ab.md")
+    _git(repo, "commit", "-q", "-m", "base")
+    (repo / "a*.md").write_text("# A\nsee [gone](missing.md)\nnew text\n", encoding="utf-8")
+    (repo / "ab.md").write_text("# B\nx\ny\nz\n", encoding="utf-8")
+    _git(repo, "add", "a*.md", "ab.md")
+
+
+def hash_name_clean_staged(repo: Path) -> None:
+    """A clean staged file whose name has a `#`. Pasted into a sed expression, the name broke it, and
+    the gate died with rc 1 on a clean commit."""
+    (repo / "C#notes.md").write_text("# C\nnothing to see\n", encoding="utf-8")
+    _git(repo, "add", "C#notes.md")
+
+
+def amp_name_dangling_staged(repo: Path) -> None:
+    """A staged file whose name has a `&` ADDS a dangling link. Pasted into a sed replacement, `&` is
+    "the match": the hunks went to `ab.md`, and the added link passed as old debt."""
+    (repo / "a&b.md").write_text("# A\nsee [gone](missing.md)\n", encoding="utf-8")
+    _git(repo, "add", "a&b.md")
+
+
+def outside_a_repo_staged(repo: Path) -> None:
+    """No git repository here at all (GIT_CEILING_DIRECTORIES stops git at the sandbox, so no parent one counts):
+    `git diff --cached` exits 129 outside one, and that is not "nothing staged"."""
+    (repo / "A.md").write_text("# A\nnothing to see\n", encoding="utf-8")
+    (repo / ".git").rename(repo / "dot-git-moved-away")
+
+
 # --- the table ---------------------------------------------------------------------------------------
 
 CHECK = "check ."
@@ -288,6 +345,31 @@ CASES = [
          "cannot list the staged files", env={"DARNLINK_GATE_FAIL_CLOSED": "1"}, preflight=True),
     Case("fail-open-staged-list-git-fails", broken_index_staged, {"ref": "x", "scope": "staged"}, 0, [],
          "cannot list the staged files", preflight=True),
+    # The added lines of each staged file come from a second git call: one that fails is "could not
+    # look" too, never an empty set under which every added dangling link passes.
+    Case("fail_closed-added-lines-git-fails", added_lines_unreadable_staged,
+         {"ref": "x", "scope": "staged", "dangling": "added-lines", "fail_closed": True}, 4, [CHECK_JSON],
+         "cannot read the added lines of A.md"),
+    Case("fail_closed-env-added-lines-git-fails", added_lines_unreadable_staged,
+         {"ref": "x", "scope": "staged", "dangling": "added-lines"}, 4, [CHECK_JSON],
+         "cannot read the added lines of A.md", env={"DARNLINK_GATE_FAIL_CLOSED": "1"}),
+    Case("fail-open-added-lines-git-fails", added_lines_unreadable_staged,
+         {"ref": "x", "scope": "staged", "dangling": "added-lines"}, 0, [CHECK_JSON],
+         "cannot read the added lines of A.md"),
+    Case("staged-added-lines-non-ascii-name", accent_dangling_staged,
+         {"ref": "x", "scope": "staged", "dangling": "added-lines"}, 1, [CHECK_JSON], "[dangling]"),
+    Case("staged-added-lines-glob-name", glob_name_old_debt_staged,
+         {"ref": "x", "scope": "staged", "dangling": "added-lines"}, 0, [CHECK_JSON], "clean"),
+    Case("staged-added-lines-hash-name", hash_name_clean_staged,
+         {"ref": "x", "scope": "staged", "dangling": "added-lines"}, 0, [CHECK_JSON], "clean"),
+    Case("staged-added-lines-amp-name", amp_name_dangling_staged,
+         {"ref": "x", "scope": "staged", "dangling": "added-lines"}, 1, [CHECK_JSON], "[dangling]"),
+    # Outside a git repository `git diff --cached` exits 129: "could not look", not "nothing staged".
+    Case("fail_closed-staged-outside-a-repo", outside_a_repo_staged,
+         {"ref": "x", "scope": "staged", "fail_closed": True}, 4, [],
+         "cannot list the staged files", preflight=True),
+    Case("fail-open-staged-outside-a-repo", outside_a_repo_staged, {"ref": "x", "scope": "staged"}, 0, [],
+         "cannot list the staged files", preflight=True),
     # Row 55: `web` with scope=staged runs no web pass: the staged scope judges `check --json` only.
     Case("web-staged-clean", clean_staged, {"ref": "x", "mode": "max", "web": True, "scope": "staged"},
          0, [CHECK_JSON], "clean"),
@@ -324,8 +406,12 @@ CASES = [
          0, [CHECK, MAX, WEB], "looks like a JSON boolean"),
 
     # Row 56: command-line arguments are not forwarded to darnlink (bash never did); --write is refused.
-    Case("args-not-forwarded", clean, {"ref": "x"}, 0, [CHECK], args=["--exclude", "A.md"]),
-    Case("args-not-forwarded-max", clean, {"ref": "x", "mode": "max"}, 0, [CHECK, MAX], args=["--json"]),
+    # They are ignored, not an error (a pre-commit hook with `pass_filenames: true` passes file names),
+    # and said once on stderr.
+    Case("args-not-forwarded", clean, {"ref": "x"}, 0, [CHECK],
+         "ignoring 2 command-line argument(s) (first: --exclude)", args=["--exclude", "A.md"]),
+    Case("args-not-forwarded-max", clean, {"ref": "x", "mode": "max"}, 0, [CHECK, MAX],
+         "ignoring 1 command-line argument(s) (first: --json)", args=["--json"]),
     Case("args-write-refused", clean, {"ref": "x"}, 1, [], "refusing --write", args=["--write"]),
 
     # Row 51: `gate-config` warns and never changes the verdict; a ref without it is said, not fatal.
@@ -386,6 +472,8 @@ def _sandbox(tmp_path: Path, case: Case) -> tuple[Path, dict, Path]:
 
     env = {k: v for k, v in GIT_ENV.items() if k not in _GATE_ENV}
     env["PATH"] = f"{shim_dir}{os.pathsep}" + env.get("PATH", "")
+    # git never looks above the sandbox: a .git in a parent of the temp dir cannot leak into a row.
+    env["GIT_CEILING_DIRECTORIES"] = str(repo.parent)
     env.update(case.env)
     return repo, env, log
 

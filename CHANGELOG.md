@@ -30,6 +30,16 @@ All notable changes to darnlink are documented here. The format is based on
   exit 4 under `fail_closed`, a skip with a warning otherwise, with the message
   `(staged) cannot list the staged files (...)`. `tests/test_recipe_parity.py` has three rows for it
   (the `.ps1` half runs where PowerShell is on PATH; PowerShell 5.1 is not exercised in CI).
+  Outside a git repository, `scope: staged` used to pass in silence (`git diff --cached` exits 129
+  there); under `fail_closed` it now exits 4, otherwise it skips with a warning.
+- **Both recipes, staged scope with `dangling: added-lines`: a git that failed to give the added lines
+  passed the commit.** The lines each staged file adds come from a second `git diff --cached -U0`, and
+  a failure there (`|| true` in bash, `2>$null` in the `.ps1`) left the set empty, so every dangling
+  link in the commit counted as old debt and the gate went green. It now stops like the staged list:
+  exit 4 under `fail_closed`, a skip with a warning otherwise
+  (`(staged) cannot read the added lines of <file> (...)`). That git call also runs with
+  `--literal-pathspecs`, so a staged `a*.md` no longer picks up the hunks of `ab.md`, and the `.ps1`
+  reads it through the same UTF-8 process helper as the staged list and splits it at LF only, as bash.
 - **A config the recipes cannot trust stops the gate, and both recipes run the same gate.**
   `darnlink-gate.ps1` ran with every default, in silence, on a `darnlink-gate.json` that is not
   valid JSON; it now exits 1 with the bash recipe's message, reading the file as bash does (UTF-8,
@@ -62,7 +72,7 @@ All notable changes to darnlink are documented here. The format is based on
   that git through `System.Diagnostics.Process` and decodes its output as UTF-8, whatever the
   console's code page. The fix command a strict failure suggests now carries
   `git -c core.quotePath=false`, for the same reason, and the `.ps1` prints the same command as bash
-  (it suggested a bare `darnlink . --robustify --write`, which rewrites the whole repo). On Windows PowerShell 5.1 a pipe between two native programs re-encodes the text, so with a non-ASCII name that pasted command may still get a mangled path there; PowerShell 7 and bash are not affected.
+  (it suggested a bare `darnlink . --robustify --write`, which rewrites the whole repo). On Windows PowerShell 5.1 a pipe between two native programs re-encodes the text (through `$OutputEncoding`, ASCII there), so with a non-ASCII name that pasted command may still get a mangled path; bash and PowerShell 7.4 and later, which pipe the bytes through, are not affected, and earlier PowerShell 7 releases are not known to be.
 - **Both recipes: a `darnlink-gate.json` whose top level is not an object ran with every default.**
   `[1]`, `"x"`, `3` or `null` parse as JSON, so the invalid-JSON check let them through, and no key
   could be read from them: the gate ran its old default `ref` at `mode=check`, in silence. They now
@@ -70,6 +80,12 @@ All notable changes to darnlink are documented here. The format is based on
 - **`darnlink-gate.ps1` no longer forwards its command-line arguments to darnlink.** It spliced them
   into the whole-repo passes while the bash recipe forwards none, so the same invocation ran a
   different gate on Windows. `--write` is still refused by name.
+- **Both recipes warn about the command-line arguments they ignore.** Any argument other than
+  `--write` was dropped in silence, so `darnlink-gate --exclude docs` looked like a policy and was not
+  one. It is still not an error (a consumer's `pre-commit` hook with `pass_filenames: true` passes
+  every staged file name, and exiting 1 would break every commit): one line on stderr, `darnlink-gate:
+  ignoring N command-line argument(s) (first: X); the gate is configured by darnlink-gate.json and the
+  environment only.`, and the exit code is unchanged.
 
 ## [0.30.0] — 2026-10-30
 
