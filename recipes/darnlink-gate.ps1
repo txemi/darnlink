@@ -596,37 +596,40 @@ $script:pathSeps = [char[]]@([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDi
 # GetFullPath of the path: never worse than before the resolution existed. If GetFullPath itself
 # throws, the path as given.
 function Resolve-RealPath([string]$path) {
+  $script:realPathHops = 0
+  $script:realPathCut = $false
   try { return (Resolve-RealPathCore $path) } catch {
     try { return [System.IO.Path]::GetFullPath($path) } catch { return $path }
   }
 }
 function Resolve-RealPathCore([string]$path) {
+  # Folder by folder, from the leaf up, and every answer cached: a folder shared by many findings is
+  # resolved once, so each new path costs one Get-Item (its leaf) instead of one per component. Same
+  # answer as walking each component from the root, for any path with up to 40 links. A link restarts the resolution on its target, which
+  # counts one hop against the 40 of the outermost call. Once a link is left unresolved for lack of hops
+  # (a loop, or a chain of more than 40), nothing more is cached in that call: a cut-short answer would be
+  # served to a later call that has its own 40 hops.
   $full = [IO.Path]::GetFullPath($path)
+  $root = [IO.Path]::GetPathRoot($full)
+  if ($full.Length -gt $root.Length) { $full = $full.TrimEnd($script:pathSeps) }
+  if ($full.Length -lt $root.Length) { $full = $root }
   if ($script:realPathCache.ContainsKey($full)) { return $script:realPathCache[$full] }
-  $cur = [IO.Path]::GetPathRoot($full)
-  $rest = [System.Collections.Generic.List[string]]::new()
-  foreach ($c in $full.Substring($cur.Length).Split($script:pathSeps)) { if ($c) { $rest.Add($c) } }
-  $hops = 0
-  while ($rest.Count -gt 0) {
-    $next = [IO.Path]::Combine($cur, $rest[0])
-    $rest.RemoveAt(0)
-    $item = Get-Item -LiteralPath $next -Force -ErrorAction SilentlyContinue
-    if ($null -eq $item) {
-      $cur = $next
-      foreach ($c in $rest) { $cur = [IO.Path]::Combine($cur, $c) }
-      break
-    }
+  $parent = [IO.Path]::GetDirectoryName($full)
+  if ([string]::IsNullOrEmpty($parent) -or $full.Length -le $root.Length) { return $root }
+  $next = [IO.Path]::Combine((Resolve-RealPathCore $parent), [IO.Path]::GetFileName($full))
+  $item = Get-Item -LiteralPath $next -Force -ErrorAction SilentlyContinue
+  $result = $next
+  if ($null -ne $item) {
     $target = if ($item.LinkType -cin @('SymbolicLink', 'Junction')) { @($item.Target)[0] } else { $null }
-    if (-not $target -or $hops -ge 40) { $cur = $next; continue }
-    $hops++
-    # Combine returns a rooted target unchanged, and joins a relative one to the link's folder.
-    $resolved = [IO.Path]::GetFullPath([IO.Path]::Combine($cur, $target))
-    $cur = [IO.Path]::GetPathRoot($resolved)
-    $parts = @($resolved.Substring($cur.Length).Split($script:pathSeps) | Where-Object { $_ })
-    $rest.InsertRange(0, [string[]]$parts)
+    if ($target -and $script:realPathHops -ge 40) { $script:realPathCut = $true }
+    elseif ($target) {
+      $script:realPathHops++
+      # Combine returns a rooted target unchanged, and joins a relative one to the link's folder.
+      $result = Resolve-RealPathCore ([IO.Path]::GetFullPath([IO.Path]::Combine([IO.Path]::GetDirectoryName($next), $target)))
+    }
   }
-  $script:realPathCache[$full] = $cur
-  return $cur
+  if (-not $script:realPathCut) { $script:realPathCache[$full] = $result }
+  return $result
 }
 
 $data = $json | ConvertFrom-Json
