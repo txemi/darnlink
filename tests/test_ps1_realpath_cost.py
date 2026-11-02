@@ -3,8 +3,9 @@
 The gate resolves the path of every finding (`Hits`) to compare it with the staged set, so a repo with
 many findings outside the commit pays that once per finding. This test runs the recipe twice over the
 same tree, the real one and a copy whose `Resolve-RealPathCore` returns `GetFullPath` (no walk), and
-reports both times as a warning, which `pytest -q` prints in its summary. It only reports: timings on a
-shared CI agent are too noisy to fail on. A large delta means the folder cache stopped working.
+reports both times as a warning, which `pytest -q` prints in its summary. It never fails on the
+timings, which are too noisy on a shared CI agent; it fails only if a run of the recipe does (rc not 0,
+or no answer in 20 minutes). A large delta means the folder cache stopped working.
 """
 from __future__ import annotations
 

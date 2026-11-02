@@ -580,11 +580,12 @@ if ($rc -gt 3 -or -not ([string]$json).Trim()) { Invoke-Bail "(staged) darnlink 
 # realpath, as the bash recipe's `os.path.realpath`: darnlink reports RESOLVED absolute paths, so a
 # path that goes through a symlink or a junction has to be resolved here too, or the finding never
 # matches the staged set and the gate passes in silence. [IO.Path]::GetFullPath only normalises the
-# text. So each component in turn: when one is a link, its target replaces the prefix and the walk
-# starts again on the result. `.Target` is the raw link text on both runtimes (a string on
-# PowerShell 7, possibly a one-element string[] on 5.1, so `@(...)[0]` takes either), relative to the link's folder when it is not rooted.
-# A component that does not exist ends the walk with the rest appended, as realpath leaves a missing
-# tail; a loop (more than 40 links) stops resolving, as realpath does without strict.
+# text. So each path is resolved folder by folder (Resolve-RealPathCore, below): when a component is a
+# link, its target takes its place and is resolved in turn. `.Target` is the raw link text on both
+# runtimes (a string on PowerShell 7, possibly a one-element string[] on 5.1, so `@(...)[0]` takes
+# either), relative to the link's folder when it is not rooted. A component that does not exist is kept
+# as written, as realpath leaves a missing tail; a loop (more than 40 links) stops resolving, as
+# realpath does without strict.
 # Path keys compare as the file system does: case-insensitively on Windows, exactly elsewhere. Not a
 # PowerShell hashtable, which ignores case everywhere.
 $script:pathComparer = if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
@@ -605,10 +606,10 @@ function Resolve-RealPath([string]$path) {
 function Resolve-RealPathCore([string]$path) {
   # Folder by folder, from the leaf up, and every answer cached: a folder shared by many findings is
   # resolved once, so each new path costs one Get-Item (its leaf) instead of one per component. Same
-  # answer as walking each component from the root, for any path with up to 40 links. A link restarts the resolution on its target, which
-  # counts one hop against the 40 of the outermost call. Once a link is left unresolved for lack of hops
-  # (a loop, or a chain of more than 40), nothing more is cached in that call: a cut-short answer would be
-  # served to a later call that has its own 40 hops.
+  # answer as walking each component from the root, for any path with up to 40 links. A link restarts
+  # the resolution on its target, which counts one hop against the 40 of the outermost call. Once a
+  # link is left unresolved for lack of hops (a loop, or a chain of more than 40), nothing more is
+  # cached in that call: a cut-short answer would be served to a later call that has its own 40 hops.
   $full = [IO.Path]::GetFullPath($path)
   $root = [IO.Path]::GetPathRoot($full)
   if ($full.Length -gt $root.Length) { $full = $full.TrimEnd($script:pathSeps) }
