@@ -127,6 +127,18 @@ def symlink_staged(repo: Path) -> None:
     _git(repo, "add", "link.md")
 
 
+def nested_pair_staged(repo: Path) -> None:
+    """Two staged files in the same nested folder, the second one with a strict finding: the
+    PowerShell recipe resolves folders once and caches them, and the second file must still match
+    through the cached folder."""
+    (repo / "T.md").write_text(f"---\nuuid: {U}\n---\n# T\n", encoding="utf-8")
+    d = repo / "a" / "b" / "c"
+    d.mkdir(parents=True)
+    (d / "one.md").write_text("# one\nnothing to see\n", encoding="utf-8")
+    (d / "two.md").write_text("# two\nsee [t](../../../T.md)\n", encoding="utf-8")
+    _git(repo, "add", "T.md", "a/b/c/one.md", "a/b/c/two.md")
+
+
 def clean_staged(repo: Path) -> None:
     clean(repo)
     _git(repo, "add", "A.md")
@@ -314,6 +326,8 @@ CASES = [
          0, [CHECK_JSON], "informational"),
     # Row 53: a staged path that goes through a symlink matches the finding at the link's target.
     Case("staged-symlink", symlink_staged, {"ref": "x", "scope": "staged"}, 3, [CHECK_JSON], "un-anchored"),
+    Case("staged-nested-pair", nested_pair_staged, {"ref": "x", "scope": "staged"}, 3, [CHECK_JSON],
+         "un-anchored"),
     # Row 54: a staged name outside ASCII is read verbatim (`git diff -z`), not quoted.
     Case("staged-non-ascii-name", accent_staged, {"ref": "x", "scope": "staged"}, 3, [CHECK_JSON],
          "un-anchored"),
