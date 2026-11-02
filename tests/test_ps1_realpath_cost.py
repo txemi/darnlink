@@ -1,11 +1,10 @@
-"""MEASUREMENT ONLY, not meant to be merged: how much of the staged-scope PowerShell gate is spent in
-`Resolve-RealPath` over findings that cannot match a staged file.
+"""Cost check: how much of the staged-scope PowerShell gate is spent in `Resolve-RealPath`.
 
-The gate resolves the path of EVERY finding (`Hits`), walking each component with `Get-Item`, to
-compare it with the staged set. On a repo with many findings outside the commit that may be most of
-the run. This test runs the recipe twice over the same tree, the real one and a copy whose
-`Resolve-RealPathCore` returns `GetFullPath` (no walk), and reports both times as a warning, which
-`pytest -q` prints in its summary. The difference is the most a pre-filter could save.
+The gate resolves the path of every finding (`Hits`) to compare it with the staged set, so a repo with
+many findings outside the commit pays that once per finding. This test runs the recipe twice over the
+same tree, the real one and a copy whose `Resolve-RealPathCore` returns `GetFullPath` (no walk), and
+reports both times as a warning, which `pytest -q` prints in its summary. It only reports: timings on a
+shared CI agent are too noisy to fail on. A large delta means the folder cache stopped working.
 """
 from __future__ import annotations
 
