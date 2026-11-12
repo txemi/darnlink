@@ -60,8 +60,9 @@ UUID        := 36 chars matching [0-9a-fA-F-] (canonically 8-4-4-4-12 lowercase 
 - **Robustify**: a plain link `[text](path.md)` is upgraded by ensuring the target has a `uuid`
   (creating one only because a link now references it) and appending the comment.
 
-Scope: relative links to local `.md` files and to **local directories** (§4.1). URLs, other non-`.md`
-targets and bare `#anchors` are ignored. Links inside **code** — fenced blocks (```` ``` ````/`~~~`)
+Scope: relative links to local `.md` files, to **local directories** (§4.1) and to the **typed anchors**
+of other local files (§4.2). A link to another repository is anchored by a different marker (§4.3). Any
+other URL, any other target and bare `#anchors` are ignored. Links inside **code** — fenced blocks (```` ``` ````/`~~~`)
 or inline code (`` ` ``) — are also ignored: they are examples, not navigational links, and rewriting
 them would corrupt the docs.
 
@@ -92,6 +93,82 @@ where `ops/deploy/README.md` declares `uuid: 7f3a1e2c-…`.
 
 A directory link and a file link to the same `README.md` share its uuid; the path's shape (`…/` vs
 `…/README.md`) is what keeps them pointing where their author intended.
+
+### 4.2 Typed anchors outside Markdown
+
+A file that is not Markdown is a link target only where its schema, or a fixed block of the file, says
+it carries an anchor. A value that merely looks like a uuid is not one: most uuids in data are foreign
+keys, not identities.
+
+- **YAML** whose modeline names a **local** JSON Schema (`# yaml-language-server: $schema=<path>`), and
+  **JSON** whose top-level `"$schema"` key names one: every position whose schema node is a `$ref` to
+  the `DarnlinkAnchor` type, at any depth. The type is recognised only by its identity: its published
+  `$id` (`https://github.com/txemi/darnlink/schemas/v1/darnlink_types#/$defs/DarnlinkAnchor`), a local
+  copy whose own `$id` is that one, or `#/$defs/DarnlinkAnchor` in the same document. A schema named by
+  a URL, a `file:` or a `urn:` is not local.
+- **Any other file** (Python, shell, YAML, TOML, Ruby: `#` comments only) whose leading comment lines
+  hold a block between two `#---` lines; the `uuid` key of that block anchors the whole file:
+
+  ```sh
+  #!/bin/sh
+  #---
+  # uuid: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+  #---
+  ```
+
+```
+yaml-anchor  := position P of a schema-typed YAML/JSON file whose schema node is $ref DarnlinkAnchor
+code-anchor  := leading "#" comment lines: "#---" NL  "#" ws* "uuid:" ws* UUID NL  "#---"
+link-to-elem := "[" text "](" path "#" json-pointer ")" ws* "<!--" ws* "uuid:" ws* UUID ws* "-->"
+```
+
+- An anchor that identifies **one element** of its file (`/hosts/3/uuid` identifies `/hosts/3`) is
+  linked with that element's JSON Pointer as the fragment (`hosts.yaml#/hosts/3`); the fragment is
+  repaired like the path when the element moves. An anchor of the whole file takes no fragment.
+- An anchor value must be a canonical lowercase UUID; any other value is reported, not used.
+- The plain top-level `uuid` of a YAML file **without** a typed schema is not a target for Markdown
+  links (such a file often repeats the uuid of the README beside it). A `#---` block whose uuid is also
+  a Markdown file's gives way to that file.
+- `<!-- darnlink-ignore-file -->` in a code file's leading comment lines takes it out of the graph, as
+  in Markdown (§5).
+
+### 4.3 Links to another repository (`web-uuid`)
+
+A link to a file in **another** repository is anchored to that file's frontmatter `uuid` with its own
+marker, so the intra-repo repair and robustify (which key on `uuid:`) never mistake it for a local link:
+
+```markdown
+[their spec](https://github.com/owner/repo/blob/main/docs/spec.md) <!-- web-uuid: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx -->
+```
+
+```
+web-link := "[" text "](" url ")" ws* "<!--" ws* "web-uuid:" ws* UUID ws* "-->"
+```
+
+- The destination repository is not recorded in the marker: the URL already names it.
+- Only an explicit, networked check verifies it (darnlink's opt-in `web-check --online`): GitHub
+  `blob`/`raw` URLs, and a self-hosted Forgejo's `src/branch/…` URLs once that host is declared. The
+  core never goes to the network and leaves `web-uuid` links alone.
+
+### 4.4 References from YAML data (`DarnlinkRef`)
+
+Structured data links to a document with the same two halves as a robust link, as a mapping:
+
+```yaml
+# yaml-language-server: $schema=schemas/inventory.schema.json
+owner_doc:
+  link: ../docs/owner.md        # the path a reader follows, relative to this YAML file
+  uuid: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx   # the target's identity
+```
+
+- Only positions whose schema node is a `$ref` to the `DarnlinkRef` type are references: a local
+  definition called `DarnlinkRef` (`#/$defs/DarnlinkRef`, as LinkML generates when a schema imports the
+  type), the published `$id`, or a path or URL ending in `ref.schema.json`. A mapping that only looks
+  like one is never touched.
+- `link` may carry a JSON-Pointer fragment to reach one element's anchor (§4.2).
+- It resolves and repairs like a robust Markdown link (darnlink: `yaml-refs`, `--write`). A reference
+  with a `link` and no `uuid` may be **filled** from its target when exactly one anchor fits; a uuid is
+  copied from the target, never minted. A `link` that is a web URL is not checked here.
 
 ## 5. Opting a file out
 
