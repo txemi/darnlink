@@ -21,6 +21,12 @@ pointing into it dies.
 reorganisation and it heals the links. It is built for trees of **many nested Markdown files**
 that get relocated and refactored over time.
 
+The links live in Markdown, but what they point at need not be Markdown: a link can target a `.md`
+file, a **folder** (through its `README.md`), a **YAML or JSON file** whose local schema marks a
+`DarnlinkAnchor`, a **script or config file** carrying a `#---` uuid block in its leading comments,
+or a file in **another repository** (`<!-- web-uuid: … -->`, checked by the opt-in `web-check`).
+[FORMAT.md](FORMAT.md) <!-- uuid: 9052d864-2a45-4ed4-8725-d8a394e7a7ef --> is the spec for every form.
+
 > ### 🌐 Cross-repo web links (experimental, opt-in)
 >
 > Beyond local links, darnlink can also anchor and verify **cross-repo web links** — a Markdown link
@@ -68,7 +74,7 @@ Prefer a permanent install? `pipx install darnlink` (or `uv tool install darnlin
 reproducible CI gate (a tag can be force-moved; a SHA can't), or unreleased `main`:
 
 ```bash
-uvx --from git+https://github.com/txemi/darnlink@v0.7.0 darnlink <folder>   # a tag
+uvx --from git+https://github.com/txemi/darnlink@v0.30.0 darnlink <folder>   # a tag
 uvx --from git+https://github.com/txemi/darnlink@<sha>  darnlink <folder>   # an immutable commit
 uvx --from git+https://github.com/txemi/darnlink        darnlink <folder>   # latest main
 ```
@@ -134,6 +140,7 @@ The sections above introduce these in context; this is the full list (same as `d
 | `--write` | Apply the changes. Without it darnlink only **reports** — it never modifies a file. |
 | `--robustify` | Upgrade plain links to robust. Without it the operation is *repair* (fix robust links whose target moved). |
 | `--create-frontmatter` | *(robustify)* Allow creating frontmatter on a target that has none, so it can take a `uuid`. Opt-in on purpose. |
+| `--create-readme` | *(robustify)* For a link to a folder that has no `README.md`, create one (with a `uuid`) so the link can be anchored. Implies `--create-frontmatter`. darnlink never creates the folder itself. |
 | `--no-create-frontmatter-for GLOB` | *(robustify)* Basename glob whose targets **never** get a `uuid` — no block created, no line inserted — regardless of `--create-frontmatter`. Reusing a `uuid` the target already has is unaffected. Repeatable. |
 | `--only FILE` | Restrict **writes** to these `.md` files. The tree is still scanned and indexed in full — so a link's target can live anywhere — but only these files are modified. Repeatable. See [Scoping writes to specific files](#scoping-writes-to-specific-files---only). |
 | `--only-from FILE` | Read `--only` paths from `FILE`, one per line (`-` = stdin). Combines with `--only`. Lets you pipe a generated list (e.g. staged files) without darnlink knowing about git. |
@@ -141,6 +148,15 @@ The sections above introduce these in context; this is the full list (same as `d
 | `--exclude PATTERN` | Skip any directory whose name matches `PATTERN` (glob / `fnmatch`, case-sensitive; a plain name matches exactly). Repeatable — e.g. `--exclude old --exclude 'old_*' --exclude '*_old'` skips the whole `old` family. |
 | `--ignore-block NAME` | Leave links inside `<!-- NAME-start --> … <!-- NAME-end -->` blocks alone. Repeatable. |
 | `--json` | Machine-readable output (see below). |
+
+Subcommands, each with its own `--help`:
+
+| Subcommand | What it does |
+|---|---|
+| `darnlink check [path]` | The gate: both axes in one report-only run. Exit `0` clean, `2` integrity (a broken robust link or invalid YAML frontmatter), `3` strict (a plain link that could be anchored and is not). Takes `--exclude`, `--ignore-block`, `--only`, `--only-from`, `--json`. |
+| `darnlink yaml-refs [root]` | *(experimental)* Checks typed `{uuid, link}` references in YAML data; `--write` fills a missing `uuid` from the target. See below. |
+| `darnlink web-check [path]` | *(experimental, opt-in)* Lists the links to other repositories; `--online` verifies and anchors them over the network (`--write`; `--forgejo URL` for a self-hosted Forgejo; `--default-branch`). `--own OWNER` / `--own-from-origin` make "my own destination has no `uuid`" a failure (exit `4`, budget `--own-max N`); `--include-mermaid` also reads a diagram's `click` destinations. |
+| `darnlink gate-config [path]` | Checks a `darnlink-gate.json` against its published schema and warns about each problem; never writes. Exit `0` even with problems, unless `--strict`. |
 
 Files can also opt themselves out from the inside, with no CLI flag: see
 [FORMAT.md §5](FORMAT.md#5-opting-a-file-out) <!-- uuid: 9052d864-2a45-4ed4-8725-d8a394e7a7ef --> for `<!-- darnlink-ignore-links -->` (leave *my* links
@@ -200,8 +216,10 @@ Stable shape, meant for gates and scripts:
 ```
 
 `kind` is one of: `repair`, `conflict`, `robustify`, `unresolvable`, `ambiguous`, `no_frontmatter`,
-`out_of_scope`, `deny_listed`, `ignored_links`, `invalid_frontmatter`, `target_uuid_write`,
-`target_write_refused`. A gate that wants "is anything left to do?" should count the kinds it cares
+`create_readme`, `out_of_scope`, `dangling`, `absolute_local_path`, `deny_listed`, `ignored_links`,
+`invalid_frontmatter`, `target_uuid_write`, `target_write_refused`. `dangling` is a plain relative link
+whose target does not exist at all; it is report-only, and the gate recipes decide what to do with it
+(`dangling`: `off`, `warn`, `added-lines` or `repo`). A gate that wants "is anything left to do?" should count the kinds it cares
 about (e.g. `robustify`) rather than the length of `findings` — the non-actionable kinds are
 reported precisely so nothing is skipped silently.
 
@@ -271,7 +289,7 @@ breakage before it lands. Pick the one that fits your workflow — near copy-pas
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/txemi/darnlink
-    rev: v0.7.0
+    rev: v0.30.0
     hooks:
       - id: darnlink            # fail the commit if any robust link is broken
       # - id: darnlink-repair   # …or auto-repair in place instead of failing
@@ -346,7 +364,7 @@ pre-commit hook with the `darnlink-strict` id:
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/txemi/darnlink
-    rev: v0.7.0   # darnlink-strict ships since v0.2.0
+    rev: v0.30.0   # darnlink-strict ships since v0.2.0
     hooks:
       - id: darnlink            # links that *are* robust must not break
       - id: darnlink-strict     # …and every anchorable link *must* be robust (fail-closed)
@@ -397,7 +415,7 @@ The idea of surviving refactors by anchoring to an identity isn't new, but the s
 
 ## Status
 
-Early (v0.7.0). Built spec-first with [GitHub Spec Kit](https://github.com/github/spec-kit) — see
+Early (v0.30.0). Built spec-first with [GitHub Spec Kit](https://github.com/github/spec-kit) — see
 `.specify/` and `specs/`.
 
 ## License
