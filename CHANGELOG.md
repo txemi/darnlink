@@ -8,6 +8,16 @@ All notable changes to darnlink are documented here. The format is based on
 
 ### Added
 
+- **A Jenkins shared-library step, `darnlinkGate()`, so the server wall is written once.** The
+  fetch-verify-run shell of the Jenkins example moves to `vars/darnlinkGate.groovy`: declare this
+  repository as a global pipeline library named `darnlink`, and a Jenkinsfile needs only
+  `@Library('darnlink') _` and `steps { darnlinkGate() }`. Until now every adopter copied the whole
+  block into its Jenkinsfile, and the copies drift. The darnlink version that runs is still the
+  `ref` of the repo's own `darnlink-gate.json`, read at run time, so the library adds no second pin; give the library a tag as its default version,
+  since that version decides which copy of the verifier runs.
+  `recipes/examples/Jenkinsfile-stage.groovy` becomes a stage that calls the step, and the tests that
+  execute the Jenkins shell now execute the step's.
+
 - **The schema of `darnlink-gate.json`, and `darnlink gate-config` to check a config against it.**
   Nothing validated the gate's config: an unknown key (`"exclude"` for `"excludes"`) configured
   nothing, and a flag set to any string not on the «off» list (`"disabled"`) turned it on, both in
