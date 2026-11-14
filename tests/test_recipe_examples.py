@@ -37,7 +37,9 @@ requires_bash = pytest.mark.skipif(
 
 EXAMPLES = Path(__file__).resolve().parent.parent / "recipes" / "examples"
 ACTIONS = EXAMPLES / "github-actions-darnlink-gate.yml"
-JENKINS = EXAMPLES / "Jenkinsfile-stage.groovy"
+JENKINS_STAGE = EXAMPLES / "Jenkinsfile-stage.groovy"
+# The Jenkins shell lives in the shared-library step; the example stage only calls it.
+JENKINS = EXAMPLES.parent.parent / "vars" / "darnlinkGate.groovy"
 # Both examples are EXECUTED, not just compared. Running only the Actions one left the Jenkins file
 # effectively ungated: an adversarial round sowed seven defects in it — a deleted failure guard, a
 # silent `VER=v0.7.0` fallback, a `\.` that is a Groovy compile error, a curl repointed at another
@@ -88,7 +90,7 @@ def test_the_two_examples_derive_the_pin_identically():
 
 
 @pytest.mark.parametrize("path", [
-    ACTIONS, JENKINS,
+    ACTIONS, JENKINS, JENKINS_STAGE,
     EXAMPLES / "README.md",
     # The canonical recipe README too, and it is the one that proves the point: the first pass fixed
     # its `curl` and left two config blocks pinned at v0.7.0 and v0.18.0 — so "there is only one pin"
@@ -469,3 +471,16 @@ def test_the_macOS_fallback_actually_works(tmp_path, example):
         f"the shasum fallback did not produce a matching digest: {r.stdout}{r.stderr}")
     assert "checksum OK" in (r.stdout + r.stderr), (
         f"the fallback ran but did not confirm a match: {r.stdout}{r.stderr}")
+
+
+def test_the_jenkins_example_stage_calls_the_library_and_carries_no_shell():
+    """The example used to carry the whole fetch-verify-run shell, and every adopter copied it. Now the
+    shell lives once, in vars/darnlinkGate.groovy: a second copy here would drift exactly like the
+    seventeen Jenkinsfiles did."""
+    text = JENKINS_STAGE.read_text(encoding="utf-8")
+    assert "darnlinkGate()" in text
+    for shell_only in ("curl", "sha256sum", "sh '" + "''"):
+        assert shell_only not in text, f"the example stage carries shell again: {shell_only!r}"
+    # It is Groovy too: a backslash that is not a line continuation is a compile error in the
+    # adopter's whole Jenkinsfile (see the scan of the step above).
+    assert not [l for l in text.splitlines() if "\\" in (l[:-1] if l.endswith("\\") else l)]

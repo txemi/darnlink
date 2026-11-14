@@ -14,7 +14,7 @@ recipe ([`../darnlink-gate`](../darnlink-gate)) at the scope that fits each laye
 | [`pre-commit`](pre-commit) | local, per-commit | **staged** (fast; no cross-session deadlock) | open |
 | [`pre-push`](pre-push) | local wall | **whole repo** | open (flip to closed inside) |
 | [`github-actions-darnlink-gate.yml`](github-actions-darnlink-gate.yml) | server wall | **whole repo** | **closed** |
-| [`Jenkinsfile-stage.groovy`](Jenkinsfile-stage.groovy) | server wall (self-hosted) | **whole repo** | **closed** |
+| [`Jenkinsfile-stage.groovy`](Jenkinsfile-stage.groovy), calling the shared-library step [`vars/darnlinkGate.groovy`](../../vars/darnlinkGate.groovy) | server wall (self-hosted) | **whole repo** | **closed** |
 
 **The scope split is deliberate** (see [`../../docs/elevating-your-link-gate.md §7`](../../docs/elevating-your-link-gate.md) <!-- uuid: e95eaed1-9866-4c48-a0d7-99a6382f5bf9 -->):
 staged locally so parallel contributors don't block each other; whole-repo where the gate is the wall.

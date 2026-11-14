@@ -236,7 +236,8 @@ load-bearing reason the maximum is livable.
 [`pre-push`](../recipes/examples/pre-push) (whole repo) ·
 [`github-actions-darnlink-gate.yml`](../recipes/examples/github-actions-darnlink-gate.yml) and
 [`Jenkinsfile-stage.groovy`](../recipes/examples/Jenkinsfile-stage.groovy) (the server wall,
-fail-closed). They're whole working artifacts, not snippets to assemble — assembling the CI one wrong
+fail-closed; it calls the shared-library step [`vars/darnlinkGate.groovy`](../vars/darnlinkGate.groovy), where the
+Jenkins shell lives once). They're whole working artifacts, not snippets to assemble — assembling the CI one wrong
 is how you get a wall that fails *open*.
 
 ## 8. Extend the wall to cross-repo web links (opt-in `web-check --online`)
