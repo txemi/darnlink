@@ -23,15 +23,27 @@ def PYTHONS = ['3.10', '3.11', '3.12', '3.13']
 // tools/check.sh is what the local git hooks run. uv honours UV_PYTHON, so the
 // same script covers the whole Python matrix.
 def localGates(String py, boolean unix) {
-  withEnv(["UV_PYTHON=${py}", "UV_PROJECT_ENVIRONMENT=.venv-${py}"]) {
-    // On Windows `bash` is the one Git for Windows ships; it is not on PATH by default.
-    if (unix) { sh 'bash tools/check.sh' } else { bat '"%ProgramFiles%\\Git\\bin\\bash.exe" tools/check.sh' }
+  // A step, not an option: it starts once the agent is ours (see the pipeline options below).
+  timeout(time: 25, unit: 'MINUTES') {
+    withEnv(["UV_PYTHON=${py}", "UV_PROJECT_ENVIRONMENT=.venv-${py}"]) {
+      // On Windows `bash` is the one Git for Windows ships; it is not on PATH by default.
+      if (unix) { sh 'bash tools/check.sh' } else { bat '"%ProgramFiles%\\Git\\bin\\bash.exe" tools/check.sh' }
+    }
   }
 }
 
 pipeline {
   agent none
-  options { timestamps(); disableConcurrentBuilds(); timeout(time: 90, unit: 'MINUTES') }
+  // No timeout here. A pipeline timeout, like the options of a stage that has an agent, starts
+  // before the agent is allocated, so it also counts the wait for a free node: with one Windows
+  // agent busy, a build was ABORTED with the Linux side green and Windows waiting an hour for an
+  // executor. The limits live inside each branch instead, where the agent is already ours: a
+  // timeout step around every Python run (localGates) and the options of the inner stages, which
+  // have no agent of their own. Measured on main #27 (12-nov-2026): Linux took 14 min and Windows
+  // 34 min once it had its agent; the slowest single Python run took 12 min.
+  // The automatic checkout when a branch gets its agent is outside these limits; the git plugin
+  // bounds its own clone and fetch (10 min by default).
+  options { timestamps(); disableConcurrentBuilds() }
   stages {
     stage('checks') {
       parallel {
@@ -46,6 +58,7 @@ pipeline {
               steps { script { PYTHONS.each { py -> stage("local gates py${py}") { localGates(py, true) } } } }
             }
             stage('pull request context') {
+              options { timeout(time: 10, unit: 'MINUTES') }
               when { changeRequest() }
               steps {
                 withCredentials([
@@ -71,14 +84,17 @@ pipeline {
               }
             }
             stage('lang: commit messages') {
+              options { timeout(time: 10, unit: 'MINUTES') }
               when { changeRequest() }
               steps { sh 'bash tools/lang_commits.sh "origin/${CHANGE_TARGET}" HEAD' }
             }
             stage('lang: PR title and description') {
+              options { timeout(time: 10, unit: 'MINUTES') }
               when { changeRequest() }
               steps { sh 'bash tools/lang_gate.sh pr-text "${WORKSPACE_TMP}/pr.txt"' }
             }
             stage('smoke') {
+              options { timeout(time: 10, unit: 'MINUTES') }
               steps {
                 sh '''
                   set -eu
@@ -90,6 +106,7 @@ pipeline {
               }
             }
             stage('secret-scan') {
+              options { timeout(time: 10, unit: 'MINUTES') }
               steps {
                 withCredentials([
                   usernamePassword(credentialsId: 'scm-api-token', usernameVariable: 'API_USER', passwordVariable: 'API_TOKEN')
@@ -132,6 +149,7 @@ pipeline {
             // Same job as astral-sh/setup-uv in the workflows: a per-user install, only if missing,
             // pinned to the version the first green Windows run used.
             stage('setup uv') {
+              options { timeout(time: 10, unit: 'MINUTES') }
               steps {
                 powershell '''
                   if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
@@ -145,6 +163,7 @@ pipeline {
               steps { script { PYTHONS.each { py -> stage("local gates py${py} (windows)") { localGates(py, false) } } } }
             }
             stage('smoke') {
+              options { timeout(time: 10, unit: 'MINUTES') }
               steps {
                 bat 'uvx --from . darnlink .'
                 // Same second step as the workflow, over git from the workspace (see the Linux stage).
@@ -152,6 +171,7 @@ pipeline {
               }
             }
             stage('ps1-syntax') {
+              options { timeout(time: 10, unit: 'MINUTES') }
               steps { powershell './tools/ps1_syntax.ps1' }
             }
           }
