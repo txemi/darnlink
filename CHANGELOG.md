@@ -6,6 +6,8 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.32.0] — 2026-11-15
+
 ### Added
 
 - **`darnlink check --report FILE`, and the Jenkins step keeps it as a build artifact.** `check`
@@ -1435,7 +1437,8 @@ First public release.
 - Ships a [pre-commit](https://pre-commit.com/) hook (`darnlink`, `darnlink-repair`).
 - Format specification: [FORMAT.md](FORMAT.md) <!-- uuid: 9052d864-2a45-4ed4-8725-d8a394e7a7ef -->.
 
-[Unreleased]: https://github.com/txemi/darnlink/compare/v0.31.0...HEAD
+[Unreleased]: https://github.com/txemi/darnlink/compare/v0.32.0...HEAD
+[0.32.0]: https://github.com/txemi/darnlink/compare/v0.31.0...v0.32.0
 [0.31.0]: https://github.com/txemi/darnlink/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/txemi/darnlink/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/txemi/darnlink/compare/v0.28.0...v0.29.0
