@@ -163,11 +163,15 @@ pipeline {
               steps { script { PYTHONS.each { py -> stage("local gates py${py} (windows)") { localGates(py, false) } } } }
             }
             stage('smoke') {
-              options { timeout(time: 10, unit: 'MINUTES') }
+              // One limit per install, not one for the stage: each uvx builds the package from
+              // source, and on a shared Windows agent one alone took 8 min 22 s (PR-37 #2,
+              // 15-nov-2026), so a 10-minute stage limit cut the second, healthy install.
               steps {
-                bat 'uvx --from . darnlink .'
+                timeout(time: 20, unit: 'MINUTES') { bat 'uvx --from . darnlink .' }
                 // Same second step as the workflow, over git from the workspace (see the Linux stage).
-                bat 'for /f %%s in (\'git rev-parse HEAD\') do uvx --from "git+file:///%WORKSPACE:\\=/%@%%s" darnlink .'
+                timeout(time: 20, unit: 'MINUTES') {
+                  bat 'for /f %%s in (\'git rev-parse HEAD\') do uvx --from "git+file:///%WORKSPACE:\\=/%@%%s" darnlink .'
+                }
               }
             }
             stage('ps1-syntax') {
