@@ -24,7 +24,9 @@ def PYTHONS = ['3.10', '3.11', '3.12', '3.13']
 // same script covers the whole Python matrix.
 def localGates(String py, boolean unix) {
   // A step, not an option: it starts once the agent is ours (see the pipeline options below).
-  timeout(time: 25, unit: 'MINUTES') {
+  // 60 minutes, not 25: on the shared Windows agent one Python took 18 and 21 minutes, and the
+  // third was cut at 87 % while still moving (PR-37 #5, 15-nov-2026). The limit is for a hang.
+  timeout(time: 60, unit: 'MINUTES') {
     withEnv(["UV_PYTHON=${py}", "UV_PROJECT_ENVIRONMENT=.venv-${py}"]) {
       // On Windows `bash` is the one Git for Windows ships; it is not on PATH by default.
       if (unix) { sh 'bash tools/check.sh' } else { bat '"%ProgramFiles%\\Git\\bin\\bash.exe" tools/check.sh' }
@@ -163,11 +165,15 @@ pipeline {
               steps { script { PYTHONS.each { py -> stage("local gates py${py} (windows)") { localGates(py, false) } } } }
             }
             stage('smoke') {
-              options { timeout(time: 10, unit: 'MINUTES') }
+              // One limit per install, not one for the stage: each uvx builds the package from
+              // source, and on a shared Windows agent one alone took 8 min 22 s (PR-37 #2,
+              // 15-nov-2026), so a 10-minute stage limit cut the second, healthy install.
               steps {
-                bat 'uvx --from . darnlink .'
+                timeout(time: 20, unit: 'MINUTES') { bat 'uvx --from . darnlink .' }
                 // Same second step as the workflow, over git from the workspace (see the Linux stage).
-                bat 'for /f %%s in (\'git rev-parse HEAD\') do uvx --from "git+file:///%WORKSPACE:\\=/%@%%s" darnlink .'
+                timeout(time: 20, unit: 'MINUTES') {
+                  bat 'for /f %%s in (\'git rev-parse HEAD\') do uvx --from "git+file:///%WORKSPACE:\\=/%@%%s" darnlink .'
+                }
               }
             }
             stage('ps1-syntax') {
