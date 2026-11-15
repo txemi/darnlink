@@ -166,7 +166,7 @@ def _run_robustify(root: Path, write: bool, create_frontmatter: bool, excludes: 
 
 
 def _run_check(root: Path, excludes: set, as_json: bool, block_markers: tuple,
-               only: Optional[set] = None) -> int:
+               only: Optional[set] = None, report: Optional[Path] = None) -> int:
     """Feature 007: report-only gate. Run BOTH checks (integrity + strict) in one invocation and
     return a distinguishable exit code. Never writes. `--robustify` alone does not catch a broken
     robust link, and plain `darnlink .` does not catch an un-anchored plain link — a gate that runs
@@ -218,57 +218,68 @@ def _run_check(root: Path, excludes: set, as_json: bool, block_markers: tuple,
 
     code = 2 if integrity_fail else (3 if strict_fail else 0)
 
+    payload = {
+        "check": True,
+        "exit_code": code,
+        "typed_anchors": index.typed_anchors,
+        "write_scope": sorted(str(p) for p in only) if only is not None else None,
+        "integrity": {
+            "failed": integrity_fail,
+            "repairs": len(repairs), "conflicts": len(conflicts),
+            "unresolved": len(unresolved), "invalid_frontmatter": len(invalid),
+            "invalid_frontmatter_files": [str(p) for p in invalid],
+            "findings": [{"kind": f.kind.value, "file": str(f.file), "detail": f.detail}
+                         for f in (repairs + conflicts + unresolved)]
+            + [{"kind": Kind.INVALID_FRONTMATTER.value, "file": str(p),
+                "detail": "frontmatter present but not valid YAML; not indexed"}
+               for p in invalid],
+        },
+        "strict": {
+            "failed": strict_fail,
+            "robustify": len(upgrades), "invalid_frontmatter": len(rob_invalid),
+            "invalid_frontmatter_files": [str(p) for p in rob_invalid],
+            "findings": [{"kind": f.kind.value, "file": str(f.file), "detail": f.detail}
+                         for f in upgrades]
+            + [{"kind": Kind.INVALID_FRONTMATTER.value, "file": str(p),
+                "detail": "frontmatter present but not valid YAML; left untouched (fix the file)"}
+               for p in rob_invalid],
+        },
+        # Informational, like `dangling`: it does NOT move `exit_code`, and that is deliberate.
+        # The CONSEQUENCE already fails the gate on its own — a robust link to a uuid that
+        # stopped resolving is reported `unresolvable` and exits 2 (measured). What was
+        # missing was the CAUSE: "uuid not found" with no hint that a symlink points out of
+        # the root. A skipped link with no inbound references harms nothing, so failing on it
+        # would break trees that are fine.
+        "out_of_root_links": [str(p) for p in index.out_of_root],
+        # Its own axis, never folded into `exit_code` (FR-049): a consumer opts in from its gate.
+        "dangling": {
+            "count": len(dangling),
+            # `line` is data, not decoration: a gate's added-lines ratchet intersects these with
+            # the lines a commit adds. It is the only axis that carries one today.
+            "findings": [{"kind": f.kind.value, "file": str(f.file), "detail": f.detail,
+                          "line": f.line}
+                         for f in dangling],
+        },
+        # 017: same shape and same non-gating treatment as `dangling`, above.
+        "absolute_local_path": {
+            "count": len(abs_local),
+            "findings": [{"kind": f.kind.value, "file": str(f.file), "detail": f.detail,
+                          "line": f.line}
+                         for f in abs_local],
+        },
+    }
+    # `--report FILE`: the same document `--json` prints, written to a file while the text report
+    # still goes to stdout. A CI job wants both: the log a human reads and a file a fleet report can
+    # collect from the build, without paying for a second walk of the tree. A file that cannot be
+    # written is said on stderr and does NOT move the exit code: the code is the verdict on the
+    # links, and a full disk is not a broken link.
+    if report is not None:
+        try:
+            report.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        except OSError as exc:
+            print(f"darnlink check: could not write --report {report}: {exc}", file=sys.stderr)
     if as_json:
-        print(json.dumps({
-            "check": True,
-            "exit_code": code,
-            "typed_anchors": index.typed_anchors,
-            "write_scope": sorted(str(p) for p in only) if only is not None else None,
-            "integrity": {
-                "failed": integrity_fail,
-                "repairs": len(repairs), "conflicts": len(conflicts),
-                "unresolved": len(unresolved), "invalid_frontmatter": len(invalid),
-                "invalid_frontmatter_files": [str(p) for p in invalid],
-                "findings": [{"kind": f.kind.value, "file": str(f.file), "detail": f.detail}
-                             for f in (repairs + conflicts + unresolved)]
-                + [{"kind": Kind.INVALID_FRONTMATTER.value, "file": str(p),
-                    "detail": "frontmatter present but not valid YAML; not indexed"}
-                   for p in invalid],
-            },
-            "strict": {
-                "failed": strict_fail,
-                "robustify": len(upgrades), "invalid_frontmatter": len(rob_invalid),
-                "invalid_frontmatter_files": [str(p) for p in rob_invalid],
-                "findings": [{"kind": f.kind.value, "file": str(f.file), "detail": f.detail}
-                             for f in upgrades]
-                + [{"kind": Kind.INVALID_FRONTMATTER.value, "file": str(p),
-                    "detail": "frontmatter present but not valid YAML; left untouched (fix the file)"}
-                   for p in rob_invalid],
-            },
-            # Informational, like `dangling`: it does NOT move `exit_code`, and that is deliberate.
-            # The CONSEQUENCE already fails the gate on its own — a robust link to a uuid that
-            # stopped resolving is reported `unresolvable` and exits 2 (measured). What was
-            # missing was the CAUSE: "uuid not found" with no hint that a symlink points out of
-            # the root. A skipped link with no inbound references harms nothing, so failing on it
-            # would break trees that are fine.
-            "out_of_root_links": [str(p) for p in index.out_of_root],
-            # Its own axis, never folded into `exit_code` (FR-049): a consumer opts in from its gate.
-            "dangling": {
-                "count": len(dangling),
-                # `line` is data, not decoration: a gate's added-lines ratchet intersects these with
-                # the lines a commit adds. It is the only axis that carries one today.
-                "findings": [{"kind": f.kind.value, "file": str(f.file), "detail": f.detail,
-                              "line": f.line}
-                             for f in dangling],
-            },
-            # 017: same shape and same non-gating treatment as `dangling`, above.
-            "absolute_local_path": {
-                "count": len(abs_local),
-                "findings": [{"kind": f.kind.value, "file": str(f.file), "detail": f.detail,
-                              "line": f.line}
-                             for f in abs_local],
-            },
-        }, indent=2))
+        print(json.dumps(payload, indent=2))
     else:
         outcome = {0: "clean", 2: "integrity failure", 3: "strict failure"}[code]
         print(f"darnlink check — root: {root}")
@@ -335,6 +346,9 @@ def _run_check_cli(argv: List[str]) -> int:
     parser.add_argument("--only-from", metavar="FILE",
                         help="read --only paths from FILE, one per line ('-' = stdin). Combines with --only.")
     parser.add_argument("--json", action="store_true", help="machine-readable output")
+    parser.add_argument("--report", metavar="FILE", type=Path,
+                        help="also write the --json document to FILE; stdout keeps the text report "
+                        "(or the json, with --json). For CI: a log to read and a file to collect")
     args = parser.parse_args(argv)
     root = Path(args.path).resolve()
     if not root.is_dir():
@@ -353,7 +367,7 @@ def _run_check_cli(argv: List[str]) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     excludes = set(DEFAULT_EXCLUDES) | set(args.exclude)
-    return _run_check(root, excludes, args.json, tuple(args.ignore_block), only=only)
+    return _run_check(root, excludes, args.json, tuple(args.ignore_block), only=only, report=args.report)
 
 
 #: How many `web_unverifiable` findings the text report lists individually. They are informational

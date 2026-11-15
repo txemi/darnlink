@@ -6,6 +6,18 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **`darnlink check --report FILE`, and the Jenkins step keeps it as a build artifact.** `check`
+  can now write its `--json` document to a file while the text report still goes to stdout, so a CI
+  job gets the log a human reads and a file a fleet report can collect, from one walk of the tree.
+  The gate recipes pass it through when `DARNLINK_GATE_REPORT=<file>` is set (scope=repo), and
+  `darnlinkGate()` sets it and archives `darnlink-check.json`, on a red build too. Until now the only
+  per-repo count a fleet report could get from a build was the console text, which is meant for
+  people and has no version. A report that cannot be written is said on stderr and never changes the
+  exit code. A repo pinned to an older darnlink runs an older recipe, which ignores the variable:
+  no artifact, rather than a false red.
+
 ## [0.31.0] — 2026-11-14
 
 ### Added

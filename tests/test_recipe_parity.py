@@ -46,7 +46,7 @@ _GATE_ENV = (
     "DARNLINK_GATE_WEB", "DARNLINK_GATE_CREATE_README", "DARNLINK_GATE_TOKEN_FILE",
     "DARNLINK_GATE_DANGLING", "DARNLINK_GATE_DANGLING_MAX", "DARNLINK_GATE_DEFAULT_BRANCH",
     "DARNLINK_GATE_OWN_WEB_FROM_ORIGIN", "DARNLINK_GATE_OWN_WEB_MAX", "DARNLINK_GATE_INCLUDE_MERMAID",
-    "DARNLINK_GATE_FORGEJO_TOKEN_FILE",
+    "DARNLINK_GATE_FORGEJO_TOKEN_FILE", "DARNLINK_GATE_REPORT",
 )
 
 
@@ -288,6 +288,11 @@ CASES = [
     Case("env-flag-disabled", clean, {"ref": "x"}, 1, [], "environment variable DARNLINK_GATE_FAIL_CLOSED",
          env={"DARNLINK_GATE_FAIL_CLOSED": "disabled"}),
     Case("env-flag-1", clean, {"ref": "x"}, 0, [CHECK], env={"DARNLINK_GATE_FAIL_CLOSED": "1"}),
+    # DARNLINK_GATE_REPORT reaches the scope=repo check (and only it) as `--report <file>`.
+    Case("env-report", clean, {"ref": "x"}, 0, [f"{CHECK} --report r.json"],
+         env={"DARNLINK_GATE_REPORT": "r.json"}),
+    Case("env-report-max", clean, {"ref": "x", "mode": "max"}, 0, [f"{CHECK} --report r.json", MAX],
+         env={"DARNLINK_GATE_REPORT": "r.json"}),
 
     # Row 46: mode and scope are case-SENSITIVE (bash compares with `=`), keys too.
     Case("mode=max", clean, {"ref": "x", "mode": "max"}, 0, [CHECK, MAX]),

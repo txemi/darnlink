@@ -45,7 +45,7 @@ _LEAKY_ENV = (
     "DARNLINK_GATE_WEB", "DARNLINK_GATE_CREATE_README", "DARNLINK_GATE_TOKEN_FILE",
     "DARNLINK_GATE_DANGLING", "DARNLINK_GATE_DANGLING_MAX",
     "DARNLINK_GATE_OWN_WEB_FROM_ORIGIN", "DARNLINK_GATE_OWN_WEB_MAX",
-    "DARNLINK_GATE_INCLUDE_MERMAID",
+    "DARNLINK_GATE_INCLUDE_MERMAID", "DARNLINK_GATE_REPORT",
     # ⚠️ And git's own. `git` exports these to every hook it runs, so when this suite is executed
     # FROM the repo's pre-commit hook (`tools/check.sh`), an un-scrubbed `git` in a test inherits
     # GIT_DIR from the outer repo while using the sandbox as its work tree. That combination is not
@@ -1162,3 +1162,25 @@ def test_every_boolean_key_is_normalised_next_to_its_own_assignment():
         "was not theirs: "
         + "; ".join(f"{v} assigned at line {a}, normalised at line {g}, with {b} assigned in between"
                     for v, (a, g, b) in intruders.items()))
+
+
+def test_report_env_writes_the_check_json_and_keeps_the_verdict(sandbox, tmp_path):
+    """DARNLINK_GATE_REPORT: the scope=repo check writes its --json document to that file (what a CI
+    job archives for a fleet report) and the gate's exit code and text log do not change."""
+    repo, run = sandbox
+    (repo / "A.md").write_text("See [B](gone/B.md) <!-- uuid: 11111111-2222-3333-4444-555555555555 -->\n")
+    out = tmp_path / "darnlink-check.json"
+    r = run({"ref": "x", "mode": "check"}, extra_env={"DARNLINK_GATE_REPORT": str(out)})
+    assert r.returncode == 2, r.stderr
+    assert "-> exit 2" in r.stdout
+    doc = json.loads(out.read_text(encoding="utf-8"))
+    assert doc["exit_code"] == 2 and doc["integrity"]["unresolved"] == 1
+
+
+def test_no_report_env_writes_no_file(sandbox, tmp_path):
+    repo, run = sandbox
+    (repo / "A.md").write_text("# A\n")
+    before = sorted(p.name for p in repo.iterdir()) + ["darnlink-gate.json"]   # run() writes the config
+    r = run({"ref": "x", "mode": "check"})
+    assert r.returncode == 0, r.stderr
+    assert sorted(p.name for p in repo.iterdir()) == sorted(before)

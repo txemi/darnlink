@@ -412,3 +412,45 @@ def test_87_bom_frontmatter_survives_the_shared_reader(tmp_path):
 
     index = build_index(tmp_path)
     assert index.by_uuid.get(U) == p
+
+
+# --- `--report FILE`: the --json document in a file, the text report still on stdout ---------------
+
+def test_report_writes_the_json_document_and_keeps_the_text_on_stdout(tmp_path, capsys):
+    # A broken robust link: the report must carry the same verdict and counts the exit code says.
+    tree = tmp_path / "tree"
+    _w(tree / "A.md", f"See [B](gone/B.md) <!-- uuid: {V} -->\n")
+    out = tmp_path / "report.json"
+    rc = main(["check", str(tree), "--report", str(out)])
+    text = capsys.readouterr().out
+    assert rc == 2
+    assert "darnlink check — root:" in text and "-> exit 2" in text
+    doc = json.loads(out.read_text(encoding="utf-8"))
+    assert doc["check"] is True and doc["exit_code"] == 2
+    assert doc["integrity"]["failed"] is True and doc["integrity"]["unresolved"] == 1
+
+
+def test_report_with_json_writes_the_same_document_it_prints(tmp_path, capsys):
+    tree = tmp_path / "tree"
+    _clean_tree(tree)
+    out = tmp_path / "report.json"
+    assert main(["check", str(tree), "--json", "--report", str(out)]) == 0
+    assert json.loads(capsys.readouterr().out) == json.loads(out.read_text(encoding="utf-8"))
+
+
+def test_report_that_cannot_be_written_warns_and_keeps_the_exit_code(tmp_path, capsys):
+    # The exit code is the verdict on the links; an unwritable report file is not a broken link.
+    tree = tmp_path / "tree"
+    _clean_tree(tree)
+    out = tmp_path / "no-such-dir" / "report.json"
+    assert main(["check", str(tree), "--report", str(out)]) == 0
+    assert "could not write --report" in capsys.readouterr().err
+    assert not out.exists()
+
+
+def test_report_is_not_written_inside_the_scanned_tree_by_default(tmp_path):
+    # check never writes into the tree: without --report there is no file at all.
+    _clean_tree(tmp_path)
+    before = sorted(p.name for p in tmp_path.iterdir())
+    assert main(["check", str(tmp_path)]) == 0
+    assert sorted(p.name for p in tmp_path.iterdir()) == before

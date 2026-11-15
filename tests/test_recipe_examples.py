@@ -484,3 +484,15 @@ def test_the_jenkins_example_stage_calls_the_library_and_carries_no_shell():
     # It is Groovy too: a backslash that is not a line continuation is a compile error in the
     # adopter's whole Jenkinsfile (see the scan of the step above).
     assert not [l for l in text.splitlines() if "\\" in (l[:-1] if l.endswith("\\") else l)]
+
+
+def test_the_jenkins_step_archives_the_check_report_even_on_a_red_build():
+    """darnlinkGate() hands the recipe a report path and archives it in a `finally`, so the build a
+    fleet report most needs (a red one) still leaves its counts; an older pin leaves no file, and
+    allowEmptyArchive keeps that from failing the build."""
+    text = JENKINS.read_text(encoding="utf-8")
+    assert '"DARNLINK_GATE_REPORT=${env.WORKSPACE}/darnlink-check.json"' in text
+    assert "} finally {" in text
+    assert "archiveArtifacts artifacts: 'darnlink-check.json', allowEmptyArchive: true" in text
+    # a reused workspace must not hand the previous build's counts to this one
+    assert 'rm -f "$DARNLINK_GATE_REPORT"' in text
