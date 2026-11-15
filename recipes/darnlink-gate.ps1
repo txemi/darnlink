@@ -289,6 +289,10 @@ if (-not (Get-Command uvx -ErrorAction SilentlyContinue)) {
 $dlArgs = @()
 foreach ($e in $excludes)     { if ($e) { $dlArgs += @('--exclude', $e) } }
 foreach ($b in $ignoreBlocks) { if ($b) { $dlArgs += @('--ignore-block', $b) } }
+# DARNLINK_GATE_REPORT=<file>: the scope=repo `check` also writes its --json document there (same as
+# the bash recipe); needs darnlink 0.32.0 or later at the pinned ref.
+$reportArgs = @()
+if ($env:DARNLINK_GATE_REPORT) { $reportArgs = @('--report', $env:DARNLINK_GATE_REPORT) }
 
 # Pre-flight: can uvx BUILD+RUN darnlink at this ref? darnlink's exit codes (0/1/2/3) overlap a uvx
 # fetch failure, so confirm reachability first; if not -> fail OPEN (don't brick a commit; CI covers it).
@@ -359,7 +363,7 @@ if ($scope -cne 'staged') {
     # create_readme FOLDS into this pass only with no create_readme_excludes (the legacy shape); with
     # them it moves to its own pass below, so those excludes never leak into robustify.
     if ($createReadme -and $crExcludes.Count -eq 0) { $maxArgs += '--create-readme'; $foldedCR = $true }
-    & uvx --from $ref darnlink check . @dlArgs
+    & uvx --from $ref darnlink check . @dlArgs @reportArgs
     $rc = $LASTEXITCODE
     if ($rc -eq 0) {
       & uvx --from $ref darnlink . @maxArgs @dlArgs
@@ -456,7 +460,7 @@ if ($scope -cne 'staged') {
       $rcIsFinal = $true
     }
   } else {
-    & uvx --from $ref darnlink check . @dlArgs   # `darnlink check` → 0/2/3 (mode=check|repair)
+    & uvx --from $ref darnlink check . @dlArgs @reportArgs   # `darnlink check` → 0/2/3 (mode=check|repair)
     $rc = $LASTEXITCODE
   }
   # rc>3 (e.g. network) -> fail open. A final verdict (the web pass) is immune up to 4, its contract;

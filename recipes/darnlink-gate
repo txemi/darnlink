@@ -126,7 +126,8 @@
 #    missing the key is silently lost — and "python3 missing" is one of the very cases fail-closed
 #    exists to catch. `DARNLINK_GATE_FAIL_CLOSED=1` is read by the shell and always applies.
 # Env overrides (so one config serves both surfaces): DARNLINK_REF, DARNLINK_GATE_MODE,
-# DARNLINK_GATE_SCOPE, DARNLINK_GATE_FAIL_CLOSED. Typical wiring: config says scope=repo; the
+# DARNLINK_GATE_SCOPE, DARNLINK_GATE_FAIL_CLOSED, DARNLINK_GATE_REPORT (a file for the check --json
+# document). Typical wiring: config says scope=repo; the
 # pre-commit hook exports DARNLINK_GATE_SCOPE=staged; CI leaves it repo and sets FAIL_CLOSED=1.
 #
 # EXIT: 0 clean · 2 integrity failure · 3 strict-only failure · 1 usage / max-mode or create-readme
@@ -422,6 +423,11 @@ fi
 DL_ARGS=()
 for e in "${EXCLUDES[@]}";      do [ -n "$e" ] && DL_ARGS+=(--exclude "$e"); done
 for b in "${IGNORE_BLOCKS[@]}"; do [ -n "$b" ] && DL_ARGS+=(--ignore-block "$b"); done
+# DARNLINK_GATE_REPORT=<file>: the scope=repo `check` also writes its --json document to <file> (the
+# text report still goes to stdout), for a CI job to archive; `darnlinkGate()` does. It needs a
+# darnlink with `check --report`, 0.32.0 or later, at the pinned ref.
+REPORT_ARGS=()
+if [ -n "${DARNLINK_GATE_REPORT:-}" ]; then REPORT_ARGS=(--report "$DARNLINK_GATE_REPORT"); fi
 
 # --- fail OPEN if uv/uvx unreachable (don't brick offline commits; CI covers it) ---
 if ! command -v uvx >/dev/null 2>&1; then bail "uvx not found"; fi
@@ -567,7 +573,7 @@ if [ "$SCOPE" != "staged" ]; then
     if [ -n "$CREATE_README" ] && [ -z "${CREATE_README_EXCLUDES[*]}" ]; then
       MAX_ROBUSTIFY+=(--create-readme); FOLDED_CR=1
     fi
-    run check . "${DL_ARGS[@]}"; rc=$?
+    run check . "${DL_ARGS[@]}" "${REPORT_ARGS[@]}"; rc=$?
     if [ "$rc" -eq 0 ]; then run . "${MAX_ROBUSTIFY[@]}" "${DL_ARGS[@]}"; rc=$?; fi
     # WEB pass (opt-in, mode=max only): cross-repo web-link robustness, only if the core passed (so a
     # core failure surfaces first). web-check takes the SAME `--exclude` and `--ignore-block` as the core
@@ -688,7 +694,7 @@ if [ "$SCOPE" != "staged" ]; then
       RC_IS_FINAL=1   # `rc` already carries the web verdict; this only suppresses the heuristic below
     fi
   else
-    run check . "${DL_ARGS[@]}"; rc=$?   # `darnlink check` → stable 0/2/3 contract (mode=check|repair)
+    run check . "${DL_ARGS[@]}" "${REPORT_ARGS[@]}"; rc=$?   # `darnlink check` → stable 0/2/3 contract (mode=check|repair)
   fi
   set -e
   # rc>3 (e.g. 127 network) → fail open + warn; darnlink's own low exit codes pass through.

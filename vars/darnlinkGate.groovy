@@ -25,10 +25,20 @@
 // one copy too many: the example this came from carried its own tag and it went stale, because
 // nothing fails when two copies drift. Bump `darnlink-gate.json` and both CI surfaces move with it.
 
+// REPORT: the step also keeps the gate's `darnlink check --json` document as the build artifact
+// `darnlink-check.json`, so a fleet report can read each repo's counts (broken links, un-anchored,
+// dangling) from its last build instead of parsing the console. Kept on a red build too: that is the
+// build whose counts matter. Only a recipe from darnlink 0.32.0 on writes it; an older pin leaves no
+// artifact, and the reader says "not measured" rather than zero.
 def call() {
-  withEnv(['DARNLINK_GATE_FAIL_CLOSED=1']) {   // the wall must fail closed
+  withEnv(['DARNLINK_GATE_FAIL_CLOSED=1',   // the wall must fail closed
+           "DARNLINK_GATE_REPORT=${env.WORKSPACE}/darnlink-check.json"]) {
+    try {
     sh '''
       set -eu
+      # A reused workspace keeps the last build's file: without this, a build that fails before the
+      # check would archive the PREVIOUS build's counts as its own.
+      if [ -n "${DARNLINK_GATE_REPORT:-}" ]; then rm -f "$DARNLINK_GATE_REPORT"; fi
       # Read the `ref` KEY, not the file — byte-identical to the GitHub Actions example on purpose.
       # A grep for a version-shaped string takes the first match anywhere in the json, so an excluded
       # path containing one would win silently: the same "silently picks a version" failure this step
@@ -97,5 +107,8 @@ def call() {
       "$WORKSPACE/.darnlink-gate"          # scope=repo from darnlink-gate.json
       rm -f "$WORKSPACE/.darnlink-gate"
     '''
+    } finally {
+      archiveArtifacts artifacts: 'darnlink-check.json', allowEmptyArchive: true, fingerprint: false
+    }
   }
 }
