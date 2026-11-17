@@ -3,7 +3,12 @@
 # See the bash version for the full rationale. THE BASH RECIPE IS THE REFERENCE: same keys, same
 # closed lists, same case-sensitive comparisons, same axes, same exit codes. Same contract:
 # read-only; config in darnlink-gate.json (every key of src/darnlink/gate_config.py KEYS but
-# recipe_sha256) with env overrides (DARNLINK_REF, DARNLINK_GATE_MODE, DARNLINK_GATE_SCOPE, ...).
+# recipe_sha256, which is the BASH file's digest; this file's is recipe_ps1_sha256) with env overrides
+# (DARNLINK_REF, DARNLINK_GATE_MODE, DARNLINK_GATE_SCOPE, ...). When recipe_ps1_sha256 (or
+# $env:DARNLINK_GATE_PS1_SHA256) is set and this copy's digest differs, it hands off to the pinned .ps1:
+# fetched from DARNLINK_GATE_RECIPE_BASE (10 s connect / 60 s total, no retry), verified here, cached
+# by digest in DARNLINK_GATE_CACHE, else a writable /var/cache/darnlink-gate, else ~/.cache, never a
+# temp directory. Same order and same exit codes as the bash hand-off; see its header.
 # MODE picks which axes gate — a one-way ratchet (repair ⊂ check ⊂ max):
 #   mode=repair → integrity only (a strict-only failure, 3, is treated as clean);
 #   mode=check  → integrity + strict, via `darnlink check` (stable 0/2/3 contract);
@@ -276,6 +281,139 @@ if ($args -contains '--write') {
 # adds a prefix) and not Write-Error (which is terminating under $ErrorActionPreference = "Stop").
 if ($args.Count -gt 0) {
   [Console]::Error.WriteLine("darnlink-gate: ignoring $($args.Count) command-line argument(s) (first: $($args[0])); the gate is configured by darnlink-gate.json and the environment only.")
+}
+
+# --- hand off to the recipe this repo PINS (`recipe_ps1_sha256`) -----------------------------------
+# The bash recipe's hand-off (read its comment for the WHY), with ONE difference that is a contract,
+# not an omission: the digest compared here is `recipe_ps1_sha256` (or $env:DARNLINK_GATE_PS1_SHA256),
+# never `recipe_sha256`. That key is the digest of recipes/darnlink-gate, a different file; this copy
+# can never hash to it, so honouring it would make every Windows run fetch, fail the comparison and
+# stop with "checksum mismatch" -- a false alarm about tampering, on every repo that sealed the bash
+# recipe. So the .ps1 hands off only when ITS digest is declared, and says so in one line when only
+# the bash one is: silence there would read as "this is the pinned recipe".
+# Everything else is the bash behaviour: equal digest -> run; different -> fetch
+# recipes/darnlink-gate.ps1 at the `ref` version into the cache (named <digest>.ps1: -File insists
+# on the extension), verify it HERE, then run it with the same arguments and exit with its code.
+# DARNLINK_GATE_HANDOFF_DONE stops the loop. A fetch that fails is Invoke-Bail (skip / 4); a digest
+# that does not match is exit 1, on every surface.
+$ps1Sha = if ($env:DARNLINK_GATE_PS1_SHA256) { $env:DARNLINK_GATE_PS1_SHA256 } else { CfgStr 'recipe_ps1_sha256' '' }
+if (-not $ps1Sha -and -not $env:DARNLINK_GATE_HANDOFF_DONE -and (CfgStr 'recipe_sha256' '')) {
+  [Console]::Error.WriteLine("darnlink-gate: recipe_sha256 pins the BASH recipe; this .ps1 has its own key, recipe_ps1_sha256, and none is set -- running it as installed.")
+}
+if ($ps1Sha -and -not $env:DARNLINK_GATE_HANDOFF_DONE) {
+  # Fold A-F only, as bash's `tr 'A-F' 'a-f'`: Get-FileHash prints uppercase, and that is a real digest.
+  $want = [regex]::Replace($ps1Sha, '[A-F]', { param($m) $m.Value.ToLowerInvariant() })
+  if ($want -cnotmatch '^[0-9a-f]{64}\z') {
+    $src = if ($env:DARNLINK_GATE_PS1_SHA256) { 'environment variable DARNLINK_GATE_PS1_SHA256' } else { $cfgPath }
+    [Console]::Error.WriteLine("darnlink-gate: recipe_ps1_sha256='$want' (from $src) is not a sha256 digest -> FAILING.")
+    [Console]::Error.WriteLine("  Write the 64 hex characters of recipes/darnlink-gate.ps1 at the ref you pin (recipes/README.md,")
+    [Console]::Error.WriteLine("  `"Verify what you download`"); if it is the README's placeholder, that is what it is.")
+    [Console]::Error.WriteLine("  Nothing was validated: a value that can match no recipe is not read as absent either.")
+    exit 1
+  }
+  $have = $null
+  try {
+    if ($PSCommandPath) { $have = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant() }
+  } catch { $have = $null }
+  if (-not $have) {
+    [Console]::Error.WriteLine("darnlink-gate: cannot hash this recipe, so it cannot tell whether it is the one $cfgPath pins -- running it as installed.")
+  } elseif ($have -cne $want) {
+    # `ref` is `git+<url>@<tag or sha>`; no `@`, or a last `@` that is the host's user, pins no version.
+    $at = $ref.LastIndexOf('@')
+    $ver = if ($at -ge 0) { $ref.Substring($at + 1) } else { '' }
+    if (-not $ver -or $ver.Contains('/')) {
+      Invoke-Bail "ref '$ref' names no version after an '@', so the recipe it pins (recipe_ps1_sha256) cannot be fetched"
+    }
+    $base = if ($env:DARNLINK_GATE_RECIPE_BASE) { $env:DARNLINK_GATE_RECIPE_BASE } else { 'https://raw.githubusercontent.com/txemi/darnlink' }
+    $url = "$base/$ver/recipes/darnlink-gate.ps1"
+    # WHERE: the bash order, and NEVER a temp directory by default (on an agent /tmp is often RAM, and
+    # a full one has killed an agent): $env:DARNLINK_GATE_CACHE as given; else the agent-wide
+    # directory (/var/cache/darnlink-gate, or DARNLINK_GATE_SYSTEM_CACHE) if it exists and is
+    # writable; else XDG_CACHE_HOME or ~/.cache, refused under /tmp or the system temp path; else bail.
+    $cacheDir = $null
+    if ($env:DARNLINK_GATE_CACHE) {
+      $cacheDir = $env:DARNLINK_GATE_CACHE
+    } else {
+      $sysCache = if ($env:DARNLINK_GATE_SYSTEM_CACHE) { $env:DARNLINK_GATE_SYSTEM_CACHE } else { '/var/cache/darnlink-gate' }
+      $sysOk = $false
+      if (Test-Path -LiteralPath $sysCache -PathType Container) {
+        # Writable is measured by writing: .NET has no portable "may I write here" short of trying.
+        $probe = Join-Path $sysCache ('.probe.' + [IO.Path]::GetRandomFileName())
+        try { [IO.File]::WriteAllText($probe, ''); [IO.File]::Delete($probe); $sysOk = $true } catch { $sysOk = $false }
+      }
+      if ($sysOk) {
+        $cacheDir = $sysCache
+      } elseif ($env:XDG_CACHE_HOME -or $HOME) {
+        $cacheDir = if ($env:XDG_CACHE_HOME) { Join-Path $env:XDG_CACHE_HOME 'darnlink-gate' } else { Join-Path (Join-Path $HOME '.cache') 'darnlink-gate' }
+        $full = [IO.Path]::GetFullPath($cacheDir)
+        $sep = [IO.Path]::DirectorySeparatorChar
+        $sysTmp = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd($sep, '/')
+        $underTmp = $false
+        foreach ($t in @('/tmp', $sysTmp)) {
+          if ($t -and ($full -eq $t -or $full.StartsWith($t + $sep) -or $full.StartsWith($t + '/'))) { $underTmp = $true }
+        }
+        if ($underTmp) {
+          Invoke-Bail "cannot fetch the recipe this repo pins ($ver): its cache would be $cacheDir, under a temp directory, and this gate never caches there (set DARNLINK_GATE_CACHE, or create $sysCache)"
+        }
+      } else {
+        Invoke-Bail "cannot fetch the recipe this repo pins ($ver): no cache directory (DARNLINK_GATE_CACHE unset, no writable $sysCache, no HOME or XDG_CACHE_HOME)"
+      }
+    }
+    $pinned = Join-Path $cacheDir "$want.ps1"
+    $hit = $false
+    if (Test-Path -LiteralPath $pinned -PathType Leaf) {
+      try { $hit = ((Get-FileHash -LiteralPath $pinned -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $want) } catch { $hit = $false }
+    }
+    if (-not $hit) {
+      try { New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null }
+      catch { Invoke-Bail "cannot fetch the recipe this repo pins ($ver): cannot create $cacheDir" }
+      # A temp file in the SAME directory, then a rename: a torn download never sits under the digest.
+      $tmp = Join-Path $cacheDir (".$want." + [IO.Path]::GetRandomFileName())
+      # The curl APPLICATION, never the name `curl`: in Windows PowerShell 5.1 that is an alias of
+      # Invoke-WebRequest, whose arguments differ. Invoke-WebRequest is the fallback for a host without
+      # curl.exe (Windows 10 1803+ ships it); it does not read file:// under PowerShell 7.
+      $curlExe = Get-Command -CommandType Application -Name 'curl.exe', 'curl' -ErrorAction SilentlyContinue | Select-Object -First 1
+      $fetched = & {
+        $ErrorActionPreference = 'Continue'
+        if ($curlExe) {
+          # FAIL FAST, as in bash: bounded connect and transfer, no --retry.
+          & $curlExe.Source -fsSL --connect-timeout 10 --max-time 60 $url -o $tmp
+          return ($LASTEXITCODE -eq 0)
+        }
+        try { Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing -TimeoutSec 60 -ErrorAction Stop; return $true }
+        catch { [Console]::Error.WriteLine("  $($_.Exception.Message)"); return $false }
+      }
+      if (-not $fetched) {
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+        Invoke-Bail "cannot fetch the recipe this repo pins ($ver) from $url"
+      }
+      $got = $null
+      try { $got = (Get-FileHash -LiteralPath $tmp -Algorithm SHA256).Hash.ToLowerInvariant() } catch { $got = $null }
+      if ($got -cne $want) {
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue   # never leave an unverified script on disk
+        $gotShown = if ($got) { $got } else { '<could not hash the download>' }
+        [Console]::Error.WriteLine("darnlink-gate: recipe checksum mismatch for $ver -- most likely someone bumped 'ref' without re-sealing 'recipe_ps1_sha256' next to it; otherwise the tag moved, or the download was tampered with -> FAILING.")
+        [Console]::Error.WriteLine("  expected $want")
+        [Console]::Error.WriteLine("  got      $gotShown")
+        [Console]::Error.WriteLine("  re-seal: (Get-FileHash -Algorithm SHA256 <the .ps1 downloaded from $url>).Hash.ToLower()")
+        exit 1
+      }
+      try { Move-Item -LiteralPath $tmp -Destination $pinned -Force }
+      catch {
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+        Invoke-Bail "cannot fetch the recipe this repo pins ($ver): cannot write $pinned"
+      }
+    }
+    [Console]::Error.WriteLine("darnlink-gate: handing off: installed recipe $have -> the one $cfgPath pins ($ver, $want).")
+    $env:DARNLINK_GATE_HANDOFF_DONE = '1'
+    # The same host that runs this copy (powershell.exe or pwsh), so the pinned one runs under the same
+    # PowerShell. -ExecutionPolicy only on Windows, as the parity test invokes it: elsewhere it is moot.
+    $hostExe = (Get-Process -Id $PID).Path
+    $hostArgs = @('-NoProfile', '-NonInteractive')
+    if ($env:OS -eq 'Windows_NT') { $hostArgs += @('-ExecutionPolicy', 'Bypass') }
+    & $hostExe @hostArgs -File $pinned @args
+    exit $LASTEXITCODE
+  }
 }
 
 # --- ensure uvx (installer leaves it in ~\.local\bin); fail OPEN if absent ---

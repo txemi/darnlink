@@ -42,15 +42,18 @@
 #
 #   ^ That is the TARGET, not a starting point: every axis at its strictest.
 #
-#   ⚠️ `recipe_sha256` IS THE ONE KEY THIS SCRIPT NEVER READS, and that is not an oversight. Every
-#   other key is consumed here, at runtime, by a script that is already executing. That one is
-#   consumed by whoever FETCHES this file, before it runs -- because a downloaded script cannot
-#   vouch for its own download. It is listed here anyway: this header is where adopters look for
-#   the contract, and a key that exists only in the examples is a key nobody knows to set. The
-#   shipped CI examples compare it before `chmod +x`, and warn loudly when it is absent rather than
-#   passing silently. Compute and re-seal it as described in recipes/README.md
-#   ("Verify what you download") -- and re-seal it IN THE SAME COMMIT that bumps `ref`: the two are
-#   halves of one statement, and separating them produces a mismatch that reads like tampering.
+#   ⚠️ `recipe_sha256` IS READ BY THE INSTALLED COPY, TO CHOOSE THE RECIPE, NOT TO VOUCH FOR ITSELF.
+#   This file is installed once per machine and every repo there calls it, but each repo pins its own
+#   recipe. So the copy that is running hashes ITSELF and compares: equal, it runs; different, it
+#   fetches recipes/darnlink-gate at the `ref` version, verifies the download against this key, and
+#   execs it (see "hand off to the recipe this repo PINS" below; exit 1 on a mismatch, a can't-gate
+#   when the fetch fails). What still holds is the reason the key was once "never read": a downloaded
+#   script cannot vouch for its own download. That is why the check runs in the trusted, installed
+#   copy BEFORE the exec, and why the shipped CI examples, which download the recipe themselves,
+#   still compare it before `chmod +x` and warn loudly when it is absent. Compute and re-seal it as
+#   described in recipes/README.md ("Verify what you download") -- and re-seal it IN THE SAME COMMIT
+#   that bumps `ref`: the two are halves of one statement, and separating them produces a mismatch
+#   that reads like tampering. It describes THIS file only; the .ps1 twin has `recipe_ps1_sha256`.
 #
 #   `vX.Y.Z` is a PLACEHOLDER ON PURPOSE, and it is the one thing here you must not copy verbatim.
 #   Resolve it when you paste:
@@ -129,6 +132,19 @@
 # DARNLINK_GATE_SCOPE, DARNLINK_GATE_FAIL_CLOSED, DARNLINK_GATE_REPORT (a file for the check --json
 # document). Typical wiring: config says scope=repo; the
 # pre-commit hook exports DARNLINK_GATE_SCOPE=staged; CI leaves it repo and sets FAIL_CLOSED=1.
+# The hand-off to the pinned recipe reads four more:
+#   DARNLINK_GATE_RECIPE_BASE  where to fetch it from, default https://raw.githubusercontent.com/txemi/darnlink;
+#                              `<ver>/recipes/darnlink-gate` is appended. Fetched with a 10 s connect and
+#                              60 s total timeout and NO retry: an agent without network fails fast.
+#   DARNLINK_GATE_CACHE        where verified copies are kept, named by digest. NEVER /tmp by default
+#                              (on an agent it is RAM, and a full one has killed an agent). Order: this
+#                              variable, taken as given; else /var/cache/darnlink-gate if it exists and
+#                              is writable (the agent's IaC creates it; DARNLINK_GATE_SYSTEM_CACHE moves
+#                              it); else ${XDG_CACHE_HOME:-~/.cache}/darnlink-gate unless that lands under
+#                              /tmp or $TMPDIR; else a can't-gate (bail) that says why. The temp file of
+#                              a download lives in that same directory, renamed into place when verified.
+#   DARNLINK_GATE_HANDOFF_DONE set by the hand-off itself, so the copy it execs does not hand off again;
+#                              set it by hand to run THIS copy regardless of the pin.
 #
 # EXIT: 0 clean · 2 integrity failure · 3 strict-only failure · 1 usage / max-mode or create-readme
 #       findings · 4 could-not-gate (fail-closed only) · 0 + a stderr warning if it skips (fail-open,
@@ -417,6 +433,122 @@ bail() {  # $1 = reason
 # version is unknowable here, so this is a can't-gate, not a quiet run of the wrong version.
 if [ -f "$cfg" ] && [ -z "$PY" ] && [ -z "${DARNLINK_REF:-}" ]; then
   bail "no python3 or python (3.x) to read $cfg, so its pinned ref, mode and excludes are unknown (the default ref would be $REF)"
+fi
+
+# --- hand off to the recipe this repo PINS (`recipe_sha256`) ---------------------------------------
+# WHY. This file is installed ONCE per machine -- by a workstation's deploy, by IaC on a CI agent -- and
+# every repo on that machine calls it. But each repo pins its OWN recipe: `ref` names the darnlink
+# version and `recipe_sha256` the bytes of this file at that version. Without this block the installed
+# copy ran whatever version it happened to be, so a repo was gated by a recipe it never chose, and the
+# only surface that ran the pinned one was a Jenkinsfile that downloaded and verified it by itself --
+# one copied block per repo, seventeen of them in one fleet. With it, `darnlink-gate` is the same call
+# in a hook and in CI: the installed copy compares its own digest with the pinned one and, when they
+# differ, fetches the pinned recipe, verifies it HERE, and execs it with the same arguments, env and cwd.
+# The verification runs in THIS copy, before the exec, and not in the one it fetches, because a
+# downloaded script cannot vouch for its own download (see the header).
+# `DARNLINK_GATE_HANDOFF_DONE` is the loop guard: the exec'd copy sees it and runs as itself. So is a
+# Jenkins step that already fetched and verified the pinned recipe: its digest matches and nothing
+# is fetched twice.
+# It sits AFTER `bail`, so a pinned recipe that cannot be fetched skips when fail-open and fails with 4
+# when fail-closed, like every other can't-gate in this file. A digest that does not match is NOT a
+# can't-gate: it is a statement about bytes that turned out false, and it fails with 1 on every surface.
+# With no python and DARNLINK_REF in the environment (the one way past the bail above) the key cannot
+# be read, and this copy runs as installed: the environment chose the version, not the file.
+RECIPE_SHA256="$(read_cfg recipe_sha256 "")"
+if [ -n "$RECIPE_SHA256" ] && [ -z "${DARNLINK_GATE_HANDOFF_DONE:-}" ]; then
+  # Uppercase is a REAL digest, not a typo: PowerShell's Get-FileHash prints A-F. Folded, not refused.
+  RECIPE_SHA256="$(printf '%s' "$RECIPE_SHA256" | tr 'A-F' 'a-f')"
+  if ! [[ "$RECIPE_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "darnlink-gate: recipe_sha256='$RECIPE_SHA256' (from $cfg) is not a sha256 digest -> FAILING." >&2
+    echo "  Write the 64 hex characters of recipes/darnlink-gate at the ref you pin (recipes/README.md," >&2
+    echo "  \"Verify what you download\"); if it is the README's placeholder, that is what it is." >&2
+    echo "  Nothing was validated: a value that can match no recipe is not read as absent either." >&2
+    exit 1
+  fi
+  # stdin, not a path argument: `sha256sum <name>` escapes a name with a backslash or a newline and
+  # prefixes the digest with `\`, which would then never compare equal. macOS has only `shasum`.
+  sha256_of() {  # $1 = file -> its digest on stdout, or a non-zero exit
+    if command -v sha256sum >/dev/null 2>&1; then sha256sum < "$1" | cut -d' ' -f1
+    elif command -v shasum >/dev/null 2>&1; then shasum -a 256 < "$1" | cut -d' ' -f1
+    else return 1; fi
+  }
+  self="${BASH_SOURCE[0]:-}"
+  HAVE=""
+  if [ -n "$self" ] && [ -f "$self" ]; then HAVE="$(sha256_of "$self" 2>/dev/null || true)"; fi
+  if ! [[ "$HAVE" =~ ^[0-9a-f]{64}$ ]]; then
+    # Read from a pipe (`curl … | bash`), or no hashing tool: there is no file to compare, so there is
+    # nothing to decide. Said, because silence here reads as "this is the pinned recipe".
+    echo "darnlink-gate: cannot hash this recipe (${self:-read from a pipe}), so it cannot tell whether it is the one $cfg pins -- running it as installed." >&2
+  elif [ "$HAVE" != "$RECIPE_SHA256" ]; then
+    # `ref` is `git+<url>@<tag or sha>`. A ref with no `@`, or whose last `@` is the user of the host
+    # (`git+ssh://git@host/x`), pins no version, and then there is no pinned recipe to fetch.
+    VER="${REF##*@}"
+    if [ "$VER" = "$REF" ] || [ -z "$VER" ] || [[ "$VER" == */* ]]; then
+      bail "ref '$REF' names no version after an '@', so the recipe it pins (recipe_sha256) cannot be fetched"
+    fi
+    url="${DARNLINK_GATE_RECIPE_BASE:-https://raw.githubusercontent.com/txemi/darnlink}/$VER/recipes/darnlink-gate"
+    # WHERE the verified copies live: a fixed, bounded path, NEVER /tmp. On a CI agent /tmp is often
+    # RAM, and one agent has already died of a full /tmp; a cache nobody chose to put there must not
+    # be the next thing to fill it. In order:
+    #   1. $DARNLINK_GATE_CACHE, taken as given -- whoever sets it chose it;
+    #   2. the agent-wide directory, /var/cache/darnlink-gate (DARNLINK_GATE_SYSTEM_CACHE moves it),
+    #      but only if it already EXISTS and is writable: the agent's IaC creates it; this never does;
+    #   3. ${XDG_CACHE_HOME:-$HOME/.cache}/darnlink-gate -- refused if that lands under /tmp or $TMPDIR
+    #      (a CI user whose HOME is /tmp is the exact case this rule exists for).
+    # None usable is a can't-gate (bail), with the reason, never a silent fall back to /tmp.
+    cache=""
+    if [ -n "${DARNLINK_GATE_CACHE:-}" ]; then
+      cache="$DARNLINK_GATE_CACHE"
+    else
+      sys_cache="${DARNLINK_GATE_SYSTEM_CACHE:-/var/cache/darnlink-gate}"
+      if [ -d "$sys_cache" ] && [ -w "$sys_cache" ]; then
+        cache="$sys_cache"
+      elif [ -n "${XDG_CACHE_HOME:-}" ] || [ -n "${HOME:-}" ]; then
+        cache="${XDG_CACHE_HOME:-${HOME:-}/.cache}/darnlink-gate"
+        tmpdir="${TMPDIR:-/tmp}"; tmpdir="${tmpdir%/}"
+        case "$cache" in
+          /tmp|/tmp/*|"$tmpdir"|"$tmpdir"/*)
+            bail "cannot fetch the recipe this repo pins ($VER): its cache would be $cache, under a temp directory, and this gate never caches there (set DARNLINK_GATE_CACHE, or create $sys_cache)" ;;
+        esac
+      else
+        bail "cannot fetch the recipe this repo pins ($VER): no cache directory (DARNLINK_GATE_CACHE unset, no writable $sys_cache, no HOME or XDG_CACHE_HOME)"
+      fi
+    fi
+    pinned="$cache/$RECIPE_SHA256"
+    # The cache is named by the digest, so a hit is re-hashed rather than trusted: a file that changed
+    # on disk is fetched again, and a hit is exactly as verified as a fresh download.
+    if ! { [ -f "$pinned" ] && [ "$(sha256_of "$pinned" 2>/dev/null || true)" = "$RECIPE_SHA256" ]; }; then
+      command -v curl >/dev/null 2>&1 || bail "cannot fetch the recipe this repo pins ($VER) from $url: no curl"
+      mkdir -p "$cache" 2>/dev/null || bail "cannot fetch the recipe this repo pins ($VER): cannot create $cache"
+      # A temp file in the SAME directory, then `mv`: a half-written download never sits under the
+      # digest's name, and the rename is atomic, so two gates fetching at once cannot see a torn file.
+      tmp="$(mktemp "$cache/.$RECIPE_SHA256.XXXXXX" 2>/dev/null)" \
+        || bail "cannot fetch the recipe this repo pins ($VER): cannot write to $cache"
+      trap 'rm -f "$tmp"' EXIT
+      # FAIL FAST: a bounded connect and a bounded whole transfer, and no --retry. An agent with no
+      # network must not hang a build; it gets a skip (or a 4 under fail-closed) within a minute.
+      if ! curl -fsSL --connect-timeout 10 --max-time 60 "$url" -o "$tmp"; then
+        rm -f "$tmp"
+        bail "cannot fetch the recipe this repo pins ($VER) from $url"
+      fi
+      GOT="$(sha256_of "$tmp" 2>/dev/null || true)"
+      if [ "$GOT" != "$RECIPE_SHA256" ]; then
+        rm -f "$tmp"   # never leave an unverified script on disk
+        # THREE causes, most probable FIRST -- the mundane one is the one that actually happens, and a
+        # message naming only the alarming two sends the reader hunting an attack (vars/darnlinkGate).
+        echo "darnlink-gate: recipe checksum mismatch for $VER -- most likely someone bumped 'ref' without re-sealing 'recipe_sha256' next to it; otherwise the tag moved, or the download was tampered with -> FAILING." >&2
+        echo "  expected $RECIPE_SHA256" >&2
+        echo "  got      ${GOT:-<could not hash the download>}" >&2
+        echo "  re-seal: curl -fsSL '$url' | sha256sum | cut -d' ' -f1" >&2
+        exit 1
+      fi
+      mv -f "$tmp" "$pinned" || { rm -f "$tmp"; bail "cannot fetch the recipe this repo pins ($VER): cannot write $pinned"; }
+      trap - EXIT
+    fi
+    echo "darnlink-gate: handing off: installed recipe $HAVE -> the one $cfg pins ($VER, $RECIPE_SHA256)." >&2
+    export DARNLINK_GATE_HANDOFF_DONE=1
+    exec bash "$pinned" "$@"
+  fi
 fi
 
 # --- build darnlink args (excludes + ignore-blocks) ---

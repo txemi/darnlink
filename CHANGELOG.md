@@ -6,6 +6,30 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **The installed gate recipe hands off to the one the repo pins.** `darnlink-gate` is installed once
+  per machine, but each repo pins its own recipe in `darnlink-gate.json` (`ref` and `recipe_sha256`),
+  and until now the installed copy ran whatever version it was: a repo was gated by a recipe it never
+  chose, and only a Jenkinsfile that downloaded and verified the recipe itself ran the pinned one. Now
+  the running copy hashes itself; if `recipe_sha256` differs, it fetches `recipes/darnlink-gate` at the
+  `ref` version, verifies it, caches it by digest and execs it with the same arguments, environment
+  and directory, so `darnlink-gate` is the same call in a hook and in CI. A mismatch after download
+  exits 1 (the message names the un-resealed `ref` first); a fetch that fails is a can't-gate (skip,
+  or 4 under fail-closed); a malformed digest exits 1. The fetch fails fast (10 s connect, 60 s total,
+  no retry) and names the version and URL; the cache is `DARNLINK_GATE_CACHE`, else a writable
+  `/var/cache/darnlink-gate`, else `~/.cache/darnlink-gate`, never a temp directory. New variables:
+  `DARNLINK_GATE_RECIPE_BASE`, `DARNLINK_GATE_CACHE`, `DARNLINK_GATE_SYSTEM_CACHE`,
+  `DARNLINK_GATE_HANDOFF_DONE` (the loop guard). A repo whose `recipe_sha256` is malformed, which
+  used to pass, now fails with 1.
+
+### Added
+
+- **`recipe_ps1_sha256`**, the digest of `recipes/darnlink-gate.ps1` (also
+  `$env:DARNLINK_GATE_PS1_SHA256`). The PowerShell recipe hands off on it exactly as bash does on
+  `recipe_sha256`, and never on `recipe_sha256` itself, which is the digest of the bash file; with only
+  that key set it says so and runs as installed. In the schema and in `darnlink gate-config`.
+
 ## [0.32.0] — 2026-11-15
 
 ### Added

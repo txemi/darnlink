@@ -542,8 +542,8 @@ def test_the_table_covers_every_key_the_recipes_read():
         if isinstance(c.config, dict):
             covered |= set(c.config)
     # The owner/forge keys only act on a web destination, which needs the network to observe; their
-    # wiring is tested in test_recipe_gate.py. `recipe_sha256` is read by whoever downloads the
-    # recipe, not by it.
-    elsewhere = {"own_web", "forgejo_web", "own_web_max", "recipe_sha256"}
+    # wiring is tested in test_recipe_gate.py. The two digests drive the hand-off to the pinned
+    # recipe, which needs a fetch to observe; tested in test_recipe_handoff.py.
+    elsewhere = {"own_web", "forgejo_web", "own_web_max", "recipe_sha256", "recipe_ps1_sha256"}
     missing = set(RECIPE_KEYS) - elsewhere - covered
     assert not missing, sorted(missing)
