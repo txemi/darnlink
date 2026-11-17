@@ -20,8 +20,11 @@ All notable changes to darnlink are documented here. The format is based on
   no retry) and names the version and URL; the cache is `DARNLINK_GATE_CACHE`, else a writable
   `/var/cache/darnlink-gate`, else `~/.cache/darnlink-gate`, never a temp directory. New variables:
   `DARNLINK_GATE_RECIPE_BASE`, `DARNLINK_GATE_CACHE`, `DARNLINK_GATE_SYSTEM_CACHE`,
-  `DARNLINK_GATE_HANDOFF_DONE` (the loop guard). A repo whose `recipe_sha256` is malformed, which
-  used to pass, now fails with 1.
+  `DARNLINK_GATE_HANDOFF_DONE` (the loop guard). The cache directory and file must be owned by the
+  running user, not group- or other-writable and not symlinks (created under umask 077), so no other
+  user can swap the recipe between its hash and its exec; otherwise a can't-gate. The version after
+  the last `@` of `ref` must be `[A-Za-z0-9._+-]+` (not `.`/`..`), else exit 1. A repo whose
+  `recipe_sha256` is malformed, which used to pass, now fails with 1.
 
 ### Added
 

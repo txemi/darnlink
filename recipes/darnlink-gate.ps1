@@ -318,11 +318,15 @@ if ($ps1Sha -and -not $env:DARNLINK_GATE_HANDOFF_DONE) {
   if (-not $have) {
     [Console]::Error.WriteLine("darnlink-gate: cannot hash this recipe, so it cannot tell whether it is the one $cfgPath pins -- running it as installed.")
   } elseif ($have -cne $want) {
-    # `ref` is `git+<url>@<tag or sha>`; no `@`, or a last `@` that is the host's user, pins no version.
+    # `ref` is `git+<url>@<tag or sha>`, and the version is a URL path segment: [A-Za-z0-9._+-]+, not
+    # `.` or `..`, as in bash. No `@`, a last `@` that is the host's user, or anything else is a config
+    # error (exit 1), not a can't-gate: CI would read the same file.
     $at = $ref.LastIndexOf('@')
-    $ver = if ($at -ge 0) { $ref.Substring($at + 1) } else { '' }
-    if (-not $ver -or $ver.Contains('/')) {
-      Invoke-Bail "ref '$ref' names no version after an '@', so the recipe it pins (recipe_ps1_sha256) cannot be fetched"
+    $ver = if ($at -ge 0) { $ref.Substring($at + 1) } else { $ref }
+    if ($at -lt 0 -or $ver -cnotmatch '^[A-Za-z0-9._+-]+\z' -or $ver -ceq '.' -or $ver -ceq '..') {
+      [Console]::Error.WriteLine("darnlink-gate: ref='$ref' (with recipe_ps1_sha256 set) does not end in '@<tag or sha>' spelled with A-Z a-z 0-9 . _ + - -> FAILING.")
+      [Console]::Error.WriteLine("  The version after the last '@' names the recipe to fetch; '$ver' cannot. Nothing was validated.")
+      exit 1
     }
     $base = if ($env:DARNLINK_GATE_RECIPE_BASE) { $env:DARNLINK_GATE_RECIPE_BASE } else { 'https://raw.githubusercontent.com/txemi/darnlink' }
     $url = "$base/$ver/recipes/darnlink-gate.ps1"
@@ -359,14 +363,47 @@ if ($ps1Sha -and -not $env:DARNLINK_GATE_HANDOFF_DONE) {
         Invoke-Bail "cannot fetch the recipe this repo pins ($ver): no cache directory (DARNLINK_GATE_CACHE unset, no writable $sysCache, no HOME or XDG_CACHE_HOME)"
       }
     }
+    # WHO can write there -- the bash reasoning: the file is hashed and then read again to run it, so
+    # whoever can write the directory or the file can swap it in between. The check keeps OTHER users
+    # out of that window, and claims nothing about this account, which can change the installed recipe
+    # itself anyway.
+    # On Windows only the reparse-point check is made (a symlink or junction is refused). Ownership and
+    # "writable by others" are ACLs there -- inherited entries, groups, deny rules, SIDs -- and a check
+    # that read them partially would look like protection without being one; the profile directory
+    # (~\.cache) is private by default, and a shared DARNLINK_GATE_CACHE is the agent's IaC's to lock.
+    # Elsewhere (pwsh on Linux or macOS) the same owner/mode test as bash, with the same `find`.
+    $onWindows = ($env:OS -eq 'Windows_NT')
+    $uid = if ($onWindows) { '' } else { (& id -u | Out-String).Trim() }
+    function Test-OwnedAndPrivate([string]$path, [string]$type) {
+      $item = Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+      if (-not $item) { return $false }
+      if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { return $false }
+      if ($onWindows) { return ($type -ceq 'd') -eq [bool]$item.PSIsContainer }
+      $found = (& find $path -maxdepth 0 -type $type -user $uid '!' -perm -020 '!' -perm -002 -print 2>$null | Out-String).Trim()
+      return [bool]$found
+    }
+    if (-not (Test-Path -LiteralPath $cacheDir)) {
+      try {
+        if ($onWindows) { New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null }
+        else { & mkdir -p -m 700 $cacheDir; if ($LASTEXITCODE -ne 0) { throw "mkdir failed" } }
+      } catch { Invoke-Bail "cannot fetch the recipe this repo pins ($ver): cannot create $cacheDir" }
+    }
+    if (-not (Test-OwnedAndPrivate $cacheDir 'd')) {
+      $who = if ($onWindows) { 'a directory, not a symlink or junction' } else { "a directory (not a symlink) owned by uid $uid and not group- or other-writable" }
+      Invoke-Bail "the recipe cache $cacheDir is not safe to run from: it must be $who"
+    }
     $pinned = Join-Path $cacheDir "$want.ps1"
+    if (Test-Path -LiteralPath $pinned) {
+      if (-not (Test-OwnedAndPrivate $pinned 'f')) {
+        $who = if ($onWindows) { 'a regular file, not a symlink' } else { "a regular file (not a symlink) owned by uid $uid and not group- or other-writable" }
+        Invoke-Bail "the cached recipe $pinned is not safe to run: it must be $who"
+      }
+    }
     $hit = $false
     if (Test-Path -LiteralPath $pinned -PathType Leaf) {
       try { $hit = ((Get-FileHash -LiteralPath $pinned -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $want) } catch { $hit = $false }
     }
     if (-not $hit) {
-      try { New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null }
-      catch { Invoke-Bail "cannot fetch the recipe this repo pins ($ver): cannot create $cacheDir" }
       # A temp file in the SAME directory, then a rename: a torn download never sits under the digest.
       $tmp = Join-Path $cacheDir (".$want." + [IO.Path]::GetRandomFileName())
       # The curl APPLICATION, never the name `curl`: in Windows PowerShell 5.1 that is an alias of
@@ -387,6 +424,8 @@ if ($ps1Sha -and -not $env:DARNLINK_GATE_HANDOFF_DONE) {
         Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
         Invoke-Bail "cannot fetch the recipe this repo pins ($ver) from $url"
       }
+      # Owner-only before it is hashed, as bash's umask 077: curl wrote it with the caller's umask.
+      if (-not $onWindows) { & chmod 600 $tmp }
       $got = $null
       try { $got = (Get-FileHash -LiteralPath $tmp -Algorithm SHA256).Hash.ToLowerInvariant() } catch { $got = $null }
       if ($got -cne $want) {

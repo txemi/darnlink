@@ -143,6 +143,13 @@
 #                              it); else ${XDG_CACHE_HOME:-~/.cache}/darnlink-gate unless that lands under
 #                              /tmp or $TMPDIR; else a can't-gate (bail) that says why. The temp file of
 #                              a download lives in that same directory, renamed into place when verified.
+#                              The directory and the cached file must be owned by the running uid, not
+#                              group- or other-writable, and not symlinks; otherwise it is a can't-gate.
+#                              The recipe is hashed and then read again by `exec`, and that check is
+#                              what keeps ANOTHER user from swapping it in between -- no more than that:
+#                              this uid can always change what it runs. Created under umask 077.
+#   (The version after the last '@' of `ref` must be [A-Za-z0-9._+-]+ and not . or ..: it is a URL
+#    path segment. Anything else, with recipe_sha256 set, is a config error, exit 1.)
 #   DARNLINK_GATE_HANDOFF_DONE set by the hand-off itself, so the copy it execs does not hand off again;
 #                              set it by hand to run THIS copy regardless of the pin.
 #
@@ -480,11 +487,17 @@ if [ -n "$RECIPE_SHA256" ] && [ -z "${DARNLINK_GATE_HANDOFF_DONE:-}" ]; then
     # nothing to decide. Said, because silence here reads as "this is the pinned recipe".
     echo "darnlink-gate: cannot hash this recipe (${self:-read from a pipe}), so it cannot tell whether it is the one $cfg pins -- running it as installed." >&2
   elif [ "$HAVE" != "$RECIPE_SHA256" ]; then
-    # `ref` is `git+<url>@<tag or sha>`. A ref with no `@`, or whose last `@` is the user of the host
-    # (`git+ssh://git@host/x`), pins no version, and then there is no pinned recipe to fetch.
+    # `ref` is `git+<url>@<tag or sha>`, and VER goes into a URL path. So it is a tag or SHA spelled
+    # with [A-Za-z0-9._+-] and nothing else, and neither `.` nor `..`: a `/`, `?` or `#` would let the
+    # pin point the fetch somewhere other than `<base>/<version>/recipes/`. A ref with no `@`, or whose
+    # last `@` is the user of the host (`git+ssh://git@host/x`), pins no version at all. Either way the
+    # config claims a pinned recipe it does not name: a config error, exit 1 on every surface, not a
+    # can't-gate -- CI would read the same file.
     VER="${REF##*@}"
-    if [ "$VER" = "$REF" ] || [ -z "$VER" ] || [[ "$VER" == */* ]]; then
-      bail "ref '$REF' names no version after an '@', so the recipe it pins (recipe_sha256) cannot be fetched"
+    if [[ "$REF" != *@* ]] || ! [[ "$VER" =~ ^[A-Za-z0-9._+-]+$ ]] || [ "$VER" = . ] || [ "$VER" = .. ]; then
+      echo "darnlink-gate: ref='$REF' (with recipe_sha256 set) does not end in '@<tag or sha>' spelled with A-Z a-z 0-9 . _ + - -> FAILING." >&2
+      echo "  The version after the last '@' names the recipe to fetch; '$VER' cannot. Nothing was validated." >&2
+      exit 1
     fi
     url="${DARNLINK_GATE_RECIPE_BASE:-https://raw.githubusercontent.com/txemi/darnlink}/$VER/recipes/darnlink-gate"
     # WHERE the verified copies live: a fixed, bounded path, NEVER /tmp. On a CI agent /tmp is often
@@ -514,12 +527,36 @@ if [ -n "$RECIPE_SHA256" ] && [ -z "${DARNLINK_GATE_HANDOFF_DONE:-}" ]; then
         bail "cannot fetch the recipe this repo pins ($VER): no cache directory (DARNLINK_GATE_CACHE unset, no writable $sys_cache, no HOME or XDG_CACHE_HOME)"
       fi
     fi
+    # WHO can write there. The file is hashed and then `exec bash` reads it AGAIN: between the two
+    # (and between the `mv` of a fresh download and the exec) whoever can write the directory or the
+    # file can swap what runs. So the directory and the cached file must be owned by this uid and not
+    # group- or other-writable, the file must be a regular file and not a symlink, and everything this
+    # block creates is created under umask 077. That closes the window to OTHER users. It does not
+    # close it to this uid: anything running as this user can already change the installed recipe
+    # itself, so the check claims nothing about it.
+    # `find -maxdepth 0 … ! -perm -020 ! -perm -002` because `stat`'s format flags differ between GNU
+    # and BSD, and find's `-perm /022` is GNU-only. find does not follow a symlink given as its
+    # argument (-P), so `-type d` / `-type f` also refuses a symlinked directory or file.
+    uid="$(id -u)"
+    owned_and_private() {  # $1 = path, $2 = d|f -> 0 iff that type, not a symlink, ours, not g/o-writable
+      [ ! -L "$1" ] && [ -n "$(find "$1" -maxdepth 0 -type "$2" -user "$uid" ! -perm -020 ! -perm -002 -print 2>/dev/null)" ]
+    }
+    old_umask="$(umask)"
+    umask 077
+    if [ ! -e "$cache" ] && [ ! -L "$cache" ]; then
+      mkdir -p -m 700 "$cache" 2>/dev/null || bail "cannot fetch the recipe this repo pins ($VER): cannot create $cache"
+    fi
+    owned_and_private "$cache" d \
+      || bail "the recipe cache $cache is not safe to run from: it must be a directory (not a symlink) owned by uid $uid and not group- or other-writable"
     pinned="$cache/$RECIPE_SHA256"
+    if [ -e "$pinned" ] || [ -L "$pinned" ]; then
+      owned_and_private "$pinned" f \
+        || bail "the cached recipe $pinned is not safe to run: it must be a regular file (not a symlink) owned by uid $uid and not group- or other-writable"
+    fi
     # The cache is named by the digest, so a hit is re-hashed rather than trusted: a file that changed
     # on disk is fetched again, and a hit is exactly as verified as a fresh download.
     if ! { [ -f "$pinned" ] && [ "$(sha256_of "$pinned" 2>/dev/null || true)" = "$RECIPE_SHA256" ]; }; then
       command -v curl >/dev/null 2>&1 || bail "cannot fetch the recipe this repo pins ($VER) from $url: no curl"
-      mkdir -p "$cache" 2>/dev/null || bail "cannot fetch the recipe this repo pins ($VER): cannot create $cache"
       # A temp file in the SAME directory, then `mv`: a half-written download never sits under the
       # digest's name, and the rename is atomic, so two gates fetching at once cannot see a torn file.
       tmp="$(mktemp "$cache/.$RECIPE_SHA256.XXXXXX" 2>/dev/null)" \
@@ -546,6 +583,7 @@ if [ -n "$RECIPE_SHA256" ] && [ -z "${DARNLINK_GATE_HANDOFF_DONE:-}" ]; then
       trap - EXIT
     fi
     echo "darnlink-gate: handing off: installed recipe $HAVE -> the one $cfg pins ($VER, $RECIPE_SHA256)." >&2
+    umask "$old_umask"   # the 077 was for the cache; the pinned recipe and what it writes get the caller's
     export DARNLINK_GATE_HANDOFF_DONE=1
     exec bash "$pinned" "$@"
   fi

@@ -35,6 +35,7 @@ STUB = """#!/usr/bin/env bash
 echo "PINNED-STUB-RAN args=$*"
 echo "HANDOFF_DONE=${DARNLINK_GATE_HANDOFF_DONE:-}"
 echo "PWD=$PWD"
+echo "UMASK=$(umask)"
 exit "${STUB_RC:-0}"
 """
 
@@ -172,8 +173,9 @@ def test_the_second_run_uses_the_cache_without_the_network(sb):
 @requires_bash
 def test_a_cached_file_that_changed_on_disk_is_fetched_again(sb):
     digest = sb.serve(STUB)
-    sb.cache.mkdir()
+    sb.cache.mkdir(mode=0o700)
     (sb.cache / digest).write_text("#!/usr/bin/env bash\necho EVIL\n")
+    (sb.cache / digest).chmod(0o600)
     r = sb.run({"ref": REF, "recipe_sha256": digest})
     assert r.returncode == 0, r.stderr
     assert "EVIL" not in r.stdout and "PINNED-STUB-RAN" in r.stdout
@@ -234,11 +236,111 @@ def test_a_malformed_digest_is_a_config_error(sb, bad):
 
 
 @requires_bash
-@pytest.mark.parametrize("ref", ["git+https://example.invalid/darnlink", "git+ssh://git@example.invalid/darnlink"])
-def test_a_ref_without_a_version_cannot_be_handed_off(sb, ref):
-    r = sb.run({"ref": ref, "recipe_sha256": _sha(STUB)}, env=sb.env(DARNLINK_GATE_FAIL_CLOSED="1"))
+@pytest.mark.parametrize("ref", [
+    "git+https://example.invalid/darnlink",              # no @ at all
+    "git+ssh://git@example.invalid/darnlink",            # the last @ is the host's user
+    "git+https://example.invalid/darnlink@v1/../x",      # a path, not a version
+    "git+https://example.invalid/darnlink@..",
+    "git+https://example.invalid/darnlink@.",
+    "git+https://example.invalid/darnlink@v1?x",
+    "git+https://example.invalid/darnlink@v1#x",
+    "git+https://example.invalid/darnlink@",
+])
+@pytest.mark.parametrize("fail_closed", ["", "1"])
+def test_a_ref_without_a_clean_version_is_a_config_error(sb, ref, fail_closed):
+    """The version becomes a URL path segment: anything but [A-Za-z0-9._+-]+ (and not . or ..) is
+    refused before any fetch, with 1 on every surface, naming the ref."""
+    sb.serve(STUB)
+    r = sb.run({"ref": ref, "recipe_sha256": _sha(STUB)}, env=sb.env(DARNLINK_GATE_FAIL_CLOSED=fail_closed))
+    assert r.returncode == 1, r.stderr
+    assert f"ref='{ref}'" in r.stderr, r.stderr
+    assert "PINNED-STUB-RAN" not in r.stdout
+    assert _cached_files(sb.cache) == []
+
+
+@requires_bash
+@pytest.mark.parametrize("ver", ["v0.32.0", "0123abcdef", "v1.0.0+build_7-rc"])
+def test_a_clean_version_is_accepted(sb, ver):
+    digest = sb.serve(STUB, ver=ver)
+    r = sb.run({"ref": f"git+https://example.invalid/darnlink@{ver}", "recipe_sha256": digest})
+    assert r.returncode == 0, r.stderr
+    assert "PINNED-STUB-RAN" in r.stdout
+
+
+# --- the cache: only this uid can write it (the hash-then-exec window) --------------------------------
+
+def _caller_umask() -> str:
+    old = os.umask(0)
+    os.umask(old)
+    return f"{old:04o}"
+
+
+@requires_bash
+def test_what_the_handoff_creates_is_owner_only_and_the_umask_is_given_back(sb):
+    digest = sb.serve(STUB)
+    r = sb.run({"ref": REF, "recipe_sha256": digest})
+    assert r.returncode == 0, r.stderr
+    assert (sb.cache.stat().st_mode & 0o777) == 0o700
+    assert (sb.cache / digest).stat().st_mode & 0o077 == 0
+    assert f"UMASK={_caller_umask()}" in r.stdout                  # the pinned recipe gets the caller's
+
+
+@requires_bash
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root owns everything")
+@pytest.mark.parametrize("mode", [0o770, 0o707, 0o777])
+@pytest.mark.parametrize("fail_closed, rc", [("", 0), ("1", 4)])
+def test_a_cache_directory_others_can_write_is_refused(sb, mode, fail_closed, rc):
+    digest = sb.serve(STUB)
+    sb.cache.mkdir()
+    sb.cache.chmod(mode)
+    r = sb.run({"ref": REF, "recipe_sha256": digest}, env=sb.env(DARNLINK_GATE_FAIL_CLOSED=fail_closed))
+    assert r.returncode == rc, r.stderr
+    assert "not safe to run from" in r.stderr, r.stderr
+    assert ("SKIP" in r.stderr) == (rc == 0)
+    assert "PINNED-STUB-RAN" not in r.stdout
+    assert _cached_files(sb.cache) == []
+
+
+@requires_bash
+@pytest.mark.parametrize("fail_closed, rc", [("", 0), ("1", 4)])
+def test_a_symlinked_cache_directory_is_refused(sb, fail_closed, rc):
+    digest = sb.serve(STUB)
+    real = sb.tmp / "real-cache"
+    real.mkdir(mode=0o700)
+    sb.cache.symlink_to(real)
+    r = sb.run({"ref": REF, "recipe_sha256": digest}, env=sb.env(DARNLINK_GATE_FAIL_CLOSED=fail_closed))
+    assert r.returncode == rc, r.stderr
+    assert "not safe to run from" in r.stderr and "PINNED-STUB-RAN" not in r.stdout
+    assert _cached_files(real) == []
+
+
+@requires_bash
+@pytest.mark.parametrize("fail_closed, rc", [("", 0), ("1", 4)])
+def test_a_symlink_planted_at_the_digest_is_never_executed(sb, fail_closed, rc):
+    """The link points at a file with the RIGHT bytes, so only the symlink check can stop it: whoever
+    owns the target could change it between the hash and the exec."""
+    digest = sb.serve(STUB)
+    target = sb.tmp / "elsewhere"
+    target.write_text(STUB)
+    sb.cache.mkdir(mode=0o700)
+    (sb.cache / digest).symlink_to(target)
+    r = sb.run({"ref": REF, "recipe_sha256": digest}, env=sb.env(DARNLINK_GATE_FAIL_CLOSED=fail_closed))
+    assert r.returncode == rc, r.stderr
+    assert "PINNED-STUB-RAN" not in r.stdout
+    assert "not safe to run" in r.stderr and "symlink" in r.stderr
+    assert (sb.cache / digest).is_symlink()                        # refused, not silently replaced
+
+
+@requires_bash
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root owns everything")
+def test_a_cached_file_others_can_write_is_refused(sb):
+    digest = sb.serve(STUB)
+    sb.cache.mkdir(mode=0o700)
+    (sb.cache / digest).write_text(STUB)
+    (sb.cache / digest).chmod(0o666)
+    r = sb.run({"ref": REF, "recipe_sha256": digest}, env=sb.env(DARNLINK_GATE_FAIL_CLOSED="1"))
     assert r.returncode == 4, r.stderr
-    assert "names no version" in r.stderr
+    assert "PINNED-STUB-RAN" not in r.stdout and "not safe to run" in r.stderr
 
 
 # --- fail fast: bounded timeouts, no retry ----------------------------------------------------------
@@ -267,7 +369,7 @@ def _env_without_explicit_cache(sb: Sandbox, **extra: str | None) -> dict:
 def test_an_explicit_cache_wins_over_the_agent_directory(sb):
     digest = sb.serve(STUB)
     system = sb.tmp / "var-cache"
-    system.mkdir()
+    system.mkdir(mode=0o700)
     r = sb.run({"ref": REF, "recipe_sha256": digest},
                env=sb.env(DARNLINK_GATE_SYSTEM_CACHE=str(system)))
     assert r.returncode == 0, r.stderr
@@ -278,7 +380,7 @@ def test_an_explicit_cache_wins_over_the_agent_directory(sb):
 def test_the_agent_directory_is_used_when_it_exists_and_is_writable(sb):
     digest = sb.serve(STUB)
     system = sb.tmp / "var-cache"
-    system.mkdir()
+    system.mkdir(mode=0o700)
     r = sb.run({"ref": REF, "recipe_sha256": digest},
                env=_env_without_explicit_cache(sb, DARNLINK_GATE_SYSTEM_CACHE=str(system)))
     assert r.returncode == 0, r.stderr
@@ -404,6 +506,28 @@ def test_ps1_mismatch_is_1_and_caches_nothing(sb):
     assert r.returncode == 1, r.stderr
     assert "checksum mismatch" in r.stderr and "PINNED-PS1-RAN" not in r.stdout
     assert _cached_files(sb.cache) == []
+
+
+@requires_ps
+@pytest.mark.parametrize("ver", ["v1/../x", "..", "v1?x"])
+def test_ps1_a_ref_without_a_clean_version_is_1(sb, ver):
+    r = _run_ps(sb, {"ref": f"git+https://example.invalid/darnlink@{ver}", "recipe_ps1_sha256": _sha(STUB_PS1)})
+    assert r.returncode == 1 and "does not end in" in r.stderr, r.stderr
+
+
+@requires_ps
+def test_ps1_a_symlink_planted_at_the_digest_is_never_executed(sb):
+    digest = sb.serve(STUB_PS1, name="darnlink-gate.ps1")
+    target = sb.tmp / "elsewhere.ps1"
+    target.write_text(STUB_PS1)
+    sb.cache.mkdir(mode=0o700)
+    try:
+        (sb.cache / f"{digest}.ps1").symlink_to(target)
+    except OSError:
+        pytest.skip("this account cannot create symlinks")
+    r = _run_ps(sb, {"ref": REF, "recipe_ps1_sha256": digest, "fail_closed": True})
+    assert r.returncode == 4, r.stderr
+    assert "PINNED-PS1-RAN" not in r.stdout and "not safe to run" in r.stderr
 
 
 @requires_ps

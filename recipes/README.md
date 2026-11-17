@@ -221,6 +221,14 @@ The hand-off, in detail:
   never does; `DARNLINK_GATE_SYSTEM_CACHE` moves it); else `${XDG_CACHE_HOME:-~/.cache}/darnlink-gate`,
   refused if that is under `/tmp` or `$TMPDIR`; else a can't-gate that says why. The download goes to
   a temp file in that same directory and is renamed into place only once verified.
+- **Only you can write the cache:** the recipe is hashed and then read again to run it, so the
+  directory and the cached file must be owned by the running user, not group- or other-writable, and
+  not symlinks; the hand-off creates them under umask 077. Otherwise it is a can't-gate. That keeps
+  other users out of the window between the hash and the exec, and claims nothing more. An agent's
+  `/var/cache/darnlink-gate` must therefore be owned by the agent's user, mode 700 or 755. (On
+  Windows the `.ps1` refuses only symlinks and junctions: ACL ownership is not read.)
+- **The version is a path segment:** what follows the last `@` of `ref` must be `[A-Za-z0-9._+-]+`
+  and not `.` or `..`; anything else, with the digest key set, is a config error (exit 1).
 - **Loop guard:** the hand-off exports `DARNLINK_GATE_HANDOFF_DONE=1`, so the exec'd copy runs as
   itself. Set it by hand to run the installed copy whatever the pin says.
 
