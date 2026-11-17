@@ -46,6 +46,9 @@ _LEAKY_ENV = (
     "DARNLINK_GATE_DANGLING", "DARNLINK_GATE_DANGLING_MAX",
     "DARNLINK_GATE_OWN_WEB_FROM_ORIGIN", "DARNLINK_GATE_OWN_WEB_MAX",
     "DARNLINK_GATE_INCLUDE_MERMAID", "DARNLINK_GATE_REPORT",
+    # The hand-off to the pinned recipe (test_recipe_handoff.py): none of these may reach a test here.
+    "DARNLINK_GATE_HANDOFF_DONE", "DARNLINK_GATE_RECIPE_BASE", "DARNLINK_GATE_CACHE",
+    "DARNLINK_GATE_SYSTEM_CACHE", "DARNLINK_GATE_PS1_SHA256",
     # ⚠️ And git's own. `git` exports these to every hook it runs, so when this suite is executed
     # FROM the repo's pre-commit hook (`tools/check.sh`), an un-scrubbed `git` in a test inherits
     # GIT_DIR from the outer repo while using the sandbox as its work tree. That combination is not

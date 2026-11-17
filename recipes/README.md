@@ -193,11 +193,50 @@ templates therefore check the SHAPE first (64 lowercase hex) and say "you pasted
 rather than crying tampering. Resolve it with the command in **"Verify what you download"** below,
 or drop the key while you adopt: absent is honest, wrong is misleading.
 
-⚠️ **`recipe_sha256` is the only key here the recipe never reads.** Every other key is consumed by
-`darnlink-gate` once it is already running; this one is consumed by whatever **fetches** it, *before*
-it runs. That asymmetry is the whole point, and it is why the key was easy to overlook: a CI surface
-that downloads this script and executes it cannot ask the script whether the download was genuine.
-See **"Verify what you download"** below for how to compute and re-seal it.
+⚠️ **`recipe_sha256` is read by the INSTALLED recipe, to run the one this repo pins.** The script is
+installed once per machine (a workstation's deploy, a CI agent's IaC) and every repo there calls it,
+but each repo pins its own version. So the running copy hashes itself and compares with
+`recipe_sha256`: equal, it runs; different, it fetches `recipes/darnlink-gate` at the version in
+`ref`, verifies it against the key, caches it and execs it with the same arguments, environment and
+directory. One call, `darnlink-gate`, in the hook and in CI, and every repo is gated by the recipe it
+chose. What a downloaded script still cannot do is vouch for its own download, which is why the check
+runs in the trusted, installed copy *before* the exec, and why a CI surface that downloads the
+script itself still compares the digest before `chmod +x`. See **"Verify what you download"** below
+for how to compute and re-seal it.
+
+The hand-off, in detail:
+
+- **Mismatch after download:** exit 1 on every surface, nothing cached, and the message names the
+  mundane cause first (a `ref` bumped without re-sealing). **Fetch fails** (no network, no curl, a
+  `ref` with no `@<version>`): a can't-gate, so a skip when fail-open and 4 under fail-closed. A
+  **malformed digest** (not 64 hex after folding A-F) is a config error: exit 1.
+- **Fails fast:** `curl` with a 10 s connect and 60 s total timeout, and no retry; the message names
+  the version and the full URL it tried. An agent without network does not hang a build.
+- **Where from:** `$DARNLINK_GATE_RECIPE_BASE/<version>/recipes/darnlink-gate`, the base defaulting to
+  GitHub's raw host for this repo (`https://raw.githubusercontent.com/txemi/darnlink/<version>/…`).
+  Point it at a mirror where the agents cannot reach GitHub.
+- **Cache:** by digest, so a hit is re-hashed rather than trusted. Never a temp directory by default
+  (on an agent `/tmp` is often RAM). Order: `DARNLINK_GATE_CACHE` as given; else
+  `/var/cache/darnlink-gate` if it exists and is writable (the agent's IaC creates it; the recipe
+  never does; `DARNLINK_GATE_SYSTEM_CACHE` moves it); else `${XDG_CACHE_HOME:-~/.cache}/darnlink-gate`,
+  refused if that is under `/tmp` or `$TMPDIR`; else a can't-gate that says why. The download goes to
+  a temp file in that same directory and is renamed into place only once verified.
+- **Only you can write the cache:** the recipe is hashed and then read again to run it, so the
+  directory and the cached file must be owned by the running user, not group- or other-writable, and
+  not symlinks; the hand-off creates them under umask 077. Otherwise it is a can't-gate. That keeps
+  other users out of the window between the hash and the exec, and claims nothing more. An agent's
+  `/var/cache/darnlink-gate` must therefore be owned by the agent's user, mode 700 or 755. (On
+  Windows the `.ps1` refuses only symlinks and junctions: ACL ownership is not read.)
+- **The version is a path segment:** what follows the last `@` of `ref` must be `[A-Za-z0-9._+-]+`
+  and not `.` or `..`; anything else, with the digest key set, is a config error (exit 1).
+- **Loop guard:** the hand-off exports `DARNLINK_GATE_HANDOFF_DONE=1`, so the exec'd copy runs as
+  itself. Set it by hand to run the installed copy whatever the pin says.
+
+**The PowerShell twin has its own key, `recipe_ps1_sha256`** (or `$env:DARNLINK_GATE_PS1_SHA256`):
+the digest of `recipes/darnlink-gate.ps1` at `ref`. It hands off exactly as above, fetching
+`recipes/darnlink-gate.ps1` and caching it as `<digest>.ps1`. It never hands off on `recipe_sha256`,
+which is the digest of a different file and would be a permanent mismatch, read as tampering on every
+Windows run; with only that key set it says so in one line and runs as installed.
 
 ⚠️ **`vX.Y.Z` is a placeholder, and it is the one thing here you must not copy verbatim.** Resolve it
 when you paste — `gh release view -R txemi/darnlink --json tagName -q .tagName` — because this is the
@@ -289,10 +328,11 @@ fails when two copies of a version number drift, so the second copy has to go ra
 sync. `-f` so a moved or typo'd version is a 404 instead of a file containing the words
 "404: Not Found". Windows agents fetch `darnlink-gate.ps1` the same way — ⚠️ **but `recipe_sha256` does NOT cover it.**
 The key is defined as the digest of `recipes/darnlink-gate`; the `.ps1` is a different file with a
-different digest, and there is no second key for it today. Sealing `recipe_sha256` on a Windows agent
-that fetches the `.ps1` gives a permanent mismatch. Until a `recipe_sha256_ps1` exists, verify that
-download by other means or leave it unsealed — knowingly, which is the whole point of the warning the
-templates print. Locally, drop it on your
+different digest: seal it in `recipe_ps1_sha256` (`(Get-FileHash -Algorithm SHA256 darnlink-gate.ps1).Hash.ToLower()`).
+Sealing `recipe_sha256` with the `.ps1`'s digest gives a permanent mismatch, and so would the bash
+recipe's hand-off. The shipped templates verify only the bash download; a Windows agent that fetches
+the `.ps1` itself verifies it against `recipe_ps1_sha256` by its own means, or leaves it unsealed —
+knowingly. An installed `.ps1` does that check for you when it hands off. Locally, drop it on your
 `PATH` (e.g. `~/.local/bin`).
 
 ## Verify what you download

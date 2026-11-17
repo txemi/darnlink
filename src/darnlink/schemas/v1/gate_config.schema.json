@@ -205,8 +205,13 @@
       ],
       "description": "How many own_web findings are tolerated (a budget)."
     },
+    "recipe_ps1_sha256": {
+      "description": "sha256 of recipes/darnlink-gate.ps1 at `ref`. The installed .ps1 hands off to that one, verified; without it the .ps1 runs as installed.",
+      "pattern": "^[0-9a-f]{64}(?!\\n)$",
+      "type": "string"
+    },
     "recipe_sha256": {
-      "description": "sha256 of the recipe, checked by whatever downloads it.",
+      "description": "sha256 of recipes/darnlink-gate at `ref`. The installed bash recipe hands off to that one, verified; a CI step that downloads it checks it too.",
       "pattern": "^[0-9a-f]{64}(?!\\n)$",
       "type": "string"
     },

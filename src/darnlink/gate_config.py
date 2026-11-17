@@ -81,7 +81,10 @@ KEYS: Dict[str, Tuple[str, str]] = {
     "dangling_max": ("count", "With dangling=repo, how many are tolerated (a budget). Default 0."),
     "excludes": ("globs", "Directory-name globs to skip."),
     "ignore_blocks": ("globs", "Generated blocks <!-- NAME-start --> ... <!-- NAME-end --> to skip."),
-    "recipe_sha256": ("sha256", "sha256 of the recipe, checked by whatever downloads it."),
+    "recipe_sha256": ("sha256", "sha256 of recipes/darnlink-gate at `ref`. The installed bash recipe hands off "
+                              "to that one, verified; a CI step that downloads it checks it too."),
+    "recipe_ps1_sha256": ("sha256", "sha256 of recipes/darnlink-gate.ps1 at `ref`. The installed .ps1 hands "
+                                  "off to that one, verified; without it the .ps1 runs as installed."),
     "$schema": ("text", "The schema this file follows (for editors). Ignored by the recipes."),
     "ref_comment": ("text", "Why `ref` is pinned where it is. Ignored by the recipes."),
     "ref_tag": ("text", "The tag `ref`'s SHA belongs to. Ignored by the recipes."),

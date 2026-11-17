@@ -1,8 +1,8 @@
 """The published schema of `darnlink-gate.json` and the `darnlink gate-config` check.
 
 1. the committed `schemas/v1/gate_config.schema.json` is exactly what `gate_config.py` generates;
-2. `KEYS` names exactly the keys the bash recipe reads (plus `recipe_sha256`, read by whoever
-   downloads it, and the documentation keys), and the PowerShell recipe reads none outside it;
+2. `KEYS` names exactly the keys the bash recipe reads (plus `recipe_ps1_sha256`, the .ps1's own
+   digest, and the documentation keys), and the PowerShell recipe reads exactly those plus its own;
 3. the schema and `config_problems` agree, in both directions, on every key and on a pool of values,
    and on real-world config shapes;
 4. `darnlink gate-config` only warns: exit 0 with problems, 1 only with --strict.
@@ -56,12 +56,15 @@ def test_the_schema_is_a_valid_draft_2020_12_schema():
 def test_keys_are_what_the_bash_recipe_reads():
     """A key added to the recipe must be added to KEYS, or the schema calls it unknown; and the other way."""
     text = BASH_RECIPE.read_text(encoding="utf-8")
-    read = set(re.findall(r"(?:\$\(|<\()read_cfg(?:_len)? ([a-z_]+)", text))
-    assert read == set(RECIPE_KEYS) - {"recipe_sha256"}
+    # `[a-z0-9_]`: `recipe_sha256` has digits, and `[a-z_]+` read it as a key called `recipe_sha`.
+    read = set(re.findall(r"(?:\$\(|<\()read_cfg(?:_len)? ([a-z0-9_]+)", text))
+    # Since the hand-off the installed bash recipe reads `recipe_sha256` too (to pick and verify the
+    # pinned recipe). `recipe_ps1_sha256` is the digest of the OTHER file, read by the .ps1 only.
+    assert read == set(RECIPE_KEYS) - {"recipe_ps1_sha256"}
     # Every call in code is one of those two forms; a third would hide its key from this test. Calls are
     # counted as `read_cfg <key> ` followed by an argument or `)`, so a mention in a comment does not count.
     code = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
-    calls = re.findall(r"(\S*)read_cfg(?:_len)? [a-z_]+(?: |\))", code)
+    calls = re.findall(r"(\S*)read_cfg(?:_len)? [a-z0-9_]+(?: |\))", code)
     assert calls and all(c.endswith(("$(", "<(")) for c in calls), calls
 
 
@@ -71,9 +74,11 @@ def test_the_powershell_recipe_reads_exactly_the_keys_bash_reads():
     Windows, and the old `<=` here could not see it."""
     text = PS1_RECIPE.read_text(encoding="utf-8")
     code = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
-    read = (set(re.findall(r"(?:CfgStr|CfgList|CfgHas|Read-Flag) '([a-z_]+)'", code))
-            | set(re.findall(r"\$cfg\.([a-z_]+)", code)))
-    assert read == set(RECIPE_KEYS) - {"recipe_sha256"}
+    read = (set(re.findall(r"(?:CfgStr|CfgList|CfgHas|Read-Flag) '([a-z0-9_]+)'", code))
+            | set(re.findall(r"\$cfg\.([a-z0-9_]+)", code)))
+    # Every key bash reads, plus `recipe_ps1_sha256`, the digest of THIS file that it hands off on.
+    # It reads `recipe_sha256` only to say that key pins the bash recipe, not this one.
+    assert read == set(RECIPE_KEYS)
     # Every read goes through one of those helpers; the old truthiness reader must not come back.
     assert "CfgOr" not in code
 
