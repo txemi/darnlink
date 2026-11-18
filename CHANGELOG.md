@@ -6,6 +6,14 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **The repository loads as a Jenkins pipeline library.** `AGENTS.md` and `.github/copilot-instructions.md`
+  were symlinks to `CLAUDE.md`, and Jenkins rejects a library that contains a symlink ("Rejecting library:
+  symlink found: AGENTS.md"), so a Jenkinsfile that loaded darnlink to call `darnlinkGate()` failed before
+  any stage ran. Both are now short pointer files to `CLAUDE.md` (the conventions still live in one file),
+  and `tests/test_no_symlinks.py` fails on any tracked symlink.
+
 ## [0.33.0] — 2026-11-17
 
 ### Changed
