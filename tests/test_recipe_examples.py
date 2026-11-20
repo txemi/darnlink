@@ -240,8 +240,9 @@ def _fetch_shell(path: Path) -> str:
         body = next(s["run"] for s in doc["jobs"]["gate"]["steps"]
                     if "curl" in s.get("run", "") and "sha256sum" in s.get("run", ""))
     else:
-        m = re.search(r"sh\s+'''(.*?)'''", path.read_text(encoding="utf-8"), re.DOTALL)
-        assert m, "no sh ''' … ''' block in the Jenkins example"
+        # The step keeps its shell in gateShell(), which hands it to `sh` and to the Windows bash.
+        m = re.search(r"return\s+'''(.*?)'''", path.read_text(encoding="utf-8"), re.DOTALL)
+        assert m, "no gateShell() ''' … ''' block in the Jenkins step"
         body = m.group(1)
     stub = ('curl() { while [ $# -gt 0 ]; do if [ "$1" = "-o" ]; then shift; '
             'printf "%s" "$PAYLOAD" > "$1"; return 0; fi; shift; done; }\n')
@@ -336,7 +337,9 @@ def test_the_comparison_happens_BEFORE_chmod(example):
     lines = example.read_text(encoding="utf-8").splitlines()
     code = [(i, l) for i, l in enumerate(lines) if not l.strip().startswith(("#", "//"))]
     compare = min(i for i, l in code if '"$GOT" != "$WANT"' in l)
-    chmod = min(i for i, l in code if "chmod +x" in l)
+    # The RECIPE's chmod: the Jenkins step also makes a temporary python3 executable (on an agent
+    # with only `python`), which is not the download and must not become the anchor.
+    chmod = min(i for i, l in code if "chmod +x" in l and "darnlink-gate" in l)
     assert compare < chmod, (
         f"{example.name}: the digest comparison is at line {compare+1}, AFTER chmod at {chmod+1}")
 
@@ -385,7 +388,7 @@ def test_the_jenkins_example_contains_no_groovy_escape_the_shell_would_not_see()
     # refused to parse. A compile error does not care which line it is on, so neither can this.
     # (Scanning only the FIRST sh block had a second hole: a file with two left one unscanned.)
     text = JENKINS.read_text(encoding="utf-8")
-    assert "sh " + "'" * 3 in text, "no sh block in the Jenkins example"
+    assert "return " + "'" * 3 in text, "no shell block in the Jenkins step"
     offenders = []
     for n, line in enumerate(text.splitlines(), 1):
         # A trailing backslash is a line continuation: Groovy drops backslash+newline, and so does
@@ -460,7 +463,8 @@ def test_the_macOS_fallback_actually_works(tmp_path, example):
         pytest.skip("no shasum here; this asserts the fallback a macOS agent would take")
     fakebin = tmp_path / "bin"
     fakebin.mkdir()
-    for tool in ("bash", "shasum", "cut", "tr", "rm", "chmod", "python3", "env", "sh", "cat"):
+    for tool in ("bash", "shasum", "cut", "tr", "rm", "chmod", "python3", "env", "sh", "cat", "uname",
+                 "mktemp"):
         src = shutil.which(tool)
         if src:
             (fakebin / tool).symlink_to(src)
@@ -496,3 +500,60 @@ def test_the_jenkins_step_archives_the_check_report_even_on_a_red_build():
     assert "archiveArtifacts artifacts: 'darnlink-check.json', allowEmptyArchive: true" in text
     # a reused workspace must not hand the previous build's counts to this one
     assert 'rm -f "$DARNLINK_GATE_REPORT"' in text
+
+
+def test_every_agent_family_runs_the_ONE_shell():
+    """The Windows branch must not grow a second copy of the shell: a copy is how the seventeen
+    Jenkinsfiles drifted. Linux/macOS hand gateShell() to `sh`, Windows to windowsBash(); there is one
+    shell block in the file, and the Windows runner uses the bash of Git for Windows without the
+    agent's profile."""
+    text = JENKINS.read_text(encoding="utf-8")
+    assert "if (isUnix()) {" in text
+    assert "sh gateShell()" in text
+    assert "windowsBash(gateShell())" in text
+    assert text.count("'" * 3) == 2, "one shell block, opened and closed once"
+    assert "--noprofile --norc" in text
+    assert "%ProgramFiles%/Git/bin/bash.exe" in text and "DARNLINK_GATE_BASH" in text
+    # the step file it writes is removed even when the gate fails
+    win = text[text.index("def windowsBash("):]
+    assert "} finally {" in win and "rm -f .darnlink-gate-step.sh" in win
+
+
+def _python3_is_broken(tmp_path, python_works):
+    """A PATH whose `python3` runs nothing (the Windows Store stub) and whose `python` is either the
+    real interpreter or broken too."""
+    fake = tmp_path / "fakepy"
+    fake.mkdir()
+    stub = "#!/usr/bin/env bash\nexit 49\n"
+    (fake / "python3").write_text(stub, encoding="utf-8")
+    (fake / "python3").chmod(0o755)
+    if python_works:
+        (fake / "python").symlink_to(sys.executable)
+    else:
+        (fake / "python").write_text(stub, encoding="utf-8")
+        (fake / "python").chmod(0o755)
+    return f"{fake}:{os.environ['PATH']}"
+
+
+@requires_bash
+def test_a_python3_that_runs_nothing_falls_back_to_python(tmp_path):
+    """Windows agents often have only `python`, and `python3` is the Store stub. The step makes a
+    temporary python3 that runs python, and the whole verify-and-run path then works."""
+    payload = "#!/usr/bin/env bash\n# genuine\n"
+    r = _run_fetch(JENKINS, tmp_path, payload, sealed=_sha(payload),
+                   only_path=_python3_is_broken(tmp_path, python_works=True))
+    assert r.returncode == 0, f"the python fallback did not run the gate: {r.stdout}{r.stderr}"
+    assert "python runs as python3" in r.stdout
+    assert "checksum OK" in (r.stdout + r.stderr)
+
+
+@requires_bash
+def test_no_python_3_at_all_FAILS_instead_of_running_defaults(tmp_path):
+    """Without any Python 3 the recipe cannot read darnlink-gate.json and would run an old darnlink with
+    every default: the step stops first, and says why."""
+    payload = "#!/usr/bin/env bash\necho RAN\n"
+    r = _run_fetch(JENKINS, tmp_path, payload, sealed=_sha(payload),
+                   only_path=_python3_is_broken(tmp_path, python_works=False))
+    assert r.returncode != 0
+    assert "no Python 3 on this agent" in r.stderr
+    assert "RAN" not in r.stdout

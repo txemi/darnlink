@@ -15,10 +15,14 @@
 // Make that default version a TAG, not a branch: it decides which copy of this verifier runs, and a
 // branch is a mutable ref.
 //
-// WITHOUT the library: copy the `sh` block below into a stage of your declarative Jenkinsfile
+// WITHOUT the library: copy the shell of gateShell() below into an `sh` step of your declarative Jenkinsfile
 // (recipes/examples/Jenkinsfile-stage.groovy shows where). It fetches the PINNED recipe from the
 // PUBLIC darnlink repo -- no credentials -- and runs it FAIL-CLOSED.
 //
+// AGENTS: Linux and macOS run the shell with `sh`. A Windows agent runs the SAME shell with the bash of
+//          Git for Windows (`bat`), so there is still one copy and one seal (`recipe_sha256`): see
+//          windowsBash() below. It needs Git for Windows; DARNLINK_GATE_BASH names its bash.exe when it
+//          is not under %ProgramFiles%/Git. It runs the bash recipe, not the .ps1 twin.
 // ASSUMES: `uvx` is available on the agent. `astral-sh` installs `uv` into ~/.local/bin; if it isn't
 //          on PATH, prepend it (e.g. `export PATH="$HOME/.local/bin:$PATH"`) inside the sh block.
 // The pin is DERIVED from darnlink-gate.json, never repeated here. Two copies of a version number is
@@ -34,8 +38,46 @@ def call() {
   withEnv(['DARNLINK_GATE_FAIL_CLOSED=1',   // the wall must fail closed
            "DARNLINK_GATE_REPORT=${env.WORKSPACE}/darnlink-check.json"]) {
     try {
-    sh '''
+      if (isUnix()) {
+        sh gateShell()
+      } else {
+        windowsBash(gateShell())
+      }
+    } finally {
+      archiveArtifacts artifacts: 'darnlink-check.json', allowEmptyArchive: true, fingerprint: false
+    }
+  }
+}
+
+// The fetch-verify-run shell, ONE copy for every agent family: call() hands it to `sh` on Linux and
+// macOS and to windowsBash() on Windows. The tests extract this block and run it.
+def gateShell() {
+  return '''
       set -eu
+      # A Windows agent hands WORKSPACE as a drive-letter path; Git bash names the same directory as
+      # /c/..., the form every tool below accepts. The working directory IS the workspace.
+      case "$(uname -s)" in MINGW* | MSYS* | CYGWIN* ) WORKSPACE=$PWD ;; esac
+      # python3 is a hard dependency of the recipe (it parses darnlink-gate.json). A Windows agent often
+      # has only `python` (or a `python3` that is the Store stub and runs nothing): then a temporary
+      # python3 that runs python, on PATH for this step only. No Python 3 at all fails here, loudly:
+      # without it the recipe would run an old darnlink with every default.
+      ALIAS=
+      trap '[ -z "$ALIAS" ] || rm -rf "$ALIAS"' EXIT
+      is_python3() { "$1" -c 'import sys; sys.exit(sys.version_info[0] != 3)' >/dev/null 2>&1; }
+      if ! is_python3 python3; then
+        if is_python3 python; then
+          ALIAS=$(mktemp -d)
+          echo '#!/usr/bin/env bash' > "$ALIAS/python3"
+          echo 'exec python "$@"' >> "$ALIAS/python3"
+          chmod +x "$ALIAS/python3"
+          PATH="$ALIAS:$PATH"
+          export PATH
+          echo "no working python3 on this agent: python runs as python3 for this step"
+        else
+          echo "no Python 3 on this agent (neither python3 nor python): the recipe cannot read darnlink-gate.json" >&2
+          exit 1
+        fi
+      fi
       # A reused workspace keeps the last build's file: without this, a build that fails before the
       # check would archive the PREVIOUS build's counts as its own.
       if [ -n "${DARNLINK_GATE_REPORT:-}" ]; then rm -f "$DARNLINK_GATE_REPORT"; fi
@@ -106,9 +148,22 @@ def call() {
       chmod +x "$WORKSPACE/.darnlink-gate"
       "$WORKSPACE/.darnlink-gate"          # scope=repo from darnlink-gate.json
       rm -f "$WORKSPACE/.darnlink-gate"
-    '''
-    } finally {
-      archiveArtifacts artifacts: 'darnlink-check.json', allowEmptyArchive: true, fingerprint: false
+  '''
+}
+
+// A Windows agent: the same shell, written to the workspace and run by the bash of Git for Windows,
+// whose launcher puts its own tools (curl, sha256sum, coreutils) on PATH. --noprofile --norc: the
+// agent's bash profile is not part of the gate. PYTHONUTF8=1: the recipe's Python reads and prints
+// UTF-8 whatever the console code page, so a non-ASCII file name is judged, not mangled.
+// Forward slashes in the path on purpose: this file carries no backslash (see the note in the shell).
+def windowsBash(String script) {
+  String bash = env.DARNLINK_GATE_BASH ?: '%ProgramFiles%/Git/bin/bash.exe'
+  writeFile file: '.darnlink-gate-step.sh', text: script, encoding: 'UTF-8'
+  try {
+    withEnv(['PYTHONUTF8=1']) {
+      bat('@"' + bash + '" --noprofile --norc .darnlink-gate-step.sh')
     }
+  } finally {
+    bat('@"' + bash + '" --noprofile --norc -c "rm -f .darnlink-gate-step.sh"')
   }
 }
