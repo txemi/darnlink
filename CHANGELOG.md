@@ -6,6 +6,19 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **`darnlinkGate()` runs on Windows agents.** On an agent where `isUnix()` is false, the step writes the
+  same fetch-verify-run shell to the workspace and runs it with the bash of Git for Windows
+  (`%ProgramFiles%/Git/bin/bash.exe`, or the path in `DARNLINK_GATE_BASH`), with `--noprofile --norc`
+  and `PYTHONUTF8=1`. There is still one copy of the shell and one seal: it runs the bash recipe,
+  checked against `recipe_sha256`, not the `.ps1` twin. Before, the step was `sh` only and failed on a
+  Windows agent, so a Windows repo kept its own copy of these lines.
+- **The step finds a Python 3 under either name.** When `python3` runs nothing (the Windows Store
+  stub) but `python` is Python 3, a temporary `python3` that runs `python` goes on `PATH` for the step;
+  with no Python 3 at all the step fails before fetching, instead of letting the recipe run an old
+  darnlink with every default.
+
 ## [0.33.1] — 2026-11-18
 
 ### Fixed
