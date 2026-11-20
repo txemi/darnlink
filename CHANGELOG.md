@@ -6,6 +6,8 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.34.0] — 2026-11-20
+
 ### Added
 
 - **`darnlinkGate()` runs on Windows agents.** On an agent where `isUnix()` is false, the step writes the
@@ -1489,7 +1491,8 @@ First public release.
 - Ships a [pre-commit](https://pre-commit.com/) hook (`darnlink`, `darnlink-repair`).
 - Format specification: [FORMAT.md](FORMAT.md) <!-- uuid: 9052d864-2a45-4ed4-8725-d8a394e7a7ef -->.
 
-[Unreleased]: https://github.com/txemi/darnlink/compare/v0.33.1...HEAD
+[Unreleased]: https://github.com/txemi/darnlink/compare/v0.34.0...HEAD
+[0.34.0]: https://github.com/txemi/darnlink/compare/v0.33.1...v0.34.0
 [0.33.1]: https://github.com/txemi/darnlink/compare/v0.33.0...v0.33.1
 [0.33.0]: https://github.com/txemi/darnlink/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/txemi/darnlink/compare/v0.31.0...v0.32.0
