@@ -32,7 +32,7 @@ from urllib.parse import unquote
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from .frontmatter_index import read_frontmatter_uuid
-from .paths import resolved
+from .paths import DIR_ANCHOR, names_md, resolved
 from .links import (MD_LINK_RE, Span, _in_spans, code_spans, ignored_spans,
                     mermaid_click_destinations)
 
@@ -617,6 +617,22 @@ def _retry_unless_404(call: Callable[[], Tuple[int, Optional[str]]], attempts: i
     return status, text
 
 
+def _dir_anchor_reading(gu: GithubUrl) -> Optional[GithubUrl]:
+    """The same reading with the folder's `README.md` (`paths.DIR_ANCHOR`) appended to the path,
+    or None when the path already names a Markdown file. Locally a link to a directory is judged by
+    the uuid of its README.md (feature 011); a web link to a folder is the same link written as a
+    URL, so it is judged the same way.
+
+    Skipped for a path that names a `.md` (`paths.names_md`, the same file-or-directory rule the
+    local repair uses): `README.md/README.md` cannot exist, and `a.md/README.md` would only spend a
+    request on every broken file link to find a folder named like a file. Any other name is asked,
+    dotted or not — `v1.2` is a folder as often as `out.html` is a file, and the URL cannot say."""
+    if names_md(gu.path):
+        return None
+    path = gu.path.rstrip("/")
+    return replace(gu, path=f"{path}/{DIR_ANCHOR}" if path else DIR_ANCHOR)
+
+
 def _fetch_forgejo(gu: GithubUrl, token: Optional[str], attempts: int,
                    sleep) -> Tuple[int, Optional[str]]:
     """Try the server's names in declared order; the first that ANSWERS decides. A name that only
@@ -624,7 +640,14 @@ def _fetch_forgejo(gu: GithubUrl, token: Optional[str], attempts: int,
     A 404 on a reachable name is never retried through another name: it is the server's answer,
     and the other names are the same server. It IS retried, on that same name, with the ref
     lengthened one segment at a time (`_longer_refs`): a branch named `reports/data` otherwise
-    reads as a false `web_not_found` on every file it holds."""
+    reads as a false `web_not_found` on every file it holds.
+
+    When every reading 404s, each one is asked once more as a FOLDER, for its `README.md`
+    (`_dir_anchor_reading`): Forgejo's raw API answers 404 for a path that is a directory, so a
+    link to a folder read as missing although the folder and its README are there. Only a 200
+    replaces the answer — that README is then the destination, its uuid the link's, exactly as
+    locally. Anything else leaves the original 404 in place, and with it the repo probe below:
+    a folder without a README.md is judged exactly as before."""
     assert gu.forge is not None
     for base in gu.forge.bases:
         if base in _forgejo_unreachable:
@@ -639,6 +662,17 @@ def _fetch_forgejo(gu: GithubUrl, token: Optional[str], attempts: int,
                     lambda alt=alt: _fetch_once(alt, token, base), attempts, sleep)
                 if alt_status != 404:
                     return (alt_status, alt_text)
+            # `_retry_unless_404`: a folder reading that 404s is the expected answer for a file link
+            # that is simply broken, so it costs one request and no sleep. A 502 on it IS retried —
+            # a blip must not turn a folder that exists into a false `web_not_found`.
+            for reading in (gu, *_longer_refs(gu)):
+                folder = _dir_anchor_reading(reading)
+                if folder is None:
+                    continue
+                dir_status, dir_text = _retry_unless_404(
+                    lambda folder=folder: _fetch_once(folder, token, base), attempts, sleep)
+                if dir_status == 200:
+                    return (dir_status, dir_text)
         if status == 404 and token and not _forgejo_repo_accessible(gu.forge, base, gu.owner, gu.repo, token):
             return (-2, None)
         return (status, text)
@@ -707,8 +741,12 @@ class OwnRepo:
     forgejo_slugs: frozenset = frozenset()
 
 
-def _pendiente_en_la_rama_por_defecto(gu: "GithubUrl", own: Optional["OwnRepo"]) -> bool:
+def _pendiente_en_la_rama_por_defecto(gu: "GithubUrl", own: Optional["OwnRepo"]) -> Optional[str]:
     """Is this 404 "not published yet" rather than "broken"? Only if ALL of the following hold.
+
+    Returns the tracked, repo-relative file that will answer once merged (the link's own path, or
+    a folder's `README.md`), or None. A string rather than a bool so the finding can say WHICH file
+    it vouched for: "`<folder>` is a tracked file" would be false about a folder.
 
     Each condition closes a leak MEASURED in adversarial review. An earlier draft checked only two
     — own repo, and `.exists()` — and every case below walked through it GREEN while being a link
@@ -716,33 +754,33 @@ def _pendiente_en_la_rama_por_defecto(gu: "GithubUrl", own: Optional["OwnRepo"])
     too much: green reads the same whether it is right or blind.
     """
     if own is None:
-        return False
+        return None
     # (1) ASCII SLUG, and `.lower()` rather than `.casefold()`. GitHub slugs are ASCII, so any URL
     #     carrying anything else is a permanently dead link — and `casefold()` COLLAPSES exactly
     #     those lookalikes: U+212A (KELVIN) folds to `k`, U+00DF to `ss`. The sibling helper
     #     `_github_owner_from_origin` carries an explicit comment about `re.ASCII` and U+0131 for
     #     this same reason; this comparison did not inherit that hardening.
     if not (gu.owner.isascii() and gu.repo.isascii()):
-        return False
+        return None
     if gu.forge is None:
         if f"{gu.owner}/{gu.repo}".lower() != own.slug.lower():
-            return False
+            return None
     else:
         # A declared Forgejo is this repo only when one of its REMOTES lives there under this slug
         # (`OwnRepo.forgejo_slugs`) — never merely because the slug matches the GitHub one: the same
         # `owner/repo` on two forges can be two different repositories. And only a `branch/` link
         # can be pending: `tag/` and `commit/` say in the URL that nothing will move them.
         if gu.ref_kind != "branch":
-            return False
+            return None
         if (gu.forge.key, f"{gu.owner}/{gu.repo}".lower()) not in own.forgejo_slugs:
-            return False
+            return None
     # (2) THE REF MUST BE THE DEFAULT BRANCH. It is what the message claims ("resolves when this
     #     branch merges") and what went unchecked: a `blob/<sha>/x` or `blob/v1.0.0/x` is IMMUTABLE
     #     — it will never resolve — and was forgiven all the same. This file already ships the
     #     detector (`_IMMUTABLE_REF_RE`, used for exactly this in FR-006); requiring the default
     #     branch is stronger still and does not depend on guessing what an immutable ref looks like.
     if not own.default_ref or gu.ref != own.default_ref:
-        return False
+        return None
     # (3) THE PATH, CONFINED TO THE TREE. URL paths are PERCENT-ENCODED, and this matters daily
     #     here: folder names carry a timezone offset (`…T104500+0200_…`), which in a URL is `%2B`.
     #     Undecoded, the rung sat silently inert on the commonest shape in the repo — it did not
@@ -750,19 +788,30 @@ def _pendiente_en_la_rama_por_defecto(gu: "GithubUrl", own: Optional["OwnRepo"])
     #     an absolute path left the repo entirely and `.exists()` happily agreed.
     ruta = unquote(gu.path)
     if ruta.startswith("/") or ".." in PurePosixPath(ruta).parts:
-        return False
+        return None
     destino = own.root / ruta
     try:
         if not resolved(destino).is_relative_to(resolved(own.root)):
-            return False
+            return None
     except (OSError, ValueError):
-        return False
+        return None
     # (4) AND IT MUST BE A TRACKED FILE. `.exists()` accepts a DIRECTORY (which GitHub serves under
     #     `/tree/`, so `/blob/<dir>` 404s forever) and a GITIGNORED file, which no merge puts on the
     #     default branch. Neither of them is fixed by merging.
+    #
+    #     ONE directory is fixed by merging: a folder on a declared Forgejo whose README.md is
+    #     tracked. `_fetch_forgejo` judges a folder link by that README (`_dir_anchor_reading`), as
+    #     the local axis does, so once merged the link resolves — and the file vouched for is the
+    #     README, through the same tracked check. Forgejo only: on GitHub nothing asks for the
+    #     README, so there the merge still resolves nothing. And not a folder named like a `.md`,
+    #     which `_dir_anchor_reading` never asks for either: the two rules must agree, or this rung
+    #     would promise a resolution the fetch never attempts.
+    if destino.is_dir() and gu.forge is not None and not names_md(ruta):
+        ruta = f"{ruta.rstrip('/')}/{DIR_ANCHOR}" if ruta.rstrip("/") else DIR_ANCHOR
+        destino = own.root / ruta
     if not destino.is_file():
-        return False
-    return _esta_versionado(own.root, ruta)
+        return None
+    return ruta if _esta_versionado(own.root, ruta) else None
 
 
 def _esta_versionado(root: "Path", ruta: str) -> bool:
@@ -846,9 +895,12 @@ def _classify(link: WebLink, gu: Optional[GithubUrl], status: int, dest_uuid: Op
         # downgrade a REAL break whenever an unrelated repo happens to share a filename (`README.md`
         # is the obvious one). So it must also be OUR OWN repo — the only one whose working tree says
         # anything about where that URL will point after a merge.
-        if _pendiente_en_la_rama_por_defecto(gu, own):
+        pending = _pendiente_en_la_rama_por_defecto(gu, own)
+        if pending:
+            what = (f"`{gu.path}` is a" if pending == unquote(gu.path)
+                    else f"`{gu.path}` is a folder whose `{DIR_ANCHOR}` is a")
             return WebFinding("web_unverifiable", f, link.href,
-                              f"destination 404s on the default branch `{gu.ref}` but `{gu.path}` is a "
+                              f"destination 404s on the default branch `{gu.ref}` but {what} "
                               "TRACKED FILE in this working tree — pending on the default branch, not "
                               "broken. It resolves when this branch merges (or stays pending if the "
                               "branch is abandoned); blocking here would block that merge")
