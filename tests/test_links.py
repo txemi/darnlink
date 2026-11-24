@@ -127,7 +127,8 @@ def test_file_is_ignored_marker_inside_code_does_not_count():
 
 
 def test_detects_a_robust_link_whose_text_is_empty():
-    """FR-051: `ROBUST_LINK_RE` widens with `MD_LINK_RE`, and that coupling needs its own test.
+    """FR-051: the pre-#74 `ROBUST_LINK_RE` widens with the pre-#74 `MD_LINK_RE`, and that coupling
+    needs its own test.
 
     Reverting only the robust half leaves every dangling test green — measured — because those go
     through `find_plain_links`. If the two disagree, an anchored `[](x) <!-- uuid: … -->` is plain to

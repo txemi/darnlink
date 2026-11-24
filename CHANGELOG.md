@@ -15,6 +15,98 @@ All notable changes to darnlink are documented here. The format is based on
   host that must not reach GitHub run the pre-commit hook, `tools/check.sh` and the language gates
   against its own forge's copy of darnlang. CI is unchanged.
 
+### Fixed
+
+- **A link destination with parentheses is read whole, in every spelling, and `--write` no longer
+  breaks it (#74).** A link to a folder named `Foo (Bar)` was cut at the first `)`: `[x](../A (Z)/)`
+  read as `../A (Z`, a dead link to a folder that is on disk. The escaped form `../A \(Z\)/` and the
+  angle form `<../A (Z)/>` were cut the same way, and the percent-encoded form `../A%20%28Z%29/` was
+  never anchored, so `repair` rewrote all of them into links that were broken for real. The two link
+  regular expressions are replaced by one scanner (`links.scan_links`) that reads a destination as
+  CommonMark does: `<…>` (spaces and parentheses allowed), or a bare run whose parentheses are
+  balanced (up to 32 levels, cmark's bound; deeper falls to the next reading) or backslash-escaped,
+  then an optional title. When CommonMark says "not a
+  link", two fallbacks follow, in this order:
+  - **A single-line bare destination with spaces** (`[x](../A (Z)/)`) is taken whole, up to the `)`
+    that balances the opening one. This is a deliberate extension: strict CommonMark renders that
+    text as plain text, but it is how people write links to such folders, and the old reader
+    half-read it anyway. The span may not hold a newline, `[`, `]`, `<`, `>` or `"`, so it can never
+    swallow a neighbouring link. A trailing `"…"` or `'…'` title after whitespace, on the same line
+    and without `[`/`]`, is separated as usual (`[y](Foo (Bar)/ "T")`); a `(…)` title is not, since
+    in this form it cannot be told from a folder name. Where CommonMark does apply it wins:
+    `[x](../A (Z))` is the destination `../A` with the title `Z`, as every renderer reads it.
+  - **The old `[^)]+` reading**, which truncates, for input that is neither (an unbalanced `(`): the
+    link stays visible and red rather than vanishing.
+- **One rule turns a local Markdown destination into a path** (`paths.destination_path`, used by
+  `resolve_href`, so by robustify, repair and the dangling axis alike): backslash escapes are
+  undone, then `%XX` is decoded. If that path does not exist but the destination taken literally
+  does (a file really named `a%20b.md`, a path written with Windows backslashes), the literal one
+  is used, as before. Decoding never changes what kind of href it is: `is_local_relative` judges
+  the decoded spelling too, so `%2Fhome%2Fx.md` and `\/home/x.md` stay absolute local paths
+  (reported, never anchored), and `resolve_href` keeps the literal spelling when decoding would
+  turn a relative href absolute. Web links are not unescaped (`web-check` reads the URL as
+  written, percent-decoding only the path it fetches, as before), and a YAML `link:` value is
+  resolved literally: it is a plain path, not a Markdown destination, so `{link: "a%20b.md"}` still
+  needs a repair to reach `a b.md`, exactly as before.
+- **`--write` keeps the author's spelling of a destination.** Robustify writes the text between the
+  parentheses back byte for byte and only appends the anchor. Repair replaces only the destination
+  token, keeps any title and the spacing around it, and writes the new path the way the old one was
+  written: `<…>` stays `<…>`, `%XX` stays percent-encoded (`%28`, `%20`, non-ASCII as UTF-8), `\(`
+  stays escaped, a raw space stays raw. In every form, a `#` or `?` in the new path is written
+  `%23`/`%3F` and a `%` before two hex digits `%25`, so a folder named `C#` cannot be read back as
+  `C` plus a fragment. The one change of form: when the new path holds a space
+  (or an unbalanced parenthesis, or a `[`) and the old bare destination had none, the new one is
+  written `<…>`, because a raw space would turn a valid CommonMark link into plain text. Every
+  rewritten destination is read back by the scanner before it is written; the last resort, which
+  always reads back, percent-encodes the path and the fragment. And when CommonMark reads
+  `[x](Foo (Bar))` as `Foo` with the title `Bar` but the uuid names the folder `Foo (Bar)`, repair
+  rewrites the whole run (`[x](<Foo (Bar)/>)`) instead of keeping a false title
+  (`[x](<Foo (Bar)/> (Bar))`). It does so only when the CommonMark reading names nothing on disk,
+  the longer reading holds no `#` (after a fragment the extra text is fragment text, so
+  `[x](../guide.md#intro (Intro))` keeps its title), and the longer reading names the target: it
+  resolves to it, or, after a move, its last component is the target's name (`[x](../Foo (Bar))`
+  to `[x](<../sub/Foo (Bar)/>)`). A real title stays (`[x](../sub/guide.md (Guide))`:
+  `guide.md (Guide)` is not `guide.md`). When either reading names a live file or folder that does
+  not hold the uuid (a file `Foo` next to the folder `Foo (Bar)`, or a folder `A (B)` at the root
+  holding another uuid while the target is `sub/A (B)/`), it is a CONFLICT, left untouched.
+
+### Changed
+
+- **Results that change for existing links.** Measured on a 10,193-file tree (about 33,000 links): the
+  same links are found, and 18 destinations read differently, all of them a title or a leading
+  space no longer glued onto the destination.
+  - Whitespace around a destination is not part of it: `[x]( B.md )` names `B.md` and resolves
+    (it was a dangling finding), and `[x](old/B.md ) <!-- uuid -->` is already correct (repair used
+    to rewrite it without the space; it is now left alone, as it already was on Windows).
+    `tests/test_dangling_links.py` inverts the two tests that pinned the old behaviour, as they said
+    they must when #74 landed.
+  - A title is not part of the destination: `[x](a.md "t")` resolves to `a.md` (it was a dangling
+    finding for `a.md "t"`). On the web axis, such a URL is now fetched instead of being
+    `web_unverifiable`, and an anchoring write keeps the title and the `<…>`.
+  - A plain link whose destination is percent-encoded or escaped now gets anchored by robustify (it
+    was neither anchored nor reported).
+  - An escaped absolute path (`\/home/x.md`) is reported as `absolute_local_path` (it was a
+    `dangling` finding for a relative path starting with a backslash). An encoded one (`%2F…`) is
+    reported as before.
+  - Triple and deeper nesting is read whole; a `\(` no longer merges the following link into one
+    mangled destination (two findings where there was one).
+  - A link whose `)` was escaped by mistake now ends where CommonMark ends it, which can detach its
+    anchor: in `[t](a\(b).md) <!-- uuid: U -->` the link is `[t](a\(b)` and the comment follows
+    `.md)`, not the link. Before, the link read `a\(b).md` and `check` exited 2 proposing a repair to
+    the file holding U; now there is no robust link to repair, `check` exits 0, and the only trace
+    is a `dangling` finding for the plain link `a\(b` (the path `a(b`), informational unless the
+    dangling axis is set to fail. A detached anchor is not a finding of its own on any axis; adding
+    one would be a new axis, a separate change.
+  - The scan is linear in the length of the file. The old regex was quadratic on unterminated
+    destinations (8,000 × `[a](b` took about 1.1 s and 8,000 × `[a](x y ` about 2 s; now a few
+    milliseconds or less). On adversarial input that keeps a destination unbalanced across many
+    later links, each failed attempt may re-read up to the 32-level nesting cap, so there the
+    constant is larger than the regex's (32,000 × `[a](b(c)` plus one `)`: about 1.3 s against
+    0.02 s), but it no longer grows with the square of the input.
+  - `links.MD_LINK_RE` and `links.ROBUST_LINK_RE` are removed; `links.scan_links` replaces both.
+    `PlainLink`, `RobustLink` and `WebLink` gain fields with defaults (the destination's position
+    and form), so existing constructors keep working.
+
 ## [0.34.1] — 2026-11-24
 
 ### Fixed

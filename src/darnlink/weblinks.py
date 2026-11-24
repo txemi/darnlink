@@ -33,7 +33,7 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from .frontmatter_index import read_frontmatter_uuid
 from .paths import DIR_ANCHOR, names_md, resolved
-from .links import (MD_LINK_RE, Span, _in_spans, code_spans, ignored_spans,
+from .links import (Span, scan_links, _in_spans, code_spans, ignored_spans,
                     mermaid_click_destinations)
 
 # A web anchor is DELIBERATELY marked `web-uuid` (not the core's `uuid`): the destination uuid lives
@@ -82,10 +82,10 @@ _GITHUB_BLOB_RE = re.compile(
 
 #: Exactly what `http.client` refuses to put on the wire (`_contains_disallowed_url_pchar_re`). An
 #: href carrying any of these is not a URL: mirrored third-party content arrives with two truncated
-#: URLs separated by a space, with control characters from OCR, with a CommonMark title glued on by
-#: `MD_LINK_RE`. Matching http.client's own set rather than the narrower `\s` is deliberate — anything
-#: that slips past here reaches the fetch layer and takes a different route to a different verdict for
-#: the same defect.
+#: URLs separated by a space, with control characters from OCR, or (before the link scanner, which
+#: now separates a title) a CommonMark title glued on by the old link regex. Matching http.client's
+#: own set rather than the narrower `\s` is deliberate — anything that slips past here reaches the
+#: fetch layer and takes a different route to a different verdict for the same defect.
 _DISALLOWED_URL_CHARS_RE = re.compile(r"[\x00-\x20\x7f]")
 
 
@@ -324,6 +324,10 @@ class WebLink:
     #: comment. A property of the item and not an argument of the caller: a rule the call site
     #: must remember is a rule that disappears the day someone adds a second call site.
     report_only: bool = False
+    #: The text between the link's `(` and `)`, verbatim (a `<…>` destination, a title). `href` is
+    #: the URL alone; this is what an anchoring rewrite puts back, so it changes nothing but the
+    #: comment it adds. Empty for an item that is never written (a diagram destination).
+    inner: str = ""
 
 
 def find_mermaid_web_links(content: str, ignore: Sequence[Span] = ()) -> List[WebLink]:
@@ -349,19 +353,20 @@ def find_web_links(content: str, ignore: Sequence[Span] = (),
     """All Markdown links whose href is an http(s) URL, in document order, skipping `ignore` spans.
     A trailing `<!-- web-uuid: owner/repo#X -->` marks the link as already anchored (its uuid is captured)."""
     out: List[WebLink] = []
-    for m in MD_LINK_RE.finditer(content):
-        href = m["href"]
+    for m in scan_links(content):
+        href = m.href
         if not href.strip().lower().startswith(("http://", "https://")):
             continue
-        if _in_spans(m.start(), ignore):
+        if _in_spans(m.start, ignore):
             continue
-        tail = _TRAILING_WEB_UUID_RE.match(content, m.end())
-        end = tail.end() if tail else m.end()
+        tail = _TRAILING_WEB_UUID_RE.match(content, m.end)
+        end = tail.end() if tail else m.end
         uuid = tail["uuid"].lower() if tail else None
         # FR-011: recognised right after the `)` or right after the anchor, and nowhere else. `end`
         # deliberately does NOT cover it, so an exempt link that is ever rewritten keeps its marker.
         exempt = _TRAILING_OWN_EXEMPT_RE.match(content, end) is not None
-        out.append(WebLink(m["text"], href, uuid, m.start(), end, exempt))
+        out.append(WebLink(m.text, href, uuid, m.start, end, exempt,
+                           inner=content[m.inner_start:m.inner_end]))
     if include_mermaid:
         if block_spans is None:
             # NOT a default of `()`. A permissive default is how the original defect got in: the
@@ -1037,7 +1042,7 @@ def check_web_links_online(
             findings.append(fnd)
             if fnd.kind == "web_anchor" and fnd.anchored_uuid:
                 pieces.append(content[cursor:link.start])
-                pieces.append(emit_web_anchor(link.text, link.href, fnd.anchored_uuid))
+                pieces.append(emit_web_anchor(link.text, link.inner or link.href, fnd.anchored_uuid))
                 cursor = link.end
                 changed = True
         if changed:

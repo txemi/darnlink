@@ -18,15 +18,16 @@ a link whose path was the real intent.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 from urllib.parse import unquote
 
 from .frontmatter_index import DEFAULT_EXCLUDES, FrontmatterIndex, iter_markdown_files
-from .links import (code_spans, emit_robust_link, file_ignores_links, file_is_ignored,
-                    find_robust_links, ignored_spans)
-from .paths import (DIR_ANCHOR, is_web_href, names_md, pointer_fragment, relative_link, resolve_href, resolved,
-                    split_fragment)
+from .links import (code_spans, destination_token, emit_robust_link, file_ignores_links, file_is_ignored,
+                    find_robust_links, ignored_spans, paren_title_as_path, spell_destination,
+                    splice_destination)
+from .paths import (DIR_ANCHOR, destination_path, is_web_href, names_md, pointer_fragment, relative_link,
+                    resolve_href, resolved, split_fragment)
 from .frontmatter_edit import read_text_keep_newlines, write_text_keep_newlines
 from .report import Finding, Kind
 from .scope import in_scope
@@ -140,13 +141,52 @@ def plan_repairs(
                 )
                 continue
             intended = target.parent if dir_link else target
+            # `[x](Foo (Bar)) <!-- uuid -->` reads, as CommonMark says, `Foo` with the title `Bar`. When
+            # the author meant the folder `Foo (Bar)`, rewrite the destination AND the false title,
+            # never `[x](<Foo (Bar)/> (Bar))`. All three conditions are required, so a real title is
+            # never turned into a path:
+            # * the CommonMark reading names nothing on disk. A live `Foo` that does not hold the uuid
+            #   is a path/uuid CONFLICT, never reinterpreted (the CONFLICT check below runs whatever
+            #   happens here, so this is also enforced there);
+            # * the longer reading (destination + title, as scanner rung 2 reads it) holds no `#`.
+            #   The title can only be part of a PATH when nothing before it, or in it, starts a
+            #   fragment: in `../guide.md#intro (Intro)` the extra text would land in the fragment,
+            #   the path stays `../guide.md`, and the title is a title;
+            # * the longer reading names the target: it resolves to it, or -- the folder moved -- its
+            #   last component is the target's name.
+            # `[x](../sub/guide.md (Guide))` keeps its title: `guide.md (Guide)` is not `guide.md`.
+            # And when the longer reading names something ELSE that exists (a folder `A (B)` holding
+            # another uuid, a plain file `Foo (Bar)`), the author's text points at a live target the
+            # uuid does not name: a CONFLICT, exactly as for the CommonMark reading below.
+            dest_end = link.dest_end
+            if current != resolved(intended) and not current.exists():
+                wider = paren_title_as_path(content, link)
+                long_path = content[link.dest_start:wider] if wider is not None else ""
+                if long_path and "#" not in long_path:
+                    long_target = resolve_href(long_path, f)
+                    long_name = PurePosixPath(destination_path(long_path)).name
+                    if long_target == resolved(intended) or long_name == intended.name:
+                        if long_target.exists() and long_target != resolved(intended):
+                            kind_word = "file" if long_target.is_file() else "directory"
+                            local.append(
+                                Finding(
+                                    Kind.CONFLICT,
+                                    f,
+                                    f"{long_path} resolves to an existing {kind_word}, but uuid {link.uuid} "
+                                    f"lives in {target} — path and uuid disagree; left untouched",
+                                )
+                            )
+                            continue
+                        dest_end = wider
             if current == resolved(intended):
                 if not element or frag == element or unquote(frag) == element:  # `%20` in a link is a space
                     continue  # already correct (cosmetic ./ or trailing-slash differences are fine)
-                new_href = f"{path_part}#{pointer_fragment(element)}"
+                # The path is kept exactly as spelled (`<…>`, `\(`, `%28`); only the fragment changes.
+                new_href = destination_token(f"{path_part}#{pointer_fragment(element)}", link.angle)
                 local.append(Finding(Kind.REPAIR, f, f"{link.href} -> {new_href} (the element moved)"))
                 pieces.append(content[cursor:link.start])
-                pieces.append(emit_robust_link(link.text, new_href, link.uuid, link.attrs))
+                pieces.append(emit_robust_link(link.text, splice_destination(content, link, new_href),
+                                               link.uuid, link.attrs))
                 cursor = link.end
                 changed = True
                 continue
@@ -171,11 +211,16 @@ def plan_repairs(
             if dir_link and not base.endswith("/"):
                 base += "/"  # keep directory links visibly directories (and re-recognisable as such)
             want = pointer_fragment(element) if element else frag
-            new_href = f"{base}#{want}" if want else base
-            local.append(Finding(Kind.REPAIR, f, f"{link.href} -> {new_href}"))
+            # #74: the new path is written the way the author wrote the old one (`<…>` stays `<…>`,
+            # `%XX` stays percent-encoded, `\(` stays escaped, a raw space stays raw); a title and
+            # the spacing inside the parentheses are kept. See `spell_destination` for the one case
+            # where the form has to change.
+            new_href = spell_destination(base, want, link.href, link.angle)
+            local.append(Finding(Kind.REPAIR, f, f"{content[link.dest_start:dest_end]} -> {new_href}"))
             # splice the rewritten robust link in place of the old span
             pieces.append(content[cursor:link.start])
-            pieces.append(emit_robust_link(link.text, new_href, link.uuid, link.attrs))
+            pieces.append(emit_robust_link(link.text, splice_destination(content, link, new_href, dest_end),
+                                           link.uuid, link.attrs))
             cursor = link.end
             changed = True
         if not scoped:

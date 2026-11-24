@@ -53,7 +53,7 @@ specs/001-robustify-and-repair/
 ```text
 src/darnlink/
 ├── __init__.py
-├── links.py             # robust-link grammar: detect / parse / emit (ROBUST_LINK_RE, from reference)
+├── links.py             # robust-link grammar: detect / parse / emit (`scan_links` since #74; was ROBUST_LINK_RE)
 ├── frontmatter_index.py # scan tree -> {uuid: path}; detect duplicates (ambiguous)
 ├── paths.py             # get_relative_link_path(): path relative to the LINKING file (ported)
 ├── repair.py            # repair op: recompute path for robust links by UUID

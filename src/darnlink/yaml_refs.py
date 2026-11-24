@@ -447,7 +447,9 @@ def _probe(link: str, yaml_file: Path) -> Optional[Tuple[Path, bool]]:
     """(the path a link names, whether it is a file); a directory link names the README.md inside. None when the
     path cannot be looked at (a name too long, a NUL, a folder without permission): a finding, not a crash."""
     try:
-        points = resolve_href(link, yaml_file)
+        # Literal (`decode=False`): a YAML `link:` is a plain path value, not a Markdown destination, so
+        # neither CommonMark's backslash escapes nor `%XX` decoding apply to it (#74 kept it as it was).
+        points = resolve_href(link, yaml_file, decode=False)
         # A NUL makes `resolve()` raise on Linux, but on Windows with 3.13 it does not, and `is_file()` then says
         # False: the link would read as "names no file". Refused here, so the finding is the same on every system.
         if "\0" in str(points):

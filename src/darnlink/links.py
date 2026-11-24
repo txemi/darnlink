@@ -8,95 +8,411 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import List, Optional, Sequence, Tuple
+from typing import Iterator, List, Optional, Sequence, Tuple
+from urllib.parse import quote
 
-# The BODY of a pandoc attribute block, between its own `{` and `}` — one definition, shared by
-# ROBUST_LINK_RE's `attrs` group below and by `_PANDOC_ATTR_RE` further down. `[^{}\n]*` alone (the
-# first version of this pattern) treats a `}` inside a quoted attribute value as the block's own
-# closing brace and cuts the match short there — not a miss, a WRONG match, and a corrupting one
-# once something is spliced at the point it stopped. `"[^"\n]*"` makes a quoted run atomic, so `{`
-# and `}` inside a quote no longer terminate the block early; an unterminated quote still fails the
-# whole match, same as an unbalanced `{` always did. Kept as ONE definition on purpose — two
-# independent copies of "what an attrs block looks like" is exactly the shape that drifted before
-# (`is_local_relative`'s four call sites, FR-052), and it already drifted once here: an earlier
-# revision of this fix updated only `_PANDOC_ATTR_RE` and left this literal on the old, corrupting
-# pattern, so `repair` silently stopped recognising (and therefore stopped fixing) an already-correct
-# robust link whose attrs held a quoted `}` — no finding, no write, the stale path just stayed stale.
+from .paths import URL_SAFE, destination_path, split_fragment
+
+# The BODY of a pandoc attribute block, between its own `{` and `}`, used by `_PANDOC_ATTR_RE`
+# further down. Before the link scanner (#74) robust-link detection carried a second copy of it
+# inside `ROBUST_LINK_RE`; now both directions go through `_skip_attrs`, one definition by
+# construction. `[^{}\n]*` alone (the first version of this pattern) treats a `}` inside a quoted
+# attribute value as the block's own closing brace and cuts the match short there — not a miss, a
+# WRONG match, and a corrupting one once something is spliced at the point it stopped. `"[^"\n]*"`
+# makes a quoted run atomic, so `{` and `}` inside a quote no longer terminate the block early; an
+# unterminated quote still fails the whole match, same as an unbalanced `{` always did. Kept as ONE
+# definition on purpose — two independent copies of "what an attrs block looks like" is exactly the
+# shape that drifted before (`is_local_relative`'s four call sites, FR-052), and it drifted once
+# here: an earlier revision of this fix updated only `_PANDOC_ATTR_RE` and left the copy inside
+# `ROBUST_LINK_RE` on the old, corrupting pattern, so `repair` silently stopped recognising (and
+# therefore stopped fixing) an already-correct robust link whose attrs held a quoted `}` — no
+# finding, no write, the stale path just stayed stale.
 _PANDOC_ATTR_BODY = r'(?:[^{}"\n]|"[^"\n]*")*'
 
-# A robust link: a Markdown link immediately followed (any whitespace) by a uuid HTML comment.
-# The optional `attrs` group is a pandoc attribute block (`{.cls}`, `{width="1in"}`, …): pandoc
-# requires it immediately after the link's `)`, with no whitespace, so it must be matched BEFORE
-# the anchor comment's leading `\s*` — reversing the order would let the whitespace class absorb
-# right up to `{`, misparsing `[x](y){.cls}` as `[x](y)` followed by unrelated `{.cls}` text.
-ROBUST_LINK_RE = re.compile(
-    r"\[(?P<text>[^\]]*)\]\((?P<href>(?:[^()\s]|\((?:[^()\s]|\([^()\s]*\))*\))+|[^)]+)\)"
-    r"(?P<attrs>\{" + _PANDOC_ATTR_BODY + r"\})?\s*<!--\s*uuid:\s*(?P<uuid>[0-9a-fA-F-]{36})\s*-->"
-)
-# Any inline Markdown link. `text` is `*`, not `+`: `[](dest)` is a link with empty text, and the
-# empty alt of `![](dest)` is what pandoc emits for every image in a converted .docx/.odt. Requiring
-# one character there made the whole link invisible -- not reported as bad, *absent* -- so a tree
-# full of broken image embeds passed the dangling axis as clean (FR-051). `href` stays `+`: a link
-# with no destination at all has nothing to check.
-#: The destination may contain BALANCED parentheses — CommonMark says so, and filenames from
-#: document systems are full of them (`Log%20Analysis%20(February).docx`). `[^)]+` stopped at
-#: the first `)`, truncating the path and reporting it dead while the file was on disk. Measured
-#: on the fleet: **266** links of that shape. The report concealed the cut, because its own
-#: `(resolves to …)` wrapper supplied the missing parenthesis and the path read as complete.
-#:
-#: ⚠️ **Bounded at two levels of nesting, and that bound is a known limit, not a property.**
-#: CommonMark allows arbitrary depth; a regex cannot. Adjudicated against the reference
-#: implementation: `[^)]+` agrees with `cmark` on 3 of 9 probe shapes, one level on 7, two on 8.
-#: The ninth is triple nesting, which no bounded pattern reaches — it needs the scanner tracked
-#: in #74, and it occurs 0 times in the fleet.
-#:
-#: ⚠️ **Two guards, and both exist because the first version of this change produced a FALSE
-#: GREEN — the outcome its own comment declared unacceptable.**
-#:
-#: * `[^()\s]`, not `[^()]`. A destination outside `<…>` cannot contain whitespace; CommonMark
-#:   says so, and without that exclusion the balanced branch pairs an *unmatched* `(` with the
-#:   link's own `)` and keeps running — across lines — until some later lone `)`. Everything
-#:   between is absorbed, and because `finditer` never restarts inside a match, a healthy link
-#:   caught in that span **ceases to exist for the tool**. Measured: `[a](f(x.md) blah [b](t.md)
-#:   tail)` lost `t.md` entirely. Excluding whitespace makes the branch fail at the first space,
-#:   so such input falls to the fallback and behaves exactly as it did before this change.
-#: * The trailing `|[^)]+`. Without it, a link nested past the bound stops matching at all —
-#:   invisible again, by the other route.
-#:
-#: Both restore the OLD truncating behaviour rather than silence: still wrong, still visible,
-#: still reported. **Never trade a false red for a false green.**
-#:
-#: ⚠️ **The swallow class is NARROWED, not closed, and saying otherwise would be the same kind of
-#: false claim this pattern exists to avoid.** Two producers survive, both handing an unmatched `(`
-#: with no whitespace in the absorbed span:
-#:
-#: * a **backslash-escaped** `\(` — CommonMark's own way to write a literal paren, which this
-#:   pattern has no escape handling for and reads as an opener;
-#: * an **angle-bracket destination** `(<…(…>)` — there is no `<…>` branch here at all, which is
-#:   awkward precisely because the whitespace rule above cites `<…>` as its exception.
-#:
-#: What bounds the harm: the merged destination never resolves, so the gate stays RED. It is an
-#: under-count with a mangled target name, not a green gate — N findings collapse to 1. The sharper
-#: cost is on the web axis, where the swallowed neighbours stop being fetched at all. Measured
-#: across 13.984 files in the gated fleet: **0 escaped-paren destinations, 0 angle destinations
-#: containing a paren, 0 adjacent-link shapes**. Closing it needs the scanner in #74.
-#:
-#: And the whitespace class is **wider than CommonMark's**: `\s` is Unicode-aware, while cmark
-#: terminates a destination only on ASCII space, tab and newline — it accepts NBSP, `\v`, `\f`,
-#: U+2000–200A and others as ordinary characters. So 12 characters are excluded needlessly. Kept
-#: because measured: with no parens the fallback returns those destinations byte-perfect (14/14),
-#: and with parens the result is exactly the old truncation. Nothing becomes invisible; the cost is
-#: precision, not safety.
-MD_LINK_RE = re.compile(r"\[(?P<text>[^\]]*)\]\((?P<href>(?:[^()\s]|\((?:[^()\s]|\([^()\s]*\))*\))+|[^)]+)\)")
+# --- Link scanner: where a Markdown link starts, where its destination is, where it ends --------
+#
+# Until #74 this was two regular expressions (`MD_LINK_RE`, `ROBUST_LINK_RE`). They accepted
+# balanced parentheses only in a destination with no whitespace, nested at most two levels, with no
+# idea of a backslash escape, of the `<…>` form or of a title. Anything else fell to `[^)]+`, which
+# cut the destination at its first `)`: `[x](../A (Z)/)` read as `../A (Z`, a dead link to a folder
+# that is on disk. Folders named `Foo (Bar)` are common in documents exported from other systems, so
+# that was a stream of false findings, and `--write` turned it into broken files (#74).
+#
+# The scanner below reads the destination the way CommonMark does, and only falls back when
+# CommonMark says "not a link". It is a plain left-to-right reader (Principle IV: an algorithm a
+# human can check), and it has three rungs, tried in order at each `](`:
+#
+# 1. **CommonMark.** Optional whitespace, then a destination: either `<…>` (anything but a newline
+#    or an unescaped `<`/`>`, so spaces and parentheses are fine) or a bare run with no ASCII space
+#    or control character, in which a parenthesis must be balanced or backslash-escaped. Nesting is
+#    capped at 32 levels, the bound cmark (the CommonMark reference implementation) applies; deeper
+#    input falls to rung 2. The cap is what keeps the scan linear (see `scan_links`).
+#    Then optionally whitespace and a title (`"…"`, `'…'`, `(…)`), optional whitespace, and `)`.
+#    Whitespace around the destination is not part of it, so `[x]( B.md )` names `B.md`.
+#
+# 2. **One line, with spaces (a deliberate extension).** `[x](../A (Z)/)` is NOT a link in strict
+#    CommonMark: a bare destination cannot hold a space, so a renderer prints it as text. But it is
+#    exactly how a person writes a link to a folder called `A (Z)`, darnlink has always half-read
+#    it, and reporting it as dead (or ignoring it) helps nobody. So when rung 1 fails, the whole
+#    single-line run up to the `)` that balances the opening one is taken as the destination,
+#    provided it holds no newline, no `[`/`]` (so it can never swallow a neighbouring link), no
+#    `<`/`>` and no `"` outside a title. A trailing `"…"`/`'…'` title after whitespace, on the same
+#    line and without `[`/`]`, is separated as in rung 1 (`[y](Foo (Bar)/ "T")`). The link then
+#    validates and is anchored; `--write` keeps the author's spelling, because darnlink reads it
+#    back the same.
+#
+# 3. **The old truncating fallback, `[^)]+`.** Kept on purpose for input that is neither: an
+#    unbalanced `(` must still produce a link that is reported (with a mangled name) rather than
+#    vanish. Never trade a false red for a false green.
+#
+# The `text` part is unchanged: `[^\]]*` (possibly empty: `![](img.png)` is what pandoc emits for
+# every image of a converted document, FR-051), and the link starts at its `[`.
+
+#: Characters a backslash can escape (CommonMark: ASCII punctuation). A backslash before anything
+#: else is a literal backslash.
+ASCII_PUNCTUATION = frozenset("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
+
+#: Characters that end rung 2 without a match (see the scanner notes above).
+_LOOSE_STOP = frozenset("\n\r[]<>\"")
+
+
+@dataclass(frozen=True)
+class LinkMatch:
+    """One `[text](destination)` found by `scan_links`.
+
+    `href` is the destination as the author spelled it, minus the `<…>` brackets and minus any
+    title: backslash escapes and `%XX` are still there (`paths.destination_path` turns it into a
+    filesystem path). `inner_*` is the text between `(` and `)`; `dest_*` is the destination token
+    within it, brackets included, so a rewrite can replace exactly that and keep the rest (spacing,
+    title) byte for byte."""
+    start: int        # the `[`
+    end: int          # just past the `)`
+    text: str
+    href: str
+    inner_start: int  # just past the `(`
+    inner_end: int    # the `)`
+    dest_start: int
+    dest_end: int
+    angle: bool       # the destination is written `<…>`
+
+
+def _skip_space(s: str, i: int, n: int, newline: bool = True) -> int:
+    """`i` advanced over spaces and tabs and, if `newline`, at most one line ending."""
+    seen_newline = False
+    while i < n:
+        c = s[i]
+        if c == " " or c == "\t":
+            i += 1
+        elif newline and not seen_newline and c in "\r\n":
+            seen_newline = True
+            i += 2 if (c == "\r" and i + 1 < n and s[i + 1] == "\n") else 1
+        else:
+            break
+    return i
+
+
+def _scan_angle(s: str, i: int, n: int) -> Optional[int]:
+    """End (past `>`) of an angle destination starting at `s[i] == "<"`, or None."""
+    j = i + 1
+    while j < n:
+        c = s[j]
+        if c == "\\" and j + 1 < n and s[j + 1] in ASCII_PUNCTUATION:
+            j += 2
+            continue
+        if c == ">":
+            return j + 1
+        if c in "<\n\r":
+            return None
+        j += 1
+    return None
+
+
+#: Deepest parenthesis nesting rung 1 accepts in a bare destination, as cmark does.
+_MAX_PAREN_DEPTH = 32
+
+
+def _scan_bare(s: str, i: int, n: int) -> Optional[int]:
+    """End of a CommonMark bare destination starting at `i`, or None (empty, unbalanced, or nested
+    deeper than `_MAX_PAREN_DEPTH`)."""
+    depth = 0
+    j = i
+    while j < n:
+        c = s[j]
+        if c == "\\" and j + 1 < n and s[j + 1] in ASCII_PUNCTUATION:
+            j += 2
+            continue
+        if c <= " " or c == "\x7f":
+            break                      # ASCII space or control: CommonMark's terminators
+        if c == "(":
+            depth += 1
+            if depth > _MAX_PAREN_DEPTH:
+                return None
+        elif c == ")":
+            if depth == 0:
+                break
+            depth -= 1
+        j += 1
+    if j == i or depth:
+        return None
+    return j
+
+
+def _scan_title(s: str, i: int, n: int) -> Optional[int]:
+    """End (past the closing delimiter) of a link title starting at `i`, or None."""
+    opener = s[i]
+    closer = ")" if opener == "(" else opener
+    j = i + 1
+    while j < n:
+        c = s[j]
+        if c == "\\" and j + 1 < n and s[j + 1] in ASCII_PUNCTUATION:
+            j += 2
+            continue
+        if c == closer:
+            return j + 1
+        if opener == "(" and c == "(":
+            return None
+        if c == "\n":
+            k = _skip_space(s, j + 1, n, newline=False)
+            if k >= n or s[k] in "\r\n":
+                return None            # a blank line ends the paragraph, and the title with it
+        j += 1
+    return None
+
+
+def _scan_commonmark(s: str, p: int, n: int) -> Optional[Tuple[int, int, bool, int]]:
+    """Rung 1: `(dest_start, dest_end, angle, end past ")")` per CommonMark, or None."""
+    i = _skip_space(s, p, n)
+    angle = i < n and s[i] == "<"
+    e = _scan_angle(s, i, n) if angle else _scan_bare(s, i, n)
+    if e is None or (angle and e - i == 2):
+        return None                    # no destination: nothing to check (`<>` falls to rung 3)
+    j = _skip_space(s, e, n)
+    if j > e and j < n and s[j] in "\"'(":
+        t = _scan_title(s, j, n)
+        if t is None:
+            return None
+        j = _skip_space(s, t, n)
+    if j < n and s[j] == ")":
+        return i, e, angle, j + 1
+    return None
+
+
+def _scan_one_line(s: str, p: int, n: int) -> Optional[Tuple[int, int, bool, int]]:
+    """Rung 2: a single-line bare destination that may hold spaces, up to the balancing `)`.
+
+    A trailing `"…"` or `'…'` title after whitespace is accepted (`[y](Foo (Bar)/ "T")`), on the
+    same line and holding no `[` or `]`, so it cannot swallow a neighbouring link any more than the
+    destination can. A `'` that does not open such a title is an ordinary character (`John's
+    notes/`). A `(…)` title is not recognised here: in this form it cannot be told from a folder
+    name, so it reads as part of the destination."""
+    i = _skip_space(s, p, n, newline=False)
+    depth = 0
+    j = i
+    while j < n:
+        c = s[j]
+        if c == "\\" and j + 1 < n and s[j + 1] in ASCII_PUNCTUATION:
+            j += 2
+            continue
+        if c in "\"'" and depth == 0 and j > i and s[j - 1] in " \t":
+            close = _scan_one_line_title(s, j, n)
+            if close is not None:
+                k = _skip_space(s, close, n, newline=False)
+                if k < n and s[k] == ")":
+                    e = j
+                    while e > i and s[e - 1] in " \t":
+                        e -= 1
+                    return (i, e, False, k + 1) if e > i else None
+            if c == '"':
+                return None
+        if c in _LOOSE_STOP or (c < " " and c != "\t") or c == "\x7f":
+            return None
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            if depth == 0:
+                break
+            depth -= 1
+        j += 1
+    else:
+        return None
+    e = j
+    while e > i and s[e - 1] in " \t":
+        e -= 1
+    if e == i:
+        return None
+    return i, e, False, j + 1
+
+
+def _scan_one_line_title(s: str, i: int, n: int) -> Optional[int]:
+    """End (past the closing quote) of a `"…"`/`'…'` title for rung 2: one line, no `[` or `]`."""
+    quote_char = s[i]
+    j = i + 1
+    while j < n:
+        c = s[j]
+        if c == "\\" and j + 1 < n and s[j + 1] in ASCII_PUNCTUATION:
+            j += 2
+            continue
+        if c == quote_char:
+            return j + 1
+        if c in "\n\r[]":
+            return None
+        j += 1
+    return None
+
+
+def _scan_fallback(p: int, rparen: int) -> Optional[Tuple[int, int, bool, int]]:
+    """Rung 3: the pre-scanner `[^)]+` — up to the first `)` (`rparen`, the first one at or after
+    `p`), which may truncate (see above)."""
+    if rparen <= p:
+        return None
+    return p, rparen, False, rparen + 1
+
+
+def scan_links(content: str) -> Iterator[LinkMatch]:
+    """Every inline Markdown link, in document order, never overlapping. Pure & deterministic.
+
+    The same links a regex `finditer` would find: a link's text runs from its `[` to the first `]`,
+    after a link the scan resumes past its `)` (a link inside another link's span is not reported),
+    and a `[` that starts no link is skipped.
+
+    Linear in the length of the content. Every rung needs a `)` to close the link, so nothing is
+    tried past the last one in the file. Rung 3's `)` is found once and cached, as is the `]` that
+    ends a link's text. Rung 2 stops at the next `[`, so it never crosses another link. Rung 1 can
+    cross later links only while their parentheses keep it unbalanced, and a failed attempt adds a
+    level each time, so `_MAX_PAREN_DEPTH` bounds how many it re-reads (the old regex was quadratic
+    on input like `"[a](b" * N`)."""
+    s = content
+    n = len(s)
+    last = s.rfind(")")                # no link can close past the last `)`
+    pos = s.find("[")
+    close = -1                         # the next `]` at or after the current `[`, cached
+    rparen = -1                        # the next `)` at or after the current destination, cached
+    while pos != -1:
+        if close < pos:
+            close = s.find("]", pos)
+            if close == -1:
+                return
+        p = close + 2
+        if p > last:
+            return
+        # Every `[` before `close` shares this same `]`, so if this one does not start a link none of
+        # them does: skip to the first `[` past it. That keeps `"[" * N + "]()"` linear, where trying
+        # each `[` in turn (what a regex `finditer` does) re-reads the same destination N times.
+        nxt = close + 1
+        if s[close + 1] == "(":
+            if rparen < p:
+                rparen = s.find(")", p)
+            found = _scan_commonmark(s, p, n) or _scan_one_line(s, p, n) or _scan_fallback(p, rparen)
+            if found is not None:
+                ds, de, angle, end = found
+                href = s[ds + 1:de - 1] if angle else s[ds:de]
+                yield LinkMatch(pos, end, s[pos + 1:close], href, p, end - 1, ds, de, angle)
+                nxt = end
+        pos = s.find("[", nxt)
+
+
+def destination_token(spelled: str, angle: bool) -> str:
+    """The destination token for an already-spelled href: `spelled` itself, or `<spelled>`."""
+    return f"<{spelled}>" if angle else spelled
+
+
+def spell_destination(path: str, fragment: str, old_href: str, angle: bool) -> str:
+    """The destination token for a NEW filesystem `path` (plus an already-spelled `fragment`),
+    written the way the author wrote `old_href`, so `--write` changes the path and nothing else.
+
+    * `<…>` stays `<…>`.
+    * An author who percent-encoded (`%28`, `%20`, any `%XX`) gets the new path percent-encoded.
+    * An author who backslash-escaped a parenthesis gets the new path's parentheses escaped.
+    * An author who wrote a bare destination with a space (scanner rung 2) keeps that spelling.
+    * Otherwise the path is written raw, as before.
+
+    One change of form is made, and only when it is NECESSARY: a new path that a bare destination
+    cannot hold in the author's spelling (a space where the author had none, an unbalanced
+    parenthesis, a `[`) is written `<…>`. A raw space would turn a CommonMark link into plain text
+    on every renderer, and darnlink must not break a link it was asked to heal. Every candidate is
+    read back by the scanner before it is returned; one that does not read back as `path` is never
+    written. The last resort percent-encodes the path and the fragment, which always reads back: the
+    path exactly, the fragment with the same decoded value."""
+    old_path = split_fragment(old_href)[0]
+    frag = f"#{fragment}" if fragment else ""
+    if re.search(r"%[0-9A-Fa-f]{2}", old_path):
+        spelled = quote(path, safe=URL_SAFE)
+    else:
+        # What a URL reading would cut or decode is percent-encoded even in the raw and `<…>`
+        # forms: `#` would start the fragment and `?` a query, and a `%` followed by two hex digits
+        # would be decoded into another character. A folder named `C#` is written `C%23`, which
+        # `destination_path` reads back as `C#`.
+        spelled = re.sub(r"%(?=[0-9A-Fa-f]{2})", "%25", path).replace("#", "%23").replace("?", "%3F")
+        spelled = re.sub(r"([\\<>])", r"\\\1", spelled)  # always valid: all three are punctuation
+        if re.search(r"\\[()]", old_path):
+            spelled = re.sub(r"([()])", r"\\\1", spelled)
+
+    def reads_back(token: str, loose: bool) -> bool:
+        # Read back with the rungs a renderer agrees with: CommonMark, and the one-line spaced form
+        # only where the author already used it. Never rung 3, which "reads back" anything without a
+        # `)` -- including an unbalanced `(` no renderer would show as a link.
+        probe = "[](" + token + ")"
+        n = len(probe)
+        got = _scan_commonmark(probe, 3, n) or (_scan_one_line(probe, 3, n) if loose else None)
+        if got is None or got[3] != n:
+            return False
+        ds, de, is_angle, _ = got
+        href = probe[ds + 1:de - 1] if is_angle else probe[ds:de]
+        # Judged the way every reader will: split off the fragment first, then decode the path.
+        got_path, got_frag = split_fragment(href)
+        return destination_path(got_path) == path and got_frag == fragment
+
+    if not angle:
+        token = spelled + frag
+        if reads_back(token, loose=any(c in " \t" for c in old_path)):
+            return token
+    token = f"<{spelled}{frag}>"
+    if reads_back(token, loose=False):
+        return token
+    # Nothing above reads back (a newline in a file name, or a `)` in the fragment, say). Encoding
+    # the path AND the fragment always does: no space, parenthesis or control character is left.
+    # The fragment keeps its `%XX` (it arrives already spelled) and its decoded value.
+    if fragment:
+        frag = "#" + quote(fragment, safe=URL_SAFE + "%")
+    return quote(path, safe=URL_SAFE) + frag
+
+
+def splice_destination(content: str, link: "LinkMatch | PlainLink | RobustLink", token: str,
+                       dest_end: Optional[int] = None) -> str:
+    """The text between the link's `(` and `)` with only its destination token replaced.
+
+    `dest_end` widens the replaced span past the token (see `paren_title_as_path`)."""
+    end = link.dest_end if dest_end is None else dest_end
+    return content[link.inner_start:link.dest_start] + token + content[end:link.inner_end]
+
+
+def paren_title_as_path(content: str, link: "LinkMatch | PlainLink | RobustLink") -> Optional[int]:
+    """Where the destination would end if its `(…)` title were part of the path, or None.
+
+    `[x](Foo (Bar))` is, in CommonMark, the destination `Foo` with the title `Bar`, and that is how
+    darnlink reads it. A rewrite that kept that title would produce `[x](<Foo (Bar)/> (Bar))`, a
+    folder name with a stray title glued on. Repair asks this to see whether the author meant the
+    whole run (`Foo (Bar)`): the answer is the end of that run, read the way scanner rung 2 reads
+    it, when it is longer than the CommonMark destination; the caller decides on the filesystem."""
+    if link.angle:
+        return None
+    probe = content[link.inner_start:link.inner_end] + ")"
+    got = _scan_one_line(probe, 0, len(probe))
+    if got is None or got[3] != len(probe):
+        return None
+    start, end = link.inner_start + got[0], link.inner_start + got[1]
+    if start != link.dest_start or end <= link.dest_end:
+        return None
+    return end
+
+
 # A uuid comment that immediately follows a link (used to tell plain from robust).
 # No `^`: it is applied with .match(content, pos), which already anchors at pos.
-_TRAILING_UUID_RE = re.compile(r"\s*<!--\s*uuid:\s*[0-9a-fA-F-]{36}\s*-->")
+_TRAILING_UUID_RE = re.compile(r"\s*<!--\s*uuid:\s*(?P<uuid>[0-9a-fA-F-]{36})\s*-->")
 # A pandoc attribute block immediately following a link's `)`, no whitespace allowed (pandoc's own
 # rule -- a block after a space is not attached to anything and pandoc ignores it). Matched with
 # .match(content, pos) the same way as _TRAILING_UUID_RE, so callers can skip past it before
 # checking for the anchor comment -- see `_skip_attrs` below for why that skip has to exist at all.
-# Shares `_PANDOC_ATTR_BODY` with `ROBUST_LINK_RE`'s own `attrs` group (see that constant's comment
-# for why one definition, not two, matters here specifically).
 _PANDOC_ATTR_RE = re.compile(r"\{" + _PANDOC_ATTR_BODY + r"\}")
 
 
@@ -398,40 +714,63 @@ def file_ignores_links(content: str) -> bool:
 @dataclass(frozen=True)
 class RobustLink:
     text: str
-    href: str
+    href: str   # as spelled: no `<…>`, no title; escapes and `%XX` kept (see `LinkMatch`)
     uuid: str
     start: int  # span of the whole robust link (link + attrs + comment) in the source
     end: int
     attrs: str = ""  # a pandoc attribute block (`{.cls}`), verbatim, or "" if there is none
+    # Where the parts sit in the source (see `LinkMatch`), so a rewrite touches only the destination.
+    inner_start: int = -1
+    inner_end: int = -1
+    dest_start: int = -1
+    dest_end: int = -1
+    angle: bool = False
 
 
 @dataclass(frozen=True)
 class PlainLink:
     text: str
-    href: str
+    href: str   # as spelled: no `<…>`, no title; escapes and `%XX` kept (see `LinkMatch`)
     start: int  # span of just the [text](href) in the source
     end: int
+    inner_start: int = -1
+    inner_end: int = -1
+    dest_start: int = -1
+    dest_end: int = -1
+    angle: bool = False
+
+
+def _parts(m: LinkMatch) -> dict:
+    return dict(inner_start=m.inner_start, inner_end=m.inner_end, dest_start=m.dest_start,
+                dest_end=m.dest_end, angle=m.angle)
 
 
 def find_robust_links(content: str, ignore: Sequence[Span] = ()) -> List[RobustLink]:
-    """All robust links in the content, in document order, skipping any inside `ignore` spans."""
-    return [
-        RobustLink(m.group("text"), m.group("href"), m.group("uuid").lower(), m.start(), m.end(),
-                   m.group("attrs") or "")
-        for m in ROBUST_LINK_RE.finditer(content)
-        if not _in_spans(m.start(), ignore)
-    ]
+    """All robust links in the content, in document order, skipping any inside `ignore` spans.
+
+    A robust link is a link from `scan_links` followed by an optional pandoc attribute block and
+    then (any whitespace) a uuid comment -- the same test `find_plain_links` uses to leave it out,
+    so the two partitions cannot disagree."""
+    out: List[RobustLink] = []
+    for m in scan_links(content):
+        after_attrs = _skip_attrs(content, m.end)
+        t = _TRAILING_UUID_RE.match(content, after_attrs)
+        if t is None or _in_spans(m.start, ignore):
+            continue
+        out.append(RobustLink(m.text, m.href, t.group("uuid").lower(), m.start, t.end(),
+                              content[m.end:after_attrs], **_parts(m)))
+    return out
 
 
 def find_plain_links(content: str, ignore: Sequence[Span] = ()) -> List[PlainLink]:
     """All Markdown links that are NOT already robust, skipping any inside `ignore` spans."""
     out: List[PlainLink] = []
-    for m in MD_LINK_RE.finditer(content):
-        if _TRAILING_UUID_RE.match(content, _skip_attrs(content, m.end())):
+    for m in scan_links(content):
+        if _TRAILING_UUID_RE.match(content, _skip_attrs(content, m.end)):
             continue  # this link (with or without a pandoc attrs block) is already robust; skip
-        if _in_spans(m.start(), ignore):
+        if _in_spans(m.start, ignore):
             continue  # inside a generated block (e.g. autogrid); leave it alone
-        out.append(PlainLink(m.group("text"), m.group("href"), m.start(), m.end()))
+        out.append(PlainLink(m.text, m.href, m.start, m.end, **_parts(m)))
     return out
 
 
@@ -457,8 +796,8 @@ def find_detached_anchors(content: str, ignore: Sequence[Span] = ()) -> List[Det
     it means *deleting* text from someone's code sample.
     """
     attached: set[int] = set()
-    for m in MD_LINK_RE.finditer(content):
-        after_attrs = _skip_attrs(content, m.end())
+    for m in scan_links(content):
+        after_attrs = _skip_attrs(content, m.end)
         t = _TRAILING_UUID_RE.match(content, after_attrs)
         if t is None:
             continue
@@ -481,6 +820,10 @@ def line_bounds(content: str, pos: int) -> Span:
 
 def emit_robust_link(text: str, href: str, uuid: str, attrs: str = "") -> str:
     """Canonical robust-link rendering: a single space before the comment.
+
+    `href` is everything that goes between `(` and `)`, verbatim: a `<…>` destination keeps its
+    brackets and a title stays where it was. The write paths pass the source text there (robustify)
+    or the source with only the destination token replaced (repair, `splice_destination`).
 
     `attrs` (a pandoc attribute block, `{.cls}`) goes immediately after `)`, with NO space -- pandoc
     only recognises the block there (FR-065). Putting the anchor comment first, as earlier versions

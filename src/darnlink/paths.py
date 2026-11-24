@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import os
+import re
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Dict, Iterator, Optional, Tuple
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 
 # Feature 011: a link to a directory is anchored to the uuid of this file inside it. A folder has no
@@ -97,13 +98,50 @@ def split_fragment(href: str) -> Tuple[str, str]:
     return href, ""
 
 
-def resolve_href(href: str, linking_file: Path) -> Path:
+#: A CommonMark backslash escape: a backslash before ASCII punctuation stands for that character.
+_BACKSLASH_ESCAPE_RE = re.compile(r"\\([!-/:-@\[-`{-~])")
+
+
+def destination_path(path_part: str) -> str:
+    """The file name a link destination's path part denotes: backslash escapes undone, then
+    percent-decoded. `A \\(Z\\)` and `A%20%28Z%29` both name `A (Z)`.
+
+    The order is CommonMark's: escapes belong to the Markdown source, and what is left is a URL
+    reference, whose `%XX` a browser decodes when it asks for the file. A backslash before anything
+    that is not ASCII punctuation is a literal backslash and is kept."""
+    return unquote(_BACKSLASH_ESCAPE_RE.sub(r"\1", path_part))
+
+
+def resolve_href(href: str, linking_file: Path, decode: bool = True) -> Path:
     """Absolute path the href points to, resolved relative to the linking file's directory.
 
     The fragment is dropped. Returns a resolved (normalized) path; the target need not exist.
+
+    With `decode` (the default, for a Markdown link destination) the href is read as
+    `destination_path` reads it (escapes undone, `%XX` decoded) -- the ONE place where a
+    destination becomes a path, so robustify, repair and the dangling axis agree. When that path
+    does not exist but the href taken literally does (a file really named `100%25.md`, a Windows
+    path written with backslashes), the literal one is returned: that link worked before this
+    function decoded anything, and it keeps working.
+
+    Decoding never changes what KIND of href it is: when the decoded spelling is absolute or carries
+    a scheme and the literal one does not (`%2Fetc%2Fpasswd`, `\\/home/x.md`), or the other way
+    round, the literal spelling is used. Joining an absolute path onto the linking directory would
+    silently drop that directory, and a link to `/etc/passwd` would resolve -- and be anchored --
+    as if it were relative. `is_local_relative` rejects those hrefs for the same reason.
+
+    `decode=False` is the literal reading, for values that are not Markdown destinations (a YAML
+    `link:`, see `yaml_refs`).
     """
     path_part, _ = split_fragment(href)
-    return resolved(linking_file.parent / path_part)
+    decoded = destination_path(path_part) if decode else path_part
+    if decoded != path_part and _relative_shape(decoded) != _relative_shape(path_part):
+        decoded = path_part
+    t = resolved(linking_file.parent / decoded)
+    if decoded == path_part or t.exists():
+        return t
+    literal = resolved(linking_file.parent / path_part)
+    return literal if literal.exists() else t
 
 
 def relative_link(target: Path, linking_file: Path, fragment: str = "") -> str:
@@ -116,10 +154,17 @@ def relative_link(target: Path, linking_file: Path, fragment: str = "") -> str:
     return f"{rel_posix}#{fragment}" if fragment else rel_posix
 
 
+#: What stays literal when darnlink percent-encodes a link part (a JSON Pointer fragment, a path in
+#: a percent-encoded destination): RFC 3986 unreserved characters and sub-delimiters, plus `/`,
+#: `:` and `@`, minus the parentheses -- which end a Markdown destination -- and so also `#`, `?`,
+#: `%` and the space.
+URL_SAFE = "/~-._!$&'*+,;=:@"
+
+
 def pointer_fragment(pointer: str) -> str:
     """A JSON Pointer written as the fragment of a link: percent-encoded, so a key with a space, a parenthesis or a
     `#` cannot end a Markdown link destination (reading compares the decoded fragment)."""
-    return quote(pointer, safe="/~-._!$&'*+,;=:@")
+    return quote(pointer, safe=URL_SAFE)
 
 
 def is_web_href(href: str) -> bool:
@@ -130,16 +175,29 @@ def is_web_href(href: str) -> bool:
     return href.strip().lower().startswith(("http://", "https://"))
 
 
-def is_local_relative(href: str) -> bool:
-    """True if href is a relative link into the local tree (not a URL, mailto, absolute or bare
-    `#anchor`). Says nothing about what the path names — a `.md` file, a directory, anything."""
-    path_part, _ = split_fragment(href)
+def _relative_shape(path_part: str) -> bool:
+    """True if a path part looks like a relative path: not empty, no scheme, not absolute."""
     if not path_part:
         return False  # bare #fragment
     low = path_part.lower()
     if "://" in low or low.startswith(("http:", "https:", "mailto:", "ftp:", "/")):
         return False
     return True
+
+
+def is_local_relative(href: str) -> bool:
+    """True if href is a relative link into the local tree (not a URL, mailto, absolute or bare
+    `#anchor`). Says nothing about what the path names — a `.md` file, a directory, anything.
+
+    Both spellings are judged: the href as written AND as `destination_path` decodes it. An encoded
+    or escaped absolute path (`%2Fhome%2Fx.md`, `\\/home/x.md`) or scheme (`http%3A//x`) is not
+    relative, whatever it looks like before decoding -- otherwise every caller that resolves it
+    would reach a file outside the tree and treat it as a local target."""
+    path_part, _ = split_fragment(href)
+    if not _relative_shape(path_part):
+        return False
+    decoded = destination_path(path_part)
+    return decoded == path_part or _relative_shape(decoded)
 
 
 def is_local_md(href: str) -> bool:
@@ -170,20 +228,16 @@ def names_md(href: str) -> bool:
     this it made `"old/B.md ".endswith(".md")` false, so `repair` misread a plain file link as a
     *directory* link. The uuid it carries then lives in a non-README file, which reads as "path and
     uuid disagree" and is reported as an unhealable CONFLICT -- a false, permanent diagnosis of a
-    link that was actually fine. This is the ONLY strip in the resolution path: `resolve_href` still
-    uses the href verbatim, so a link whose destination genuinely differs only by that space still
+    link that was actually fine. This is the ONLY strip in the resolution path: `resolve_href` does
+    not strip, so a link whose destination genuinely differs only by that space still
     fails to resolve to the real file and gets corrected by the normal repair-a-stale-link path, not
     silently treated as already-correct.
 
-    ⚠️ `robustify._anchor_target` and `_dir_link_missing_readme` have the SAME "type says file/dir,
-    raw resolution finds nothing" combination for a plain (not-yet-anchored) link -- confirmed by
-    reproduction, not fixed here. #67's own body names both sites explicitly and defers them to #74,
-    which is still open: a prior attempt at exactly this kind of edge-strip (nine review rounds, #62)
-    shipped a "121/121 vs cmark" formulation that still regressed two real files in the fleet, because
-    it reasoned about the destination's *edges* and never measured its *interior* against a real
-    corpus. `tests/test_dangling_links.py::test_whitespace_around_a_destination_is_NOT_stripped_here`
-    pins the current (unstripped) behaviour on the sibling `dangling` axis for exactly this reason --
-    do not widen the strip here to those two call sites without going through #74.
+    Whitespace around a destination no longer reaches this function from a Markdown link: the link
+    scanner (`links.scan_links`, the #74 work) reads `[x]( B.md )` as `B.md`, as CommonMark does, so
+    `_anchor_target` and `_dir_link_missing_readme` -- the two sites #67 deferred -- see the clean
+    destination too. The strip stays for hrefs that come from elsewhere. The suffix is judged on the
+    decoded name (`destination_path`), the same spelling every resolution uses.
     """
     path_part, _ = split_fragment(href)
-    return path_part.strip().lower().endswith(".md")
+    return destination_path(path_part).strip().lower().endswith(".md")
