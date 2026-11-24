@@ -450,6 +450,218 @@ def test_what_is_not_pending_stays_broken(tmp_path, own_slugs, url):
     assert [f.kind for f in findings if f.file.name == "x.md"] == ["web_not_found"]
 
 
+# --- a link to a FOLDER is judged by its README.md, as locally ---------------------------------
+# Forgejo's raw API answers 404 for a path that is a directory. Locally a folder link is anchored to
+# its README.md (feature 011); the same link written as a URL must not read as missing.
+
+FOLDER = f"{TS}/acme/handbook/src/branch/main/docs/kit"
+FOLDER_README = (TS, "acme/handbook", "main", "docs/kit/README.md")
+
+
+def _no_sleep_fetcher(gu, token):
+    """`default_fetcher` with one attempt and no sleeps, so the end-to-end tests run the real
+    folder retry against a monkeypatched `_fetch_once`."""
+    return wl.default_fetcher(gu, token, attempts=1, sleep=lambda _s: None)
+
+
+def _answers(responses):
+    """A `_fetch_once` keyed like `_fetcher`, recording every reading it is asked for."""
+    tried = []
+
+    def once(gu, token, base=None):
+        key = (gu.forge.key, f"{gu.owner}/{gu.repo}", gu.ref, gu.path)
+        tried.append(key)
+        return responses.get(key, (404, None))
+    return once, tried
+
+
+def test_a_folder_link_is_fetched_through_its_readme(monkeypatch):
+    once, tried = _answers({FOLDER_README: _with_uuid()})
+    monkeypatch.setattr(wl, "_fetch_once", once)
+    gu = parse_github_url(FOLDER, SERVER)
+    assert wl.default_fetcher(gu, "fj", attempts=3, sleep=lambda _s: None) == _with_uuid()
+    # the file readings first (unchanged), then the folder readings, the README one answering
+    assert tried[:3] == [(TS, "acme/handbook", "main", "docs/kit")] * 3
+    assert tried[-1] == FOLDER_README
+
+
+@pytest.mark.parametrize("anchor, kind", [(f" <!-- web-uuid: {UUID} -->", "web_ok"),
+                                          (f" <!-- web-uuid: {OTHER} -->", "web_mismatch"),
+                                          ("", "web_anchor")])
+def test_a_folder_link_takes_the_uuid_of_its_readme(tmp_path, monkeypatch, anchor, kind):
+    once, _ = _answers({FOLDER_README: _with_uuid()})
+    monkeypatch.setattr(wl, "_fetch_once", once)
+    _w(tmp_path / "x.md", f"see [kit]({FOLDER}){anchor}\n")
+    findings, edits = check_web_links_online(tmp_path, None, _no_sleep_fetcher, forgejo=SERVER,
+                                             forgejo_token="fj")
+    assert [f.kind for f in findings] == [kind]
+    if kind == "web_anchor":
+        assert findings[0].anchored_uuid == UUID
+        assert edits[tmp_path / "x.md"] == f"see [kit]({FOLDER}) <!-- web-uuid: {UUID} -->\n"
+
+
+def test_a_trailing_slash_does_not_double_it(monkeypatch):
+    once, tried = _answers({FOLDER_README: _with_uuid()})
+    monkeypatch.setattr(wl, "_fetch_once", once)
+    gu = parse_github_url(FOLDER + "/", SERVER)
+    assert wl.default_fetcher(gu, "fj", attempts=1, sleep=lambda _s: None) == _with_uuid()
+    assert all("//" not in path for *_, path in tried)
+
+
+def test_a_folder_on_a_slashed_branch_is_found_on_the_longer_reading(monkeypatch):
+    once, tried = _answers({(TS, "acme/handbook", "reports/data", "kit/README.md"): _with_uuid()})
+    monkeypatch.setattr(wl, "_fetch_once", once)
+    gu = parse_github_url(f"{TS}/acme/handbook/src/branch/reports/data/kit", SERVER)
+    assert wl.default_fetcher(gu, "fj", attempts=1, sleep=lambda _s: None) == _with_uuid()
+    assert [p for *_, p in tried] == ["data/kit", "kit", "data/kit/README.md", "kit/README.md"]
+
+
+@pytest.mark.parametrize("token, accessible, expected", [
+    ("fj", True, (404, None)),       # a folder without a README.md: broken, exactly as before
+    ("fj", False, (-2, None)),       # ...and the repo probe still runs after the folder readings
+    (None, True, (404, None)),       # no token: the 404 is still handed on for `_classify`
+])
+def test_a_folder_without_a_readme_is_judged_as_before(monkeypatch, token, accessible, expected):
+    once, tried = _answers({})
+    monkeypatch.setattr(wl, "_fetch_once", once)
+    monkeypatch.setattr(wl, "_forgejo_repo_accessible", lambda s, b, o, r, t: accessible)
+    gu = parse_github_url(FOLDER, SERVER)
+    assert wl.default_fetcher(gu, token, attempts=1, sleep=lambda _s: None) == expected
+    # one request per folder reading, none of them retried: a broken link stays cheap
+    assert [p for *_, p in tried] == ["docs/kit", "kit", "docs/kit/README.md", "kit/README.md"]
+
+
+def test_a_folder_without_a_readme_is_still_web_not_found(tmp_path, monkeypatch):
+    once, _ = _answers({})
+    monkeypatch.setattr(wl, "_fetch_once", once)
+    monkeypatch.setattr(wl, "_forgejo_repo_accessible", lambda s, b, o, r, t: True)
+    _w(tmp_path / "x.md", f"[kit]({FOLDER}) <!-- web-uuid: {UUID} -->\n")
+    with_token, _ = check_web_links_online(tmp_path, None, _no_sleep_fetcher, forgejo=SERVER,
+                                           forgejo_token="fj")
+    without, _ = check_web_links_online(tmp_path, None, _no_sleep_fetcher, forgejo=SERVER)
+    assert [f.kind for f in with_token] == ["web_not_found"]
+    assert [(f.kind, f.token_would_help) for f in without] == [("web_unverifiable", True)]
+
+
+@pytest.mark.parametrize("answer", [(403, None), (401, None), (502, None), (-1, None)])
+def test_only_a_200_on_the_readme_replaces_the_404(monkeypatch, answer):
+    once, _ = _answers({FOLDER_README: answer})
+    monkeypatch.setattr(wl, "_fetch_once", once)
+    monkeypatch.setattr(wl, "_forgejo_repo_accessible", lambda s, b, o, r, t: True)
+    gu = parse_github_url(FOLDER, SERVER)
+    assert wl.default_fetcher(gu, "fj", attempts=1, sleep=lambda _s: None) == (404, None)
+
+
+def test_a_flaky_readme_is_retried(monkeypatch):
+    answers = iter([(502, None), _with_uuid()])
+    tried = []
+
+    def once(gu, token, base=None):
+        tried.append(gu.path)
+        return next(answers) if gu.path == "docs/kit/README.md" else (404, None)
+
+    monkeypatch.setattr(wl, "_fetch_once", once)
+    gu = parse_github_url(FOLDER, SERVER)
+    assert wl.default_fetcher(gu, "fj", attempts=3, sleep=lambda _s: None) == _with_uuid()
+    assert tried.count("docs/kit/README.md") == 2
+
+
+@pytest.mark.parametrize("url", [FILE, f"{TS}/acme/handbook/src/branch/main/docs/README.md",
+                                 f"{TS}/acme/handbook/src/branch/main/docs/A.MD"])
+def test_a_markdown_file_link_never_asks_for_a_readme(monkeypatch, url):
+    once, tried = _answers({})
+    monkeypatch.setattr(wl, "_fetch_once", once)
+    gu = parse_github_url(url, SERVER)
+    assert wl.default_fetcher(gu, None, attempts=1, sleep=lambda _s: None) == (404, None)
+    assert not any(p.endswith("/README.md") and p != gu.path for *_, p in tried)
+    assert len(tried) == 2                     # the parsed reading and its one longer reading
+
+
+def test_a_file_that_answers_is_never_asked_as_a_folder(monkeypatch):
+    once, tried = _answers({KEY: _with_uuid()})
+    monkeypatch.setattr(wl, "_fetch_once", once)
+    gu = parse_github_url(FILE, SERVER)
+    assert wl.default_fetcher(gu, None, attempts=1, sleep=lambda _s: None) == _with_uuid()
+    assert tried == [KEY]
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_a_rejected_read_is_never_asked_as_a_folder(monkeypatch, status):
+    once, tried = _answers({(TS, "acme/handbook", "main", "docs/kit"): (status, None),
+                            FOLDER_README: _with_uuid()})
+    monkeypatch.setattr(wl, "_fetch_once", once)
+    gu = parse_github_url(FOLDER, SERVER)
+    assert wl.default_fetcher(gu, "fj", attempts=1, sleep=lambda _s: None) == (status, None)
+    assert tried == [(TS, "acme/handbook", "main", "docs/kit")]
+
+
+def test_github_is_not_asked_for_a_folder_readme(monkeypatch):
+    """GitHub's Contents API answers a directory with 200 and a JSON listing, not with a 404, and
+    GitHub writes folder URLs as `/tree/`, which is not parsed: the folder retry is Forgejo's."""
+    tried = []
+    monkeypatch.setattr(wl, "_fetch_once", lambda gu, t, base=None: tried.append(gu.path) or (404, None))
+    monkeypatch.setattr(wl, "_repo_accessible", lambda o, r, t: True)
+    gu = parse_github_url("https://github.com/acme/handbook/blob/main/docs/kit")
+    assert wl.default_fetcher(gu, "gh", attempts=1, sleep=lambda _s: None) == (404, None)
+    assert tried == ["docs/kit"]
+
+
+def _repo_with_folder(tmp_path, readme=True, track=True):
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, env=_GIT_ENV)
+    _w(tmp_path / "docs" / "kit" / "notes.txt", "tracked sibling so the folder exists\n")
+    _git(tmp_path, "add", "docs/kit/notes.txt")
+    if readme:
+        _w(tmp_path / "docs" / "kit" / "README.md", "---\nuuid: " + UUID + "\n---\n")
+        if track:
+            _git(tmp_path, "add", "docs/kit/README.md")
+    return tmp_path
+
+
+def _own_on_forge(root):
+    return OwnRepo(slug="", root=root, default_ref="main",
+                   forgejo_slugs=frozenset({(TS, "acme/handbook")}))
+
+
+def test_a_404_to_a_folder_of_this_repo_with_a_tracked_readme_is_pending(tmp_path):
+    root = _repo_with_folder(tmp_path)
+    _w(root / "x.md", f"[kit]({FOLDER}) <!-- web-uuid: {UUID} -->\n")
+    findings, _ = check_web_links_online(root, None, _fetcher({}), forgejo=SERVER,
+                                         forgejo_token="fj", own=_own_on_forge(root))
+    (f,) = [f for f in findings if f.file.name == "x.md"]
+    assert f.kind == "web_unverifiable" and "pending" in f.detail
+    assert "is a folder whose `README.md` is a TRACKED FILE" in f.detail
+
+
+@pytest.mark.parametrize("readme, track", [(False, False), (True, False)])
+def test_a_folder_whose_readme_is_absent_or_untracked_is_not_pending(tmp_path, readme, track):
+    root = _repo_with_folder(tmp_path, readme=readme, track=track)
+    _w(root / "x.md", f"[kit]({FOLDER}) <!-- web-uuid: {UUID} -->\n")
+    findings, _ = check_web_links_online(root, None, _fetcher({}), forgejo=SERVER,
+                                         forgejo_token="fj", own=_own_on_forge(root))
+    assert [f.kind for f in findings if f.file.name == "x.md"] == ["web_not_found"]
+
+
+def test_a_folder_named_like_markdown_is_not_pending(tmp_path):
+    """The fetch never asks `x.md/README.md`, so the rung must not promise it will resolve."""
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, env=_GIT_ENV)
+    _w(tmp_path / "docs" / "odd.md" / "README.md", "---\nuuid: " + UUID + "\n---\n")
+    _git(tmp_path, "add", "docs/odd.md/README.md")
+    _w(tmp_path / "x.md", f"[o]({TS}/acme/handbook/src/branch/main/docs/odd.md) <!-- web-uuid: {UUID} -->\n")
+    findings, _ = check_web_links_online(tmp_path, None, _fetcher({}), forgejo=SERVER,
+                                         forgejo_token="fj", own=_own_on_forge(tmp_path))
+    assert [f.kind for f in findings if f.file.name == "x.md"] == ["web_not_found"]
+
+
+def test_a_github_folder_of_this_repo_is_still_not_pending(tmp_path):
+    """Only the Forgejo fetch asks for the README, so only there does a merge resolve the folder."""
+    root = _repo_with_folder(tmp_path)
+    _w(root / "x.md",
+       f"[kit](https://github.com/acme/handbook/blob/main/docs/kit) <!-- web-uuid: {UUID} -->\n")
+    own = OwnRepo(slug="acme/handbook", root=root, default_ref="main")
+    findings, _ = check_web_links_online(root, "gh", _fetcher({}), own=own)
+    assert [f.kind for f in findings if f.file.name == "x.md"] == ["web_not_found"]
+
+
 # --- the command line --------------------------------------------------------------------------
 
 def test_forgejo_needs_online(tmp_path, capsys):

@@ -6,6 +6,19 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- `web-check --online` judges a link to a **folder** on a declared Forgejo by the folder's
+  `README.md`, as the local axis does (`…/src/branch/main/docs/kit` is anchored to
+  `docs/kit/README.md`). Forgejo's raw API answers 404 for a directory, so every such link read as
+  missing: `web_not_found` with a token, `web_unverifiable` without one. When every reading of a link
+  404s (the parsed one and the slashed-ref ones), each is now asked once more with `/README.md`
+  appended; only a 200 replaces the 404, and anything else leaves it, so a folder without a README
+  is judged exactly as before, and the repo probe still runs. A path that already names a `.md` is
+  never asked. The pending-on-default-branch rung accepts a folder whose `README.md` is tracked, on a
+  Forgejo only. GitHub is unchanged (its Contents API answers a directory with a listing, not a 404,
+  and `/tree/` URLs are not parsed). 401/403 and the `-2` sentinel are untouched.
+
 ## [0.34.0] — 2026-11-20
 
 ### Added

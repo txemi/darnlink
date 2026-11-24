@@ -47,6 +47,14 @@ rewrites, at exactly the moment links are being rewritten in bulk.
 - **FR-009** Gate recipes (bash and PowerShell) accept `forgejo_web` (list of strings), read the
   token from `DARNLINK_GATE_FORGEJO_TOKEN_FILE` (default `~/.config/forgejo_token_ro`) when the
   variable is unset, warn when there is none, and report a rejected declaration as configuration.
+- **FR-010** A link to a FOLDER is judged by the folder's `README.md`, as on the local axis
+  (feature 011). Forgejo's raw API answers 404 for a directory, so when every reading of a link
+  404s, each reading is asked once more with `/README.md` appended (not when the path already names
+  a `.md`). Only a 200 replaces the 404, and that README's uuid is the destination's; any other
+  answer leaves the original 404, so a folder without a README is judged exactly as before. The
+  pending-on-default-branch rung (FR-007) accepts such a folder when its `README.md` is tracked.
+  GitHub is unchanged: its Contents API answers a directory with a JSON listing, not a 404, and its
+  folder URLs (`/tree/`) are not parsed.
 
 ## Out of scope
 
