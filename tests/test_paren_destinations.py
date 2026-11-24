@@ -130,7 +130,9 @@ def test_a_dead_destination_with_parens_is_reported_whole(tmp_path):
     _tree(tmp_path, r"[g](Gone \(Bar\)/x.md) [h](<Gone (Bar)/y.md>)")
     found = _kinds(plan_robustify(tmp_path), Kind.DANGLING)
     assert len(found) == 2
-    assert "Gone (Bar)/x.md" in found[0].detail and "Gone (Bar)/y.md" in found[1].detail
+    # The denoted path is in the resolved part of the report: `/` there so it reads alike on Windows.
+    x, y = (f.detail.replace("\\", "/") for f in found)
+    assert "Gone (Bar)/x.md" in x and "Gone (Bar)/y.md" in y
 
 
 # --- Repair after a move: the new path is written in the author's spelling ------------------------

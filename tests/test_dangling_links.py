@@ -311,7 +311,9 @@ def test_whitespace_around_a_destination_is_stripped_now(tmp_path):
 
     result = plan_robustify(tmp_path)
     assert _dangling(result) == [], "the whitespace around the destination is read as part of it again"
-    assert result.new_content[tmp_path / "doc.md"].endswith(f"[x]( B.md ) <!-- uuid: {u_b} -->\n")
+    # new_content keeps the file's own line endings: CRLF where Windows' write_text put them.
+    written = result.new_content[tmp_path / "doc.md"].replace("\r\n", "\n")
+    assert written.endswith(f"[x]( B.md ) <!-- uuid: {u_b} -->\n")
 
 
 def test_a_plain_link_with_only_a_trailing_space_is_anchored_now(tmp_path):
@@ -329,7 +331,8 @@ def test_a_plain_link_with_only_a_trailing_space_is_anchored_now(tmp_path):
     result = plan_robustify(tmp_path)
     assert _dangling(result) == [], result.findings
     assert any(f.kind is Kind.ROBUSTIFY for f in result.findings), result.findings
-    assert result.new_content[tmp_path / "A.md"] == f"[x](old/B.md ) <!-- uuid: {U_A} -->\n"
+    written = result.new_content[tmp_path / "A.md"].replace("\r\n", "\n")  # CRLF on Windows
+    assert written == f"[x](old/B.md ) <!-- uuid: {U_A} -->\n"
 
 
 def test_balanced_parentheses_in_a_destination_are_not_truncated(tmp_path):
@@ -418,7 +421,8 @@ def test_an_escaped_paren_no_longer_swallows_the_next_link(tmp_path):
 
     found = _dangling(plan_robustify(tmp_path))
     assert len(found) == 2, f"the escaped paren swallowed its neighbour again: {found}"
-    assert "docs/Log(Feb.md" in found[0].detail, found[0].detail
+    # The denoted name is in the resolved path of the report; `/` there so it reads alike on Windows.
+    assert "docs/Log(Feb.md" in found[0].detail.replace("\\", "/"), found[0].detail
     assert "gone.md" in found[1].detail, found[1].detail
 
 
