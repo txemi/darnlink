@@ -146,8 +146,9 @@ def test_a_nul_cannot_be_looked_at_even_where_resolve_does_not_raise(tmp_path, c
     # Windows with 3.13: `resolve()` takes a NUL without raising and `is_file()` says False, so without the explicit
     # refusal the link read as "names no file" there and "cannot be looked at" on Linux (CI of darnlink #20, PR-20 #5)
     from darnlink import yaml_refs
+    # `**_`: yaml_refs passes `decode=False` (#74: a YAML `link:` is resolved literally).
     monkeypatch.setattr(yaml_refs, "resolve_href",
-                        lambda href, f: Path(os.path.normpath(f.parent / href.split("#", 1)[0])))
+                        lambda href, f, **_: Path(os.path.normpath(f.parent / href.split("#", 1)[0])))
     root = _tree(tmp_path)
     for doc in ('runs_on:\n  link: "../docs/a\\0b.md"\n', f'runs_on:\n  uuid: {D1}\n  link: "../docs/a\\0b.md"\n'):
         out = _untouched(root, doc, capsys)

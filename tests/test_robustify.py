@@ -278,7 +278,7 @@ def test_write_leaves_any_pandoc_attribute_suffix_untouched(tmp_path):
 
 
 def test_repair_write_leaves_a_pandoc_attribute_suffix_untouched(tmp_path):
-    """`ROBUST_LINK_RE` widened too, and it has its OWN write path: `repair`.
+    """The pre-#74 `ROBUST_LINK_RE` widened too, and it has its OWN write path: `repair`.
 
     Two regexes were widened and two write paths exist, but only `robustify`'s was guarded. This
     pins that `repair` rewrites the href and leaves everything after the anchor byte-for-byte —
@@ -311,7 +311,7 @@ def test_repair_write_leaves_a_pandoc_attribute_suffix_untouched(tmp_path):
 def test_an_attribute_block_before_the_anchor_IS_a_robust_link(tmp_path):
     """FR-065: `![](x){.cls} <!-- uuid: … -->` is the CORRECT shape, and `repair` must heal it.
 
-    Before #65 was fixed, `ROBUST_LINK_RE` required only whitespace between `)` and the comment, so
+    Before #65 was fixed, the pre-#74 `ROBUST_LINK_RE` required only whitespace between `)` and the comment, so
     this exact shape was refused robust status — a deliberate restriction, guarding a real bug: an
     earlier, narrower widening (an `attrs` group added to the regex with nothing carrying it through
     to the rewrite) made `repair --write` recognise the link and then silently DELETE the block while
@@ -391,7 +391,7 @@ def test_absorbing_a_stray_does_not_eat_a_closing_paren_of_prose(tmp_path):
 
 
 def test_repair_finds_a_robust_link_whose_destination_has_parens(tmp_path):
-    """`ROBUST_LINK_RE` widened too, and reverting that half alone left the whole suite green.
+    """The pre-#74 `ROBUST_LINK_RE` widened too, and reverting that half alone left the whole suite green.
 
     Real damage under that revert: an anchored link whose destination carries balanced parentheses
     is not recognised as robust at all, so when its target moves `repair` returns **no finding** —
@@ -451,7 +451,7 @@ def test_65_a_quoted_attr_value_containing_a_brace_is_not_split(tmp_path):
 
 
 def test_65_repair_finds_a_stale_link_whose_attrs_hold_a_quoted_brace(tmp_path):
-    """Sibling of the write-side test above, on the READ side: `ROBUST_LINK_RE`'s own `attrs`
+    """Sibling of the write-side test above, on the READ side: the pre-#74 `ROBUST_LINK_RE`'s own `attrs`
     group used to be a SECOND, independent copy of the same pattern text as `_PANDOC_ATTR_RE` --
     and it drifted the moment only one of the two was hardened for a quoted `}`. With the drift,
     `find_robust_links` (which `repair` is built on) fails to match this well-formed, already

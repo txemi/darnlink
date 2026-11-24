@@ -7,7 +7,6 @@ two apart. This feature names the second case.
 
 Report-only: nothing is ever written in response to a `dangling` finding (FR-042).
 """
-import sys
 from pathlib import Path
 
 from darnlink.report import Kind
@@ -185,7 +184,7 @@ def test_check_json_carries_dangling_on_its_own_axis(tmp_path, capsys):
 def test_image_embed_with_a_missing_target_is_reported(tmp_path):
     """FR-050: `![alt](gone.png)` is a path in a Markdown document like any other.
 
-    `MD_LINK_RE` never excluded embeds, so they always travelled the plain-link path — they just died
+    The pre-#74 `MD_LINK_RE` never excluded embeds, so they always travelled the plain-link path — they just died
     silently at `_anchor_target`, a `.png` being unanchorable. Naming the dangling case makes that
     visible, so it is pinned here as a decision rather than left to a regex.
     """
@@ -242,7 +241,7 @@ def test_missing_encoded_path_reports_the_decoded_target(tmp_path):
 def test_image_embed_with_an_empty_alt_is_reported(tmp_path):
     """FR-051: `![](gone.png)` — the shape pandoc emits for every image in a converted .docx/.odt.
 
-    `MD_LINK_RE` required at least one character of link text, so a link whose text is empty did not
+    The pre-#74 `MD_LINK_RE` required at least one character of link text, so a link whose text is empty did not
     match *at all*. That is the worst failure mode a gate has: the link was not reported as bad, it
     was absent, and the axis printed `dangling: 0` over a tree full of broken embeds. Regression
     #52 — measured on one real corpus in its own gate scope: 127 links with empty text, 7 of them
@@ -297,63 +296,40 @@ def test_a_non_empty_alt_with_the_pandoc_suffix_is_still_seen(tmp_path):
     assert len(found) == 1 and "gone.png" in found[0].detail
 
 
-def test_whitespace_around_a_destination_is_NOT_stripped_here(tmp_path):
-    """The absence of the whitespace rule is a DECISION, so it gets a test like any other.
+def test_whitespace_around_a_destination_is_stripped_now(tmp_path):
+    """INVERTED by #74, as this test's earlier version said it must be (it pinned the opposite).
 
-    `[x]( B.md )` denotes `B.md` in CommonMark, so reporting it dead while `B.md` is on disk is a
-    false red. That is real, and it is **deliberately not fixed on this branch** — see #74.
-
-    Without this test nothing distinguishes "FR-052 was left out on purpose" from "FR-052 was lost
-    in a merge". Seeded: a naive strip reinstating it passes the entire suite unnoticed, which is
-    exactly how a half-state gets re-landed — and a half-state is what nine review rounds were
-    spent climbing out of.
-
-    ⚠️ When #74 lands, this test must **invert**, not disappear. If it is simply deleted, the
-    property it guards goes unpinned again.
+    `[x]( B.md )` denotes `B.md` in CommonMark. Before the link scanner, darnlink kept the spaces in
+    the destination and reported a dead link while `B.md` was on disk — a false red, deliberately
+    left in place until the destination was read by a real scanner instead of an edge strip. The
+    scanner (`links.scan_links`) separates the destination from the whitespace around it, so the
+    link resolves, and robustify anchors it while writing the spaces back exactly as they were.
     """
-    _w(tmp_path / "B.md", "# B\n")
+    u_b = "bbbbbbbb-1111-2222-3333-444444444444"
+    _w(tmp_path / "B.md", f"---\nuuid: {u_b}\n---\n# B\n")
     _w(tmp_path / "doc.md", f"---\nuuid: {U_A}\n---\n\n[x]( B.md )\n")
 
-    found = _dangling(plan_robustify(tmp_path))
-    assert len(found) == 1, "the whitespace rule (#74) appears to have been re-landed silently"
-    assert " B.md " in found[0].detail
+    result = plan_robustify(tmp_path)
+    assert _dangling(result) == [], "the whitespace around the destination is read as part of it again"
+    assert result.new_content[tmp_path / "doc.md"].endswith(f"[x]( B.md ) <!-- uuid: {u_b} -->\n")
 
 
-def test_a_plain_link_with_only_a_trailing_space_is_also_NOT_anchored_here(tmp_path):
-    """Sibling of the test above, pinned separately because it is the exact shape #67 shipped a fix
-    for on the OTHER axis, and #67's own body names `_anchor_target` as a site that shares the bug
-    but is explicitly deferred to #74 (re-scoped 2026-08-13: "read #74 for the stripping rule
-    itself"). `repair` now handles `old/B.md ` correctly (an already-anchored link with this shape is
-    repaired, not misdiagnosed as an unhealable CONFLICT) — but a PLAIN link with the same trailing
-    space, going through `_anchor_target` first, still cannot be told apart from a genuinely dangling
-    one: `names_md("old/B.md ")` is true (stripped), yet `_anchor_target` resolves existence against
-    the UNSTRIPPED href, finds nothing, and returns None just like it always has. This is deliberate,
-    not an oversight — see the `names_md` docstring in `paths.py` — and this test is what makes that
-    deliberateness checkable rather than merely asserted in prose.
+def test_a_plain_link_with_only_a_trailing_space_is_anchored_now(tmp_path):
+    """INVERTED by #74, as its earlier version said it must be (sibling of the test above).
 
-    ⚠️ **On Windows this link IS anchored, for a reason that has nothing to do with #74.** Unlike its
-    sibling above (`" B.md "`, leading AND trailing), this shape has ONLY a trailing space. Win32's
-    `GetFullPathNameW` strips a TRAILING space from a path component but — measured here, not assumed
-    — does not touch a LEADING one. So `resolve_href("old/B.md ", …)` already lands on the real file
-    on Windows, `_anchor_target` returns it (not None), and the link is robustified normally: there is
-    no bug to defer to #74 on this platform, because Win32 already normalized the space away before
-    darnlink's own (deliberately unstripped) resolution ever ran. The sibling test keeps the LEADING
-    space specifically so it is NOT absorbed this way and still proves the point on every OS.
-
-    ⚠️ When #74 lands, the non-Windows branch below must invert too (assert the link IS anchored),
-    for the same reason its sibling above must.
+    #67 fixed this shape for `repair` and named `_anchor_target` as a site sharing the bug, deferred
+    to #74: `names_md("old/B.md ")` was true (stripped) while `_anchor_target` resolved the
+    UNSTRIPPED href and found nothing. The scanner no longer puts the trailing space in the href, so
+    the link resolves and is anchored on every OS (on Windows it already was, because Win32 drops a
+    trailing space from a path component).
     """
     _w(tmp_path / "old" / "B.md", f"---\nuuid: {U_A}\n---\n# B\n")
     _w(tmp_path / "A.md", "[x](old/B.md )\n")  # trailing space only, no uuid comment yet: plain
 
     result = plan_robustify(tmp_path)
-    found = _dangling(result)
-    if sys.platform.startswith("win"):
-        assert found == [], found  # Win32 already dropped the trailing space; nothing dangling here
-        assert any(f.kind is Kind.ROBUSTIFY for f in result.findings), result.findings
-    else:
-        assert len(found) == 1, "a plain link's trailing-space destination now resolves — check #74"
-        assert "old/B.md " in found[0].detail
+    assert _dangling(result) == [], result.findings
+    assert any(f.kind is Kind.ROBUSTIFY for f in result.findings), result.findings
+    assert result.new_content[tmp_path / "A.md"] == f"[x](old/B.md ) <!-- uuid: {U_A} -->\n"
 
 
 def test_balanced_parentheses_in_a_destination_are_not_truncated(tmp_path):
@@ -382,23 +358,17 @@ def test_a_truncated_destination_is_still_reported_when_it_really_is_missing(tmp
     assert len(found) == 1 and "gone%20(Parte%201).docx" in found[0].detail
 
 
-def test_nesting_beyond_two_levels_is_a_known_limit_not_a_property(tmp_path):
-    """The bound is written down, and pinned, because the pattern it replaced had one too.
+def test_nesting_beyond_two_levels_is_read_now(tmp_path):
+    """INVERTED by #74: the old regex stopped at two levels of nesting; the scanner reads 32 (cmark's
+    bound), and a deeper single-line destination is still read whole by its spaced rung.
 
-    CommonMark allows arbitrary nesting; a regex cannot. Adjudicated against the reference
-    implementation, `[^)]+` agrees with `cmark` on 3 of 9 probe shapes, one level of nesting on 7,
-    two on 8. The ninth is triple nesting, and this test states that darnlink does not see it —
-    **0 occurrences in the fleet**, and closing it needs the scanner tracked in #74.
-
-    Pinned rather than left implicit: an unstated bound is exactly how the old pattern truncated 266
-    real links for years without anyone calling it a bug.
+    The pattern this replaced was pinned here as truncating triple nesting at `a(b(c(d`. The scanner
+    counts depth, so the destination is whole and the file on disk is found.
     """
     _w(tmp_path / "a(b(c(d)e)f).md", "x\n")
     _w(tmp_path / "doc.md", f"---\nuuid: {U_A}\n---\n\n[r](a(b(c(d)e)f).md)\n")
 
-    found = _dangling(plan_robustify(tmp_path))
-    assert len(found) == 1, "triple nesting is now matched — good, but the docs say it is not"
-    assert "a(b(c(d" in found[0].detail          # truncated at the bound, as documented
+    assert _dangling(plan_robustify(tmp_path)) == [], "triple nesting is truncated again"
 
 
 def test_an_unbalanced_paren_must_not_swallow_the_next_link(tmp_path):
@@ -416,6 +386,10 @@ def test_an_unbalanced_paren_must_not_swallow_the_next_link(tmp_path):
     contain whitespace, so `[^()\\s]` makes the branch stop at the first space and the input falls
     to the `|[^)]+` fallback — i.e. back to the pre-change behaviour, which was wrong but visible.
 
+    The link scanner (#74) keeps the property with its own rules: CommonMark rejects the
+    destination (the space), and the one-line spaced rung refuses any span holding a `[`, so the
+    input reaches the same `[^)]+` fallback.
+
     ⚠️ This replaces a test that asserted prose after a link is not swallowed. That one was a
     tautology: no variant of this pattern can cross a bare `)`, so the aside was never at risk, and
     the seed it claimed to guard against left it green.
@@ -430,42 +404,38 @@ def test_an_unbalanced_paren_must_not_swallow_the_next_link(tmp_path):
     assert "f(x.md" in detalles, f"the unbalanced link should still be reported: {detalles}"
 
 
-def test_the_swallow_class_that_survives_is_pinned_as_a_known_limit(tmp_path):
-    """The whitespace producer is fixed; the escaped-paren one is NOT, and that is on the record.
+def test_an_escaped_paren_no_longer_swallows_the_next_link(tmp_path):
+    """INVERTED by #74, as this test's earlier version said it must be: two findings, not one.
 
-    `\\(` is CommonMark's own way to write a literal parenthesis. This pattern has no escape
-    handling, so it reads the `(` as an opener, and with no whitespace in the span it runs on and
-    merges the following link into one mangled destination.
-
-    What bounds the harm — and what this test asserts — is that the gate stays **RED**: the merged
-    destination cannot resolve, so it is an under-count with a bad name, never a green gate. That
-    distinction is the whole reason this is a documented limit rather than a blocker.
-
-    Measured across the gated fleet: 0 instances. Closing it needs the scanner in #74.
-
-    ⚠️ When #74 lands this test must **invert** — assert two findings — not disappear. Deleting it
-    would unpin the property in either direction.
+    `\\(` is CommonMark's own way to write a literal parenthesis. The old regex read it as an opener
+    and merged the following link into one mangled destination (an under-count, pinned here as a
+    known limit). The scanner honours the escape, so `docs/Log\\(Feb.md` ends at its own `)` and
+    `[s](gone.md)` is a link of its own. Both are dead, and both are reported — the escaped one by
+    the name it denotes on disk, `docs/Log(Feb.md`.
     """
     _w(tmp_path / "doc.md",
        f"---\nuuid: {U_A}\n---\n\n[r](docs/Log\\(Feb.md)[s](gone.md))\n")
 
     found = _dangling(plan_robustify(tmp_path))
-    assert len(found) == 1, f"the surviving swallow class changed shape: {found}"
-    assert "gone.md" in found[0].detail, "the neighbour was absorbed, so it must at least be named"
+    assert len(found) == 2, f"the escaped paren swallowed its neighbour again: {found}"
+    assert "docs/Log(Feb.md" in found[0].detail, found[0].detail
+    assert "gone.md" in found[1].detail, found[1].detail
 
 
-def test_the_nesting_bound_is_two_levels_and_that_is_pinned(tmp_path):
-    """The PR's headline bound had NO test: dropping it to one level left the suite green.
+def test_two_levels_of_nesting_are_read_whole(tmp_path):
+    """Two levels of nesting resolve. The two-level bound is gone since the scanner (#74); this test
+    was written when the regex had a two-level bound, which had NO test: dropping it to one level
+    left the suite green.
 
-    A one-level pattern still matches `a(b).md`, which every other test here uses, and the
-    beyond-the-bound test asserts a string the FALLBACK produces — so neither could see the change.
-    This one needs the second level: `a(b(c)d).md` matches only with it, and its target exists, so
-    a narrower bound turns this into a false red.
+    A one-level reading still matches `a(b).md`, which most tests here use, so it could not see such
+    a regression. This one needs the second level: `a(b(c)d).md` reads whole only with it, and its
+    target exists, so a reader that stopped at one level turns this into a false red. The
+    unbounded case is `test_nesting_beyond_two_levels_is_read_now`.
     """
     _w(tmp_path / "a(b(c)d).md", "# x\n")
     _w(tmp_path / "doc.md", f"---\nuuid: {U_A}\n---\n\n[r](a(b(c)d).md)\n")
 
-    assert _dangling(plan_robustify(tmp_path)) == [], "the bound dropped below two levels"
+    assert _dangling(plan_robustify(tmp_path)) == [], "two levels of nesting are truncated again"
 
 
 # --- A sparse checkout is not a broken link --------------------------------------------------------

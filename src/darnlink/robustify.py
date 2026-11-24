@@ -14,7 +14,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from fnmatch import fnmatch
 from pathlib import Path
-from urllib.parse import unquote
 from typing import AbstractSet, Dict, List, Optional, Set, Tuple
 
 from .frontmatter_edit import (
@@ -27,8 +26,8 @@ from .frontmatter_index import DEFAULT_EXCLUDES, dir_excluded, iter_markdown_fil
 from .links import (DetachedAnchor, PlainLink, code_spans, emit_robust_link, file_ignores_links,
                     file_is_ignored, find_detached_anchors, find_plain_links, ignored_spans,
                     line_bounds, pandoc_attrs_at)
-from .paths import (DIR_ANCHOR, is_absolute_local_path, is_local_relative, names_md, resolve_href, resolved,
-                     split_fragment)
+from .paths import (DIR_ANCHOR, destination_path, is_absolute_local_path, is_local_relative, names_md,
+                    resolve_href, resolved, split_fragment)
 from .report import Finding, Kind
 from .scope import in_scope
 
@@ -87,31 +86,33 @@ def _dangling_target(href: str, linking_file: Path) -> Path | None:
     """
     if not is_local_relative(href):
         return None                       # FR-046: scheme, protocol-relative, absolute, bare #frag
-    # FR-047: `resolve_href` does not percent-decode, so `my%20file.md` resolves to a path that never
-    # exists. Judging the raw spelling alone would report every percent-encoded link in a tree — the
-    # kind of false positive that gets a gate switched off rather than fixed.
+    # FR-047: a destination is percent-encoded (`my%20file.md`) or backslash-escaped (`A \(Z\)`)
+    # far more often than a file is literally named that way. `resolve_href` reads it decoded and
+    # falls back to the literal spelling, so a link is dead only when neither exists.
     path_part, _ = split_fragment(href)
-    decoded = unquote(path_part)
+    decoded = destination_path(path_part)
     encoded = decoded != path_part
     # Decoding can change *what kind of thing* the href is, not just how it is spelled:
-    # `%2Fetc%2Fpasswd` becomes an absolute path and `http%3A//x` regains its scheme. Both pass
-    # `is_local_relative` while encoded, so judging only the raw form would let the encoding walk
-    # around FR-046 — suppressing a finding because `/etc/passwd` happens to exist, or inventing one
-    # for a URL. The decoded spelling is held to the same rule as the raw one.
-    if encoded and not is_local_relative(decoded):
+    # `%2Fetc%2Fpasswd` becomes an absolute path and `http%3A//x` regains its scheme. Judging only the
+    # raw form would let the encoding walk around FR-046 — suppressing a finding because `/etc/passwd`
+    # happens to exist, or inventing one for a URL. `is_local_relative` (checked above) judges the
+    # decoded spelling too, for this function and for every other caller (`_anchor_target`,
+    # `_dir_link_missing_readme`), so such an href never reaches the resolution below.
+    t = resolve_href(href, linking_file)  # drops the fragment; decoded, or literal if only that exists
+    if t.exists():
         return None
-    t = resolve_href(href, linking_file)  # drops the fragment
-    if t.exists() or _sparse_absent(t):
+    literal = resolved(linking_file.parent / path_part) if encoded else t
+    if _sparse_absent(literal):
         return None
     if "\0" in decoded:
         # `%00` decodes to a NUL, which no file name can hold. `resolve()` raises on it on Linux (a crash
         # here) and takes it on Windows with 3.13, so the answer would depend on the system. No path with a
         # NUL exists anywhere: the link is dead, and it is reported with the spelling it has on disk.
-        return t
-    if encoded:
-        d = resolve_href(decoded, linking_file)
-        # Report the DECODED path: it is the one the link denotes, and the one to look for on disk.
-        return None if (d.exists() or _sparse_absent(d)) else d
+        return literal
+    if encoded and _sparse_absent(t):
+        return None
+    # Report the DECODED path when there is one: it is the one the link denotes, and the one to look
+    # for on disk (`resolve_href` returns it when neither spelling exists).
     return t
 
 
@@ -203,7 +204,7 @@ def _absolute_local_target(href: str) -> str | None:
     path_part, _ = split_fragment(href)
     if not path_part:
         return None
-    decoded = unquote(path_part)
+    decoded = destination_path(path_part)
     if is_absolute_local_path(path_part) or is_absolute_local_path(decoded):
         return decoded
     return None
@@ -626,7 +627,10 @@ def plan_robustify(
             # widened to swallow that block so it isn't left behind duplicated, and emit_robust_link
             # puts it back before the anchor comment rather than after.
             attrs = pandoc_attrs_at(original, link.end)
-            edits.append((link.start, link.end + len(attrs), emit_robust_link(link.text, link.href, u, attrs)))
+            # The destination is written back exactly as the author wrote it (`<…>`, `\(`, `%28`, a
+            # title, the spacing): robustify adds an anchor and changes nothing else (#74).
+            inner = original[link.inner_start:link.inner_end]
+            edits.append((link.start, link.end + len(attrs), emit_robust_link(link.text, inner, u, attrs)))
             shown_uuid = _DRAFT_UUID_PLACEHOLDER if u in created_uuids else u
             detail = f"{link.href} +uuid {shown_uuid}"
             stray = absorb.get(i)
