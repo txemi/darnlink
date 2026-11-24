@@ -6,6 +6,14 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- `tools/darnlang_ref.sh` reads the darnlang repository address from `DARNLANG_REPO_URL`, defaulting
+  to GitHub as before. The version (`v0.9.1`) is still pinned in that one file: a URL carrying `@`
+  is refused, and so is anything that is not an `http(s)://`, `ssh://` or `file://` URL. This lets a
+  host that must not reach GitHub run the pre-commit hook, `tools/check.sh` and the language gates
+  against its own forge's copy of darnlang. CI is unchanged.
+
 ## [0.34.1] — 2026-11-24
 
 ### Fixed

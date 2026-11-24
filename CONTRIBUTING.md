@@ -37,7 +37,8 @@ CI (`.github/workflows/ci.yml`) runs on every PR; please make sure it's green. A
 
 **Everything in this repo is written in English** — code, comments, docstrings, docs, spec files,
 commit messages, PR titles/descriptions, and issues. [`darnlang`](https://github.com/txemi/darnlang) enforces it on four surfaces, pinned by
-`tools/darnlang_ref.sh`:
+`tools/darnlang_ref.sh` (a host that must not reach GitHub sets `DARNLANG_REPO_URL` to a mirror of the
+same repository; the version stays pinned there):
 
 - **tracked files**, in three families: `.py`/`.pyi` and configuration/CI
   (`.yml` `.yaml` `.toml` `.cfg` `.ini` `.sh` `.bash` `.groovy` `.gradle`, plus `Jenkinsfile`,
