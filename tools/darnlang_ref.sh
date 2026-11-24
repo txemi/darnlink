@@ -14,4 +14,20 @@
 # shared and none of them had a test for. This repo is where the prose surfaces were invented and
 # where they were most complete, so migrating it is not a downgrade in any axis -- verified before
 # switching, surface by surface.
-export DARNLANG_REF="git+https://github.com/txemi/darnlang@v0.9.1"
+#
+# WHERE IT IS FETCHED FROM can be changed; WHAT is fetched cannot. A host that must not reach GitHub
+# (a fleet whose own forge carries the same repository and tags) sets DARNLANG_REPO_URL to that
+# repository's URL. Only the address moves: the version below stays the single pin, and a URL that
+# tries to carry its own `@ref` is refused, so no environment can pick another darnlang version.
+# Refusing every `@` also refuses user info (`user:token@host`), so no credential travels in this
+# variable; and since an ssh URL nearly always names a user, ssh:// is not offered at all.
+DARNLANG_VERSION="v0.9.1"
+DARNLANG_REPO_URL="${DARNLANG_REPO_URL:-https://github.com/txemi/darnlang}"
+case "$DARNLANG_REPO_URL" in
+  *@*) echo "darnlang_ref.sh: DARNLANG_REPO_URL must not contain '@' (the version is pinned here, not in the URL): $DARNLANG_REPO_URL" >&2
+       return 2 2>/dev/null || exit 2 ;;
+  http://*|https://*|file://*) ;;
+  *) echo "darnlang_ref.sh: DARNLANG_REPO_URL must be an http(s):// or file:// URL: $DARNLANG_REPO_URL" >&2
+     return 2 2>/dev/null || exit 2 ;;
+esac
+export DARNLANG_REF="git+${DARNLANG_REPO_URL}@${DARNLANG_VERSION}"
