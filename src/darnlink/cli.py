@@ -391,7 +391,9 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
     set (private repos); a private repo with no token is reported `web_unverifiable`, never a crash.
 
     Exit: 0 clean/applied · 4 integrity (web_mismatch or web_not_found) · 3 anchors pending in dry-run ·
-    1 usage. `web_unverifiable` is reported (never silent — Constitution II) but does not fail the exit.
+    1 usage. `web_unverifiable` is reported (never silent — Constitution II) but does not fail the exit,
+    except that `--own-verifiable` (feature 021) makes an OWNED destination that could not be read a
+    `web_own_unverifiable`, exit 4.
     """
     import os
     from .weblinks import check_web_links_online, default_fetcher
@@ -442,6 +444,12 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
                         help="budget: while there are N or fewer owned-without-uuid findings they are "
                              "reported but do not fail the exit. Lets the axis be adopted before a "
                              "repo reaches zero.")
+    parser.add_argument("--own-verifiable", action="store_true",
+                        help="(feature 021) a destination you own (--own / --own-from-origin) that "
+                             "could not be READ — no token, a rejected token, a repository the token "
+                             "cannot see, a network failure — FAILS (exit 4) instead of being "
+                             "reported unverifiable: for your own repository that is provisioning, "
+                             "not an external limit. Off by default; needs an owner set")
     parser.add_argument("--json", action="store_true", help="machine-readable output")
     args = parser.parse_args(argv)
 
@@ -454,9 +462,10 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
         return 1
     # FR-017: the offline branch ignores these entirely, so accepting them silently would report a
     # green run that never applied the rule it was asked for. Same argument as --write, above.
-    if (args.own or args.own_from_origin or args.own_max is not None) and not args.online:
-        print("error: --own/--own-from-origin/--own-max require --online (ownership is decided on a "
-              "fetched destination)", file=sys.stderr)
+    if (args.own or args.own_from_origin or args.own_max is not None
+            or args.own_verifiable) and not args.online:
+        print("error: --own/--own-from-origin/--own-max/--own-verifiable require --online (ownership "
+              "is decided on a fetched destination)", file=sys.stderr)
         return 1
     if args.forgejo and not args.online:
         print("error: --forgejo requires --online (it only changes what is fetched)", file=sys.stderr)
@@ -493,6 +502,13 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
     if args.own_max is not None and not owners:
         print("error: --own-max needs an owner set (--own / --own-from-origin); budgeting a rule that "
               "is not switched on is a no-op that reads like protection", file=sys.stderr)
+        return 1
+    if args.own_verifiable and not owners:
+        # Feature 021: same argument as --own-max. Without owners nothing is owned, the flag would
+        # turn nothing into a failure, and the green run would read as "every owned link verified".
+        print("error: --own-verifiable needs an owner set (--own / --own-from-origin); requiring "
+              "your own destinations to be verifiable when none are named is a no-op that reads like "
+              "protection", file=sys.stderr)
         return 1
 
     block_markers = tuple(args.ignore_block)
@@ -558,7 +574,8 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
     findings, edits = check_web_links_online(root, token, fetcher or default_fetcher, block_markers,
                                              excludes, owners, out_of_root=web_out_of_root,
                                              include_mermaid=args.include_mermaid, own=own,
-                                             forgejo=forgejo, forgejo_token=forgejo_token)
+                                             forgejo=forgejo, forgejo_token=forgejo_token,
+                                             own_verifiable=args.own_verifiable)
     ok = [x for x in findings if x.kind == "web_ok"]
     anchors = [x for x in findings if x.kind == "web_anchor"]
     mismatch = [x for x in findings if x.kind == "web_mismatch"]
@@ -566,6 +583,7 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
     unverifiable = [x for x in findings if x.kind == "web_unverifiable"]
     own_no_uuid = [x for x in findings if x.kind == "web_own_no_uuid"]
     own_exempt = [x for x in findings if x.kind == "web_own_exempt"]
+    own_unverifiable = [x for x in findings if x.kind == "web_own_unverifiable"]
 
     wrote = 0
     if args.write and edits:
@@ -577,7 +595,10 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
     # FR-012: the budget silences the VERDICT, never the finding. Other exit-4 causes are untouched,
     # so one budgeted finding plus one real web_not_found still exits 4.
     budgeted = args.own_max is not None and len(own_no_uuid) <= args.own_max
-    integrity_fail = bool(mismatch or notfound) or (bool(own_no_uuid) and not budgeted)
+    # Feature 021: `web_own_unverifiable` is never budgeted — `--own-max` counts per-destination
+    # edits, and this is one provisioning fix (a token, a route) that clears every finding at once.
+    integrity_fail = (bool(mismatch or notfound or own_unverifiable)
+                      or (bool(own_no_uuid) and not budgeted))
     anchors_pending = bool(anchors) and not args.write
     code = 4 if integrity_fail else (3 if anchors_pending else 0)
 
@@ -587,6 +608,7 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
             "web_ok": len(ok), "web_anchor": len(anchors), "web_mismatch": len(mismatch),
             "web_not_found": len(notfound), "web_unverifiable": len(unverifiable),
             "web_own_no_uuid": len(own_no_uuid), "web_own_exempt": len(own_exempt),
+            "web_own_unverifiable": len(own_unverifiable), "own_verifiable": args.own_verifiable,
             # FR-012 makes omitting the flag observably different from `--own-max 0`; without this key
             # the two payloads were byte-identical, so the machine surface could not tell them apart.
             "own_max": args.own_max,
@@ -603,12 +625,17 @@ def _run_web_check_cli(argv: List[str], fetcher=None) -> int:
         # non-zero, so a run without an owner set keeps today's line byte-for-byte (FR-001).
         extra = (f" | own-no-uuid {len(own_no_uuid)} | own-exempt {len(own_exempt)}"
                  if (own_no_uuid or own_exempt) else "")
+        # Feature 021, same rule: printed only when non-zero, so a run without the flag is unchanged.
+        if own_unverifiable:
+            extra += f" | own-unverifiable {len(own_unverifiable)}"
         print(f"  ok {len(ok)} | anchor {len(anchors)} | mismatch {len(mismatch)} | "
               f"not-found {len(notfound)} | unverifiable {len(unverifiable)}{extra}")
         for x in own_no_uuid:
             print(f"  [web_own_no_uuid] {x.file}: {x.detail} ({x.href})")
         for x in own_exempt:
             print(f"  [web_own_exempt] {x.file}: {x.detail} ({x.href})")
+        for x in own_unverifiable:
+            print(f"  [web_own_unverifiable] {x.file}: {x.detail} ({x.href})")
         for x in mismatch:
             print(f"  [web_mismatch] {x.file}: {x.detail} ({x.href})")
         for x in notfound:

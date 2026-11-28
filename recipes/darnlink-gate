@@ -100,6 +100,12 @@
 #     repository — but ONLY when this run actually passed an own_* flag, because exit 1 is not
 #     exclusively a usage error (uvx and an uncaught exception use it too). Under `fail_closed` it
 #     still fails the gate with 4: in CI an axis that could not run is not a pass.
+#   own_web_verifiable (boolean, needs `web` AND an owner key): feature 021, the second rung of 016.
+#     An owned destination that could not be READ (no token, a rejected token, a repository the token
+#     cannot see, a network failure) FAILS the gate instead of being reported unverifiable — for a
+#     repo you own, "could not check" is provisioning, not an external limit. Turn it on where the
+#     gate runs with a read token (CI). Set without any owner, web-check rejects it (exit 1) and the
+#     recipe reports it as configuration, like `own_web_max` without owners.
 #   forgejo_web (needs `web`): a LIST of self-hosted Forgejo instances whose file links
 #     (/<owner>/<repo>/src/branch/<ref>/<path>) are verified exactly like GitHub's. ONE entry per
 #     instance; if it answers to several names, put them all in that entry, comma-separated, with
@@ -313,6 +319,11 @@ OWN_WEB_FROM_ORIGIN="${DARNLINK_GATE_OWN_WEB_FROM_ORIGIN:-$(read_cfg own_web_fro
 # next person to add a key landed right above a `case` that looked like theirs and was not.
 case "${OWN_WEB_FROM_ORIGIN,,}" in ""|0|false|no|off) OWN_WEB_FROM_ORIGIN="" ;; 1|true|yes|on) OWN_WEB_FROM_ORIGIN=1 ;;
   *) bad_flag own_web_from_origin DARNLINK_GATE_OWN_WEB_FROM_ORIGIN "$OWN_WEB_FROM_ORIGIN" ;; esac
+
+# Feature 021 (opt-in, needs `web` and an owner key): an owned destination that could not be read fails.
+OWN_WEB_VERIFIABLE="${DARNLINK_GATE_OWN_WEB_VERIFIABLE:-$(read_cfg own_web_verifiable "")}"
+case "${OWN_WEB_VERIFIABLE,,}" in ""|0|false|no|off) OWN_WEB_VERIFIABLE="" ;; 1|true|yes|on) OWN_WEB_VERIFIABLE=1 ;;
+  *) bad_flag own_web_verifiable DARNLINK_GATE_OWN_WEB_VERIFIABLE "$OWN_WEB_VERIFIABLE" ;; esac
 
 # The repo's DEFAULT BRANCH, for telling a link that is PENDING on it from one that is broken.
 # ⚠️ Normally derived from `origin`, and in CI that derivation FAILS: a multibranch PR job fetches
@@ -716,10 +727,16 @@ PY
 
 # F4: `own_web` rides on `web` and on mode=max. Configured where the pass never runs it is a silent
 # no-op that READS like protection — exactly what the CLI refuses to do with `--own-max` and no owners.
-if { [ "$OWN_WEB_N" -gt 0 ] || [ -n "$OWN_WEB_FROM_ORIGIN$OWN_WEB_MAX" ]; } \
+if { [ "$OWN_WEB_N" -gt 0 ] || [ -n "$OWN_WEB_FROM_ORIGIN$OWN_WEB_MAX$OWN_WEB_VERIFIABLE" ]; } \
    && { [ -z "$WEB" ] || [ "$MODE" != "max" ]; }; then
   echo "darnlink-gate: own_web* is configured but the web pass does not run here (web=${WEB:-off}," >&2
   echo "  mode=$MODE — it needs web on AND mode=max). The 016 rule is NOT being applied." >&2
+fi
+# Feature 021: the rung only acts on OWNED destinations. Without an owner key it is a no-op that reads
+# like protection; web-check refuses it (exit 1), and saying why here saves reading that exit backwards.
+if [ -n "$OWN_WEB_VERIFIABLE" ] && [ "$OWN_WEB_N" -eq 0 ] && [ -z "$OWN_WEB_FROM_ORIGIN" ]; then
+  echo "darnlink-gate: own_web_verifiable is set but no owner is (own_web / own_web_from_origin) —" >&2
+  echo "  there is nothing it could require to be verifiable." >&2
 fi
 
 if [ "$SCOPE" != "staged" ]; then
@@ -805,6 +822,7 @@ if [ "$SCOPE" != "staged" ]; then
       [ -n "$INCLUDE_MERMAID" ] && WEB_ARGS+=(--include-mermaid)
       [ -n "$OWN_WEB_FROM_ORIGIN" ] && { WEB_ARGS+=(--own-from-origin); OWN_PASSED=1; }
       [ -n "$OWN_WEB_MAX" ]         && { WEB_ARGS+=(--own-max "$OWN_WEB_MAX"); OWN_PASSED=1; }
+      [ -n "$OWN_WEB_VERIFIABLE" ]  && { WEB_ARGS+=(--own-verifiable); OWN_PASSED=1; }
       # An owner entry that is present but empty is a typo, and a silent one: the axis would run with
       # less ownership than the config claims and go green looking like it had checked all of it. It
       # is counted, not inferred from the joined value — `[""]` flattens to exactly what an absent key
@@ -822,7 +840,8 @@ if [ "$SCOPE" != "staged" ]; then
       run web-check . --online "${WEB_ARGS[@]}"; rc=$?
       set -e
       # Exit 1 CAN be a usage error — feature 016 makes it reachable from CONFIGURATION: own_web_max
-      # without own_web, an empty owner name, own_web_from_origin in a tree with no GitHub `origin`.
+      # (or own_web_verifiable, 021) without own_web, an empty owner name, own_web_from_origin in a
+      # tree with no GitHub `origin`.
       # But it is NOT only that: `uvx` exits 1 on its own failures and an uncaught Python exception
       # exits 1 too. So this only fires when THIS RUN passed an own_* flag — otherwise a repo that
       # never adopted 016 would have its exit 1 turned green, which is a worse guarantee than before
@@ -836,8 +855,8 @@ if [ "$SCOPE" != "staged" ]; then
       if [ "$rc" -eq 1 ] && { [ -n "$OWN_PASSED" ] || [ -n "$FORGEJO_PASSED" ]; }; then
         echo "darnlink-gate: web-check rejected its own arguments (exit 1) — most likely a CONFIG" >&2
         echo "  error rather than a finding about this repository. Check own_web /" >&2
-        echo "  own_web_from_origin / own_web_max / forgejo_web in darnlink-gate.json. The web axis" >&2
-        echo "  did NOT run." >&2
+        echo "  own_web_from_origin / own_web_max / own_web_verifiable / forgejo_web in" >&2
+        echo "  darnlink-gate.json. The web axis did NOT run." >&2
         if [ -n "$FAIL_CLOSED" ]; then
           echo "  fail_closed is on: an axis that could not run is not a pass. -> 4" >&2
           rc=4
@@ -846,7 +865,8 @@ if [ "$SCOPE" != "staged" ]; then
         fi
       fi
       # web-check's contract (all in 0..4, none of them "unreachable"): 0 = clean (a network/token
-      # failure is reported web_unverifiable, still exit 0 — it NEVER exits high); 3 = a plain web link
+      # failure is reported web_unverifiable, still exit 0 — it NEVER exits high — except that
+      # own_web_verifiable makes it a 4 for an OWNED destination, feature 021); 3 = a plain web link
       # not yet anchored (dry-run: it COULD be robustified) — a real gate failure, which is the point
       # (detect un-robustified web links); 4 = a broken/moved/mismatched public web link. So EVERY
       # non-zero is fail-closed, NOT the core's rc>3 "unreachable" case: it must NOT go through the
