@@ -6,6 +6,26 @@ All notable changes to darnlink are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **`web-check --own-verifiable`: a destination you own must be verifiable (feature 021, the second
+  rung of 016).** Off by default. With it, a recognised file link (GitHub `blob`/`raw`, or a file
+  link on a declared `--forgejo`) whose owner is in the owner set and whose destination could not be
+  READ — no token, a rejected token, a 404 in a repository the token cannot see, a 404 without a
+  token, a network failure or a server error after the retries — is reported
+  `web_own_unverifiable` and exits **4** instead of passing as `web_unverifiable`. For your own
+  repository "could not check" is provisioning, not an external limit; the message names
+  owner/repo/path, the cause, and the variable (`GITHUB_TOKEN` or `FORGEJO_TOKEN`) or the server to
+  fix. Not budgeted by `--own-max` (one token fixes them all). Unchanged with the flag: anything
+  that was answered (a 200 in every variant, a 404 with a token, which stays `web_not_found` or
+  pending), a malformed URL (`-3`), unrecognised URLs (PR pages, issues, repository home pages),
+  destinations you do not own, and files carrying `darnlink-ignore-file` / `darnlink-ignore-links`.
+  Without an owner set, or without `--online`, the flag is a usage error (exit 1). `--json` gains
+  `web_own_unverifiable` and `own_verifiable`.
+- **Gate recipes: `own_web_verifiable`** (boolean, needs `web` and an owner key), in both
+  `recipes/darnlink-gate` and `recipes/darnlink-gate.ps1`, and in `gate_config.schema.json`. Set
+  without an owner key, the recipe says so and reports web-check's exit 1 as configuration.
+
 ## [0.35.0] — 2026-11-24
 
 ### Changed

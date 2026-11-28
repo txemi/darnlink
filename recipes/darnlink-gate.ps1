@@ -200,6 +200,9 @@ $ownWeb = @(if (CfgHas 'own_web') { $cfg.own_web | Where-Object { $null -ne $_ }
 # comma-separated inside the entry - see the bash recipe. Read by presence, like own_web.
 $forgejoWeb = @(if (CfgHas 'forgejo_web') { $cfg.forgejo_web | Where-Object { $null -ne $_ } } else { @() })
 $ownWebFromOrigin = Read-Flag 'own_web_from_origin' 'DARNLINK_GATE_OWN_WEB_FROM_ORIGIN'
+# Feature 021 (opt-in, needs `web` and an owner key): an owned destination that could not be READ (no
+# token, a rejected token, a repository the token cannot see, a network failure) fails the gate.
+$ownWebVerifiable = Read-Flag 'own_web_verifiable' 'DARNLINK_GATE_OWN_WEB_VERIFIABLE'
 
 # The repo's DEFAULT BRANCH, for telling a link that is PENDING on it from one that is broken. A
 # STRING, not a flag (a branch may be called `off`), so it is not Read-Flag. What cannot be a branch
@@ -257,11 +260,18 @@ $crExcludes = @($createReadmeExcludes | Where-Object { $_ })
 
 # F4: `own_web` rides on `web` and on mode=max. Configured where the pass never runs it is a silent
 # no-op that READS like protection - exactly what the CLI refuses to do with `--own-max` and no owners.
-if (($ownWeb.Count -gt 0 -or $ownWebFromOrigin -or -not [string]::IsNullOrEmpty($ownWebMax)) -and
+if (($ownWeb.Count -gt 0 -or $ownWebFromOrigin -or $ownWebVerifiable -or
+     -not [string]::IsNullOrEmpty($ownWebMax)) -and
     ((-not $web) -or $mode -cne 'max')) {
   $webShown = if ($web) { '1' } else { 'off' }
   Write-Warning "darnlink-gate: own_web* is configured but the web pass does not run here (web=$webShown,"
   Write-Warning "  mode=$mode - it needs web on AND mode=max). The 016 rule is NOT being applied."
+}
+# Feature 021: the rung only acts on OWNED destinations. Without an owner key it is a no-op that reads
+# like protection; web-check refuses it (exit 1), and saying why here saves reading that exit backwards.
+if ($ownWebVerifiable -and $ownWeb.Count -eq 0 -and -not $ownWebFromOrigin) {
+  Write-Warning "darnlink-gate: own_web_verifiable is set but no owner is (own_web / own_web_from_origin) -"
+  Write-Warning "  there is nothing it could require to be verifiable."
 }
 
 # --- guard: read-only. Never pass --write through. ---
@@ -600,6 +610,7 @@ if ($scope -cne 'staged') {
       if ($includeMermaid)                 { $webArgs += '--include-mermaid' }
       if ($ownWebFromOrigin)               { $webArgs += '--own-from-origin'; $ownPassed = $true }
       if (-not [string]::IsNullOrEmpty($ownWebMax)) { $webArgs += @('--own-max', $ownWebMax); $ownPassed = $true }
+      if ($ownWebVerifiable)               { $webArgs += '--own-verifiable'; $ownPassed = $true }
       # Same two warnings as the bash recipe, same wording: an owner entry that is present but empty
       # is a typo that makes the axis enforce less than the config claims, and it would go green.
       if ($ownWeb.Count -gt 0 -and $ownWebUsed -eq 0) {
@@ -613,8 +624,8 @@ if ($scope -cne 'staged') {
       & uvx --from $ref darnlink web-check . --online @webArgs
       $rc = $LASTEXITCODE
       # EXIT 1 IS A USAGE ERROR, NOT A VERDICT ABOUT THE REPO, and feature 016 makes it reachable from
-      # CONFIGURATION: own_web_max without own_web, an empty owner name, or own_web_from_origin in a
-      # tree with no GitHub `origin`. Reporting it as a red gate would send someone hunting for broken
+      # CONFIGURATION: own_web_max (or own_web_verifiable, 021) without own_web, an empty owner
+      # name, or own_web_from_origin in a tree with no GitHub `origin`. Reporting it as a red gate would send someone hunting for broken
       # links that do not exist. Say what is wrong and drop the axis for this run.
       # Only when THIS RUN passed an own_* flag: uvx exits 1 on its own failures and an uncaught
       # Python exception exits 1 too, so an unconditional swallow would turn those green for a repo
@@ -623,8 +634,8 @@ if ($scope -cne 'staged') {
       if ($rc -eq 1 -and ($ownPassed -or $forgejoPassed)) {
         Write-Warning "darnlink-gate: web-check rejected its own arguments (exit 1) - most likely a CONFIG"
         Write-Warning "  error rather than a finding about this repository. Check own_web /"
-        Write-Warning "  own_web_from_origin / own_web_max / forgejo_web in darnlink-gate.json. The web axis"
-        Write-Warning "  did NOT run."
+        Write-Warning "  own_web_from_origin / own_web_max / own_web_verifiable / forgejo_web in"
+        Write-Warning "  darnlink-gate.json. The web axis did NOT run."
         if ($failClosed) {
           Write-Warning "  fail_closed is on: an axis that could not run is not a pass. -> 4"
           $rc = 4

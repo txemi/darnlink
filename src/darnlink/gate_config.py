@@ -75,6 +75,8 @@ KEYS: Dict[str, Tuple[str, str]] = {
     "default_branch": ("branch", "The default branch, to tell a pending link from a broken one."),
     "include_mermaid": ("flag", "Also watch the links in mermaid `click` directives (needs web)."),
     "own_web_max": ("count", "How many own_web findings are tolerated (a budget)."),
+    "own_web_verifiable": ("flag", "An owned destination that cannot be read fails (needs web and an "
+                                   "owner key)."),
     "create_readme": ("flag", "A link to a folder without a README fails the gate."),
     "create_readme_excludes": ("globs", "Extra directory globs for the create-readme pass only."),
     "dangling": ("dangling", "Links whose target does not exist: off, warn, added-lines or repo."),

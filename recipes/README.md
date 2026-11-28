@@ -67,6 +67,7 @@ is that orchestration in one place; a consumer carries only a tiny config + a 3-
   | `own_web_from_origin` | bool | also count this repo's `origin` owner. A **separate key, not a sentinel** in the list, so an owner literally called `origin` stays expressible |
   | `default_branch` | string | the repo's default branch, e.g. `main`. **Declare it in CI**: a multibranch PR job fetches only the pull ref, so there is no `origin/HEAD`, and `ls-remote` usually has no credentials there — without this the pending-vs-broken rung goes INERT exactly where it is needed. It says so on stderr when it does |
   | `own_web_max` | int | a budget, so the rung is adoptable before the repo reaches zero. **Non-numeric counts as ABSENT, never as infinite** — widening an allowance is the one direction a config typo must not be able to go |
+  | `own_web_verifiable` | bool | feature 021: an owned destination that could not be **read** (no token, a rejected token, a repository the token cannot see, a network failure) **fails** instead of being reported unverifiable. Turn it on where the gate runs with a read token (CI). Needs an owner key; not covered by `own_web_max` |
 
 - `forgejo_web` (opt-in, **needs `web`**) → feature 018. Links to a **self-hosted Forgejo** are
   only recognised once the instance is declared; then its file links
@@ -106,7 +107,7 @@ is that orchestration in one place; a consumer carries only a tiny config + a 3-
   forever is a normal state, not a defect: the anchor is an HTML comment and a diagram renders it as
   a node rather than treating it as a comment.
 
-  A misconfiguration (a budget with no owners, an empty owner name, `own_web_from_origin` in a tree
+  A misconfiguration (a budget or `own_web_verifiable` with no owners, an empty owner name, `own_web_from_origin` in a tree
   with no GitHub `origin`) exits `1`, and the recipe reports it as **likely-config** rather than as a
   verdict about the repository — but **only when this run actually passed an `own_*` flag**, because
   exit `1` is not exclusively a usage error (`uvx` and an uncaught exception use it too). Under
@@ -142,8 +143,8 @@ is that orchestration in one place; a consumer carries only a tiny config + a 3-
 - **Stops on a config it cannot trust** (exit `1`, in both fail modes, before running anything): a
   `darnlink-gate.json` that is not valid JSON (the `.ps1` used to run with every default, in
   silence), a file whose top level is not an object (`[1]`, `"x"`, `3`: both recipes used to run
-  with every default), and a flag (`fail_closed`, `web`, `own_web_from_origin`, `include_mermaid`,
-  `create_readme`) whose value is not on the closed list, compared in any case: `true`, `1`, `yes`,
+  with every default), and a flag (`fail_closed`, `web`, `own_web_from_origin`, `own_web_verifiable`,
+  `include_mermaid`, `create_readme`) whose value is not on the closed list, compared in any case: `true`, `1`, `yes`,
   `on` / `false`, `0`, `no`, `off`, or absent. `"disabled"` used to turn the flag **on**.
   On Windows PowerShell 5.1 the JSON check is laxer: beyond what its own parser rejects, it only
   catches a trailing comma (PowerShell 7 parses as strictly as bash).

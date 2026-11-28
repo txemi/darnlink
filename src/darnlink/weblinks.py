@@ -713,6 +713,7 @@ def default_fetcher(gu: GithubUrl, token: Optional[str], *,
 class WebFinding:
     kind: str          # web_ok · web_anchor · web_mismatch · web_not_found · web_unverifiable
                        # · web_own_no_uuid · web_own_exempt (feature 016)
+                       # · web_own_unverifiable (feature 021, only with --own-verifiable)
     file: Path         # the linking file in the scanned tree
     href: str
     detail: str
@@ -833,10 +834,49 @@ def _esta_versionado(root: "Path", ruta: str) -> bool:
     return r.returncode == 0
 
 
+def _unreadable_cause(gu: GithubUrl, status: int, have_token: bool) -> Optional[Tuple[str, str]]:
+    """Feature 021: why a destination COULD NOT BE READ, and what provisioning fixes it — or None
+    when the status is not a read failure.
+
+    Exactly the statuses `_classify` turns into `web_unverifiable` because nothing was learnt about
+    the destination: a rejection (401/403, with or without a token), the `-2` sentinel (a 404 in a
+    repository the token cannot read), a 404 WITHOUT a token, a network failure (`-1`, after the
+    retries `default_fetcher` already made) and any other non-200 left after those retries.
+
+    Deliberately NOT here: 200 (the destination WAS read, whatever its frontmatter says), a 404 WITH
+    a token in a readable repository (already `web_not_found`, or pending on the default branch —
+    both are answers about the destination, not failures to get one), and `-3` (the URL itself is
+    malformed: a defect of the link, which no token or network access can fix)."""
+    var = gu.token_var
+    where = f"{gu.owner}/{gu.repo}"
+    token_fix = f"export {var} with a token that can read {where} to verify"
+    if status in (401, 403):
+        if have_token:
+            return (f"the token in {var} was rejected ({status})",
+                    f"provision {var} with a token that can read {where}")
+        return (f"anonymous request rejected ({status}) and {var} is not set", token_fix)
+    if status == -2:
+        return (f"404 in a repository the token in {var} cannot read",
+                f"provision {var} with a token that can read {where}")
+    if status == 404:
+        if have_token:
+            return None
+        return (f"404 without a token ({var} is not set): a private repository cannot be told from a "
+                "missing file", token_fix)
+    if status in (200, -3):
+        return None
+    server = gu.forge.key if gu.forge is not None else _GITHUB_API
+    if status == -1:
+        return ("no answer from the server after the retries (network failure)",
+                f"make {server} reachable from where this runs")
+    return (f"fetch failed (status {status}) after the retries",
+            f"make {server} answer from where this runs")
+
+
 def _classify(link: WebLink, gu: Optional[GithubUrl], status: int, dest_uuid: Optional[str],
               have_token: bool, f: Path, owners: frozenset = frozenset(),
               dest_fm_status: Optional[str] = None, filtered: bool = False,
-              own: Optional["OwnRepo"] = None) -> WebFinding:
+              own: Optional["OwnRepo"] = None, own_verifiable: bool = False) -> WebFinding:
     """Feature 016 adds two kinds on top of 013's five. Two axes (§Precedence): visibility first —
     `--ignore-block` and code fences never reach here, and a file carrying `darnlink-ignore-file` /
     `darnlink-ignore-links` arrives with `filtered=True`, which suppresses ONLY the new finding
@@ -845,6 +885,21 @@ def _classify(link: WebLink, gu: Optional[GithubUrl], status: int, dest_uuid: Op
     is dead either way. The exemption and the new finding live strictly inside the 200 branch."""
     if gu is None:
         return WebFinding("web_unverifiable", f, link.href, "not a recognised GitHub blob/raw URL")
+    if own_verifiable and not filtered and owner_is_owned(gu.owner, owners):
+        # Feature 021, the second rung of 016: for a destination YOU own, "could not read it" is a
+        # provisioning failure, not an external limit. Decided here, before the per-status branches,
+        # because every status `_unreadable_cause` accepts is one those branches turn into
+        # `web_unverifiable` for every link, exempt or not — so nothing that already fails, and
+        # nothing decided on a 200, can be counted twice. `filtered` (003/006 file markers) keeps
+        # the link informational, by the same by-kind rule 016's FR-014 applies to its own finding.
+        unreadable = _unreadable_cause(gu, status, have_token)
+        if unreadable is not None:
+            cause, fix = unreadable
+            return WebFinding("web_own_unverifiable", f, link.href,
+                              f"destination is yours ({gu.owner}/{gu.repo}, {gu.path}) but could not be "
+                              f"read: {cause} — {fix}. Under --own-verifiable an owned destination "
+                              "that cannot be checked fails: this is provisioning, not a broken link",
+                              token_var=gu.token_var)
     if gu.forge is not None and status in (401, 403):
         # A self-hosted server has no anonymous 60/h quota story to tell: a rejection is about
         # credentials, and the variable to set is Forgejo's own.
@@ -980,6 +1035,7 @@ def check_web_links_online(
     own: Optional["OwnRepo"] = None,
     forgejo: Sequence[ForgejoServer] = (),
     forgejo_token: Optional[str] = None,
+    own_verifiable: bool = False,
 ) -> Tuple[List[WebFinding], Dict[Path, str]]:
     """Fetch each web link's destination (once, cached per URL) and classify it. Returns the findings
     and the per-file rewritten content for any `web_anchor` (the caller writes it only under --write).
@@ -990,7 +1046,10 @@ def check_web_links_online(
     fetched/anchored. Defaults to the shared `DEFAULT_EXCLUDES`.
 
     `forgejo` declares self-hosted Forgejo servers whose file links are verified like GitHub's;
-    their destinations are fetched with `forgejo_token`, never with the GitHub `token`."""
+    their destinations are fetched with `forgejo_token`, never with the GitHub `token`.
+
+    `own_verifiable` (feature 021) turns an owned destination that could not be read into
+    `web_own_unverifiable`; it changes nothing without an owner set."""
     from .frontmatter_index import iter_markdown_files, DEFAULT_EXCLUDES
     from .frontmatter_edit import read_text_keep_newlines
     from .links import file_ignores_links, file_is_ignored
@@ -1038,7 +1097,7 @@ def check_web_links_online(
             dest_fm_status, dest_uuid = (read_frontmatter_uuid(text.lstrip("\ufeff"))
                                          if (status == 200 and text is not None) else (None, None))
             fnd = _classify(link, gu, status, dest_uuid, have_token, f, owners, dest_fm_status, filtered,
-                            own=own)
+                            own=own, own_verifiable=own_verifiable)
             findings.append(fnd)
             if fnd.kind == "web_anchor" and fnd.anchored_uuid:
                 pieces.append(content[cursor:link.start])

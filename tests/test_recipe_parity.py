@@ -45,7 +45,8 @@ _GATE_ENV = (
     "DARNLINK_REF", "DARNLINK_GATE_MODE", "DARNLINK_GATE_SCOPE", "DARNLINK_GATE_FAIL_CLOSED",
     "DARNLINK_GATE_WEB", "DARNLINK_GATE_CREATE_README", "DARNLINK_GATE_TOKEN_FILE",
     "DARNLINK_GATE_DANGLING", "DARNLINK_GATE_DANGLING_MAX", "DARNLINK_GATE_DEFAULT_BRANCH",
-    "DARNLINK_GATE_OWN_WEB_FROM_ORIGIN", "DARNLINK_GATE_OWN_WEB_MAX", "DARNLINK_GATE_INCLUDE_MERMAID",
+    "DARNLINK_GATE_OWN_WEB_FROM_ORIGIN", "DARNLINK_GATE_OWN_WEB_MAX", "DARNLINK_GATE_OWN_WEB_VERIFIABLE",
+    "DARNLINK_GATE_INCLUDE_MERMAID",
     "DARNLINK_GATE_FORGEJO_TOKEN_FILE", "DARNLINK_GATE_REPORT",
 )
 
@@ -284,7 +285,8 @@ CASES = [
     _flag([], 0, [CHECK]),
     *[Case(f"{key}=disabled", clean, {"ref": "x", "mode": "max", key: "disabled"}, 1, [],
            f"{key}='disabled'")
-      for key in ("fail_closed", "web", "own_web_from_origin", "include_mermaid", "create_readme")],
+      for key in ("fail_closed", "web", "own_web_from_origin", "own_web_verifiable", "include_mermaid",
+                  "create_readme")],
     Case("env-flag-disabled", clean, {"ref": "x"}, 1, [], "environment variable DARNLINK_GATE_FAIL_CLOSED",
          env={"DARNLINK_GATE_FAIL_CLOSED": "disabled"}),
     Case("env-flag-1", clean, {"ref": "x"}, 0, [CHECK], env={"DARNLINK_GATE_FAIL_CLOSED": "1"}),

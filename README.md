@@ -155,7 +155,7 @@ Subcommands, each with its own `--help`:
 |---|---|
 | `darnlink check [path]` | The gate: both axes in one report-only run. Exit `0` clean, `2` integrity (a broken robust link or invalid YAML frontmatter), `3` strict (a plain link that could be anchored and is not). Takes `--exclude`, `--ignore-block`, `--only`, `--only-from`, `--json`. |
 | `darnlink yaml-refs [root]` | *(experimental)* Checks typed `{uuid, link}` references in YAML data; `--write` fills a missing `uuid` from the target. See below. |
-| `darnlink web-check [path]` | *(experimental, opt-in)* Lists the links to other repositories; `--online` verifies and anchors them over the network (`--write`; `--forgejo URL` for a self-hosted Forgejo; `--default-branch`). `--own OWNER` / `--own-from-origin` make "my own destination has no `uuid`" a failure (exit `4`, budget `--own-max N`); `--include-mermaid` also reads a diagram's `click` destinations. |
+| `darnlink web-check [path]` | *(experimental, opt-in)* Lists the links to other repositories; `--online` verifies and anchors them over the network (`--write`; `--forgejo URL` for a self-hosted Forgejo; `--default-branch`). `--own OWNER` / `--own-from-origin` make "my own destination has no `uuid`" a failure (exit `4`, budget `--own-max N`), and `--own-verifiable` also "my own destination could not be read"; `--include-mermaid` also reads a diagram's `click` destinations. |
 | `darnlink gate-config [path]` | Checks a `darnlink-gate.json` against its published schema and warns about each problem; never writes. Exit `0` even with problems, unless `--strict`. |
 
 Files can also opt themselves out from the inside, with no CLI flag: see

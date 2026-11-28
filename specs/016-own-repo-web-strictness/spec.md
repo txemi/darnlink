@@ -154,7 +154,7 @@ token cannot read. The reasoning is sound (for your own repo, "I could not check
 failure, not an external limit), but it is a **different rung** and must ship off by default: turning
 it on together with the base rule reproduces the wall of false breaks that 013's tokenless-404 carve
 out was written to prevent. Not specified further here; named so the base rule is not quietly widened
-into it later.
+into it later. It is now feature 021 (`specs/021-own-web-verifiable/`, `--own-verifiable`).
 
 ### Adoption: a budget, not a cliff
 
@@ -568,7 +568,7 @@ resolves through `git config`.
 ## Out of scope
 
 - **The second rung** (failing owned `web_unverifiable` for 404 / unreadable repo) — named above,
-  specified separately if wanted.
+  specified separately as feature 021.
 - **Writing the `uuid` into the destination repository**, by any means, including a checked-out
   sibling. Principle II; also 013's rejected alternative (c).
 - **Non-GitHub forges** — ownership is parsed from the GitHub URL shape, as in 013.

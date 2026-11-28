@@ -44,7 +44,7 @@ _LEAKY_ENV = (
     "DARNLINK_REF", "DARNLINK_GATE_MODE", "DARNLINK_GATE_SCOPE", "DARNLINK_GATE_FAIL_CLOSED",
     "DARNLINK_GATE_WEB", "DARNLINK_GATE_CREATE_README", "DARNLINK_GATE_TOKEN_FILE",
     "DARNLINK_GATE_DANGLING", "DARNLINK_GATE_DANGLING_MAX",
-    "DARNLINK_GATE_OWN_WEB_FROM_ORIGIN", "DARNLINK_GATE_OWN_WEB_MAX",
+    "DARNLINK_GATE_OWN_WEB_FROM_ORIGIN", "DARNLINK_GATE_OWN_WEB_MAX", "DARNLINK_GATE_OWN_WEB_VERIFIABLE",
     "DARNLINK_GATE_INCLUDE_MERMAID", "DARNLINK_GATE_REPORT",
     # The hand-off to the pinned recipe (test_recipe_handoff.py): none of these may reach a test here.
     "DARNLINK_GATE_HANDOFF_DONE", "DARNLINK_GATE_RECIPE_BASE", "DARNLINK_GATE_CACHE",
@@ -737,6 +737,66 @@ def test_the_owner_keys_actually_reach_the_cli(sandbox, tmp_path):
     assert "--own owned" in web[0] and "--own other" in web[0]
     assert "--own-from-origin" in web[0]
     assert "--own-max 3" in web[0]
+
+
+# --- own_web_verifiable: feature 021 (an owned destination that cannot be read fails) ---
+
+@pytest.mark.parametrize("value", [True, "yes", "ON", 1])
+def test_own_web_verifiable_reaches_the_cli(sandbox, tmp_path, value):
+    """Asserted on the INVOCATION, for the reason given above: the verdict cannot tell."""
+    repo, run = sandbox
+    _owned_web_link_without_uuid(repo)
+    log = tmp_path / "argv.log"
+
+    run({"mode": "max", "web": True, "own_web": ["owned"], "own_web_verifiable": value}, argv_log=log)
+
+    web = [l for l in log.read_text().splitlines() if "web-check" in l]
+    assert web and "--own-verifiable" in web[0] and "--own owned" in web[0], web
+
+
+@pytest.mark.parametrize("value", [False, "false", "off", 0])
+def test_a_falsey_own_web_verifiable_does_not_pass_the_flag(sandbox, tmp_path, value):
+    repo, run = sandbox
+    _owned_web_link_without_uuid(repo)
+    log = tmp_path / "argv.log"
+
+    run({"mode": "max", "web": True, "own_web": ["owned"], "own_web_verifiable": value}, argv_log=log)
+
+    web = [l for l in log.read_text().splitlines() if "web-check" in l]
+    assert web and "--own-verifiable" not in web[0], web
+
+
+def test_own_web_verifiable_is_a_boolean_or_the_gate_stops(sandbox):
+    repo, run = sandbox
+    _owned_web_link_without_uuid(repo)
+
+    r = run({"mode": "max", "web": True, "own_web": ["owned"], "own_web_verifiable": "disabled"})
+
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "own_web_verifiable='disabled'" in r.stderr
+
+
+def test_own_web_verifiable_without_an_owner_says_so_and_is_read_as_config(sandbox):
+    """Same shape as `own_web_max` without owners: web-check refuses it (exit 1), and the recipe
+    reports configuration, not a verdict — plus a line naming the missing owner key."""
+    repo, run = sandbox
+    _owned_web_link_without_uuid(repo)
+
+    r = run({"mode": "max", "web": True, "own_web_verifiable": True})
+
+    out = r.stdout + r.stderr
+    assert r.returncode == 0, out
+    assert "own_web_verifiable is set but no owner is" in out
+    assert "CONFIG" in out and "did NOT run" in out
+
+
+def test_own_web_verifiable_where_the_pass_never_runs_says_so(sandbox):
+    repo, run = sandbox
+    _owned_web_link_without_uuid(repo)
+
+    r = run({"mode": "check", "web": True, "own_web": ["owned"], "own_web_verifiable": True})
+
+    assert "NOT being applied" in (r.stdout + r.stderr)
 
 
 def test_absent_keys_leave_the_command_line_untouched(sandbox, tmp_path):
